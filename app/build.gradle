@@ -1,0 +1,22 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.viferor.radioespana'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.viferor.radioespana'
+        minSdk 23
+        targetSdk 34
+        versionCode 1465
+        versionName '1.4.65'
+    }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}

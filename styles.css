@@ -1,0 +1,997 @@
+:root {
+--primary: #d32f2f;
+--primary-dark: #b71c1c;
+--bg: #f4f6f8;
+--card-bg: #ffffff;
+--text: #212121;
+--subtext: #666666;
+--star-active: #ffc107;
+--star-inactive: #ccc;
+--header-h: 48px;
+--toggle-h: 50px;
+--player-h: 130px;
+--fav-actions-h: 40px;
+}
+* {
+box-sizing: border-box;
+margin: 0;
+padding: 0;
+font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+-webkit-tap-highlight-color: transparent;
+}
+body {
+background-color: var(--bg);
+color: var(--text);
+height: 100dvh;
+overflow: hidden;
+display: flex;
+flex-direction: column;
+}
+header {
+background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+color: white;
+padding: 10px 16px;
+text-align: center;
+flex: 0 0 var(--header-h);
+z-index: 100;
+}
+header h1 { font-size: 1.1rem; font-weight: 700; }
+.view-toggle {
+display: flex;
+background: white;
+padding: 6px 8px;
+gap: 6px;
+flex: 0 0 var(--toggle-h);
+z-index: 99;
+box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.toggle-btn {
+flex: 1;
+padding: 10px;
+border: none;
+border-radius: 10px;
+background: var(--bg);
+color: var(--subtext);
+font-size: 0.9rem;
+font-weight: 700;
+cursor: pointer;
+transition: all 0.2s;
+}
+.toggle-btn.active {
+background: var(--primary);
+color: white;
+box-shadow: 0 2px 8px rgba(211,47,47,0.3);
+}
+.view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.view.active { display: flex; }
+.fav-actions {
+display: flex;
+gap: 6px;
+padding: 6px 12px;
+align-items: center;
+flex: 0 0 var(--fav-actions-h);
+}
+.backup-btn {
+background: white;
+color: var(--text);
+border: 1px solid #ddd;
+padding: 6px 10px;
+border-radius: 16px;
+font-size: 0.8rem;
+cursor: pointer;
+}
+.fav-counter {
+margin-left: auto;
+font-size: 0.85rem;
+font-weight: 700;
+color: var(--primary);
+background: #fff3e0;
+padding: 4px 10px;
+border-radius: 12px;
+}
+
+/* ===== FAV GRID: ADAPTABLE ===== */
+.fav-grid {
+flex: 1;
+display: grid;
+grid-template-columns: repeat(2, 1fr);
+grid-auto-rows: minmax(110px, 1fr);
+gap: 8px;
+padding: 8px;
+overflow-y: auto;
+align-content: start;
+}
+@media (min-width: 600px) {
+.fav-grid {
+grid-template-columns: repeat(4, 1fr);
+gap: 12px;
+padding: 12px;
+}
+}
+@media (min-width: 900px) {
+.fav-grid {
+grid-template-columns: repeat(6, 1fr);
+}
+}
+
+/* ===== TARJETA DE FAVORITA ===== */
+.fav-grid .station-card {
+background: var(--card-bg);
+border: 2px solid #e0e0e0;
+border-radius: 12px;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: flex-start;
+text-align: center;
+cursor: pointer;
+position: relative;
+padding: 6px 4px;
+overflow: hidden;
+transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+min-height: 0;
+gap: 2px;
+}
+.fav-grid .station-card:hover {
+transform: translateY(-2px);
+box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.fav-grid .station-card.playing {
+border-color: var(--primary);
+background: #fff8f8;
+box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* ===== LOGO DE CADENA (reemplaza al emoji 📻) ===== */
+.chain-logo {
+width: 56px;
+height: 56px;
+border-radius: 12px;
+display: flex;
+align-items: center;
+justify-content: center;
+font-weight: 900;
+font-size: 0.7rem;
+color: white;
+text-align: center;
+line-height: 1;
+letter-spacing: -0.3px;
+flex-shrink: 0;
+box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+overflow: hidden;
+padding: 4px;
+word-break: break-word;
+text-transform: uppercase;
+}
+.chain-logo img {
+width: 100%;
+height: 100%;
+object-fit: cover;
+border-radius: 10px;
+}
+/* Colores por cadena */
+.chain-logo.chain-ser { background: linear-gradient(135deg, #d32f2f, #b71c1c); }
+.chain-logo.chain-cope { background: linear-gradient(135deg, #1565c0, #0d47a1); }
+.chain-logo.chain-ondacero { background: linear-gradient(135deg, #f57c00, #e65100); }
+.chain-logo.chain-rne { background: linear-gradient(135deg, #2e7d32, #1b5e20); }
+.chain-logo.chain-los40 { background: linear-gradient(135deg, #7b1fa2, #4a148c); }
+.chain-logo.chain-dial { background: linear-gradient(135deg, #c2185b, #880e4f); }
+.chain-logo.chain-rockfm { background: linear-gradient(135deg, #424242, #212121); }
+.chain-logo.chain-kissfm { background: linear-gradient(135deg, #e91e63, #ad1457); }
+.chain-logo.chain-europafm { background: linear-gradient(135deg, #0288d1, #01579b); }
+.chain-logo.chain-canalsur { background: linear-gradient(135deg, #00838f, #006064); }
+.chain-logo.chain-marca { background: linear-gradient(135deg, #d84315, #bf360c); }
+.chain-logo.chain-default { background: linear-gradient(135deg, #607d8b, #455a64); }
+
+/* Nombre de la emisora */
+.fav-grid .station-name {
+font-size: 0.75rem;
+font-weight: 700;
+line-height: 1.15;
+display: -webkit-box;
+-webkit-line-clamp: 2;
+-webkit-box-orient: vertical;
+overflow: hidden;
+word-break: break-word;
+padding: 0 2px;
+max-width: 100%;
+}
+
+/* Provincia */
+.fav-grid .station-tag {
+font-size: 0.6rem;
+color: var(--subtext);
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+max-width: 100%;
+padding: 0 2px;
+}
+
+.fav-grid .fav-btn {
+position: absolute;
+top: 2px;
+right: 2px;
+font-size: 1rem;
+color: var(--star-active);
+background: rgba(255,255,255,0.8);
+border: none;
+cursor: pointer;
+z-index: 2;
+line-height: 1;
+padding: 2px 4px;
+border-radius: 50%;
+}
+.fav-grid .drag-handle {
+position: absolute;
+top: 2px;
+left: 2px;
+font-size: 0.7rem;
+color: var(--subtext);
+padding: 2px 4px;
+cursor: grab;
+touch-action: none;
+background: rgba(240,240,240,0.8);
+border-radius: 4px;
+z-index: 3;
+}
+
+.status-msg.big {
+grid-column: 1 / -1;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+text-align: center;
+color: var(--subtext);
+padding: 20px;
+}
+.empty-icon { font-size: 3rem; opacity: 0.3; margin-bottom: 8px; }
+.status-msg.big h2 { font-size: 1.1rem; color: var(--text); margin-bottom: 4px; }
+.status-msg.big p { font-size: 0.85rem; }
+
+/* ===== BUSCAR ===== */
+.view-search { position: relative; }
+.search-grid {
+flex: 1;
+overflow-y: auto;
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+gap: 10px;
+padding: 10px;
+align-content: start;
+}
+@media (min-width: 600px) {
+.search-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+}
+.search-grid .station-card {
+background: var(--card-bg);
+border-radius: 12px;
+padding: 10px 8px;
+text-align: center;
+box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: flex-start;
+position: relative;
+cursor: pointer;
+border: 2px solid transparent;
+min-height: 130px;
+transition: transform 0.12s;
+gap: 4px;
+}
+.search-grid .station-card:hover { transform: translateY(-2px); }
+.search-grid .station-card.playing { border-color: var(--primary); background: #fff8f8; }
+.search-grid .chain-logo { width: 52px; height: 52px; font-size: 0.65rem; }
+.search-grid .fav-btn {
+position: absolute;
+top: 4px;
+right: 4px;
+font-size: 1.2rem;
+color: var(--star-inactive);
+background: rgba(255,255,255,0.9);
+border: none;
+cursor: pointer;
+z-index: 2;
+padding: 2px 4px;
+border-radius: 50%;
+}
+.search-grid .fav-btn.is-fav { color: var(--star-active); }
+.search-grid .station-name { font-size: 0.8rem; font-weight: 700; line-height: 1.2; }
+.search-grid .station-tag { font-size: 0.65rem; color: var(--subtext); }
+
+/* ===== FILTROS COMPACTOS ===== */
+.compact-filters {
+flex: 0 0 auto;
+background: white;
+border-top: 1px solid #ddd;
+padding: 6px 8px;
+box-shadow: 0 -2px 6px rgba(0,0,0,0.06);
+}
+.filters-row {
+display: flex;
+gap: 4px;
+align-items: center;
+}
+.filters-row select,
+.filters-row input {
+padding: 7px 6px;
+border: 1px solid #ddd;
+border-radius: 6px;
+font-size: 0.75rem;
+background: var(--bg);
+flex: 1 1 0;
+min-width: 0;
+outline: none;
+}
+.btn-search {
+background: var(--primary);
+color: white;
+border: none;
+padding: 7px 12px;
+border-radius: 6px;
+font-weight: 700;
+font-size: 0.8rem;
+cursor: pointer;
+flex: 0 0 auto;
+}
+.active-filters {
+display: flex;
+flex-wrap: wrap;
+gap: 4px;
+margin-top: 4px;
+padding: 4px 6px;
+background: #fff8e1;
+border-radius: 6px;
+font-size: 0.7rem;
+}
+.active-filters .chip {
+background: var(--primary);
+color: white;
+padding: 2px 6px;
+border-radius: 8px;
+font-weight: 600;
+}
+.active-filters .chip-label { color: #6d4c00; font-weight: 700; }
+
+/* ===== PLAYER BAR ===== */
+.player-bar {
+flex: 0 0 var(--player-h);
+background: white;
+border-top: 2px solid var(--primary);
+padding: 8px 12px 6px;
+display: flex;
+flex-direction: column;
+align-items: center;
+z-index: 1000;
+box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+}
+.player-info {
+width: 100%;
+max-width: 600px;
+margin-bottom: 4px;
+}
+.player-header {
+display: flex;
+justify-content: space-between;
+align-items: center;
+margin-bottom: 2px;
+}
+.player-title {
+font-weight: bold;
+font-size: 0.85rem;
+color: var(--text);
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+max-width: 70%;
+}
+.player-status { font-size: 0.7rem; color: var(--subtext); }
+.now-playing-wrapper {
+width: 100%;
+overflow: hidden;
+position: relative;
+height: 22px;
+}
+.now-playing {
+font-size: 0.85rem;
+color: var(--primary);
+font-weight: 700;
+white-space: nowrap;
+display: inline-block;
+line-height: 22px;
+}
+.now-playing.scrolling {
+animation: marquee 12s linear infinite;
+}
+@keyframes marquee {
+0% { transform: translateX(100%); }
+100% { transform: translateX(-100%); }
+}
+audio { width: 100%; max-width: 600px; height: 32px; }
+.station-card.dragging { opacity: 0.5; transform: scale(0.95); border: 2px dashed var(--primary); z-index: 10; }
+.status-msg {
+grid-column: 1 / -1;
+text-align: center;
+padding: 20px;
+color: var(--subtext);
+font-size: 0.9rem;
+}.chain-logo { position: relative; overflow: hidden; }
+.chain-logo img { width:100%; height:100%; object-fit:contain; display:block; background:#fff; }
+.chain-logo .logo-fallback-text { display:none; align-items:center; justify-content:center; width:100%; height:100%; font-weight:800; }
+.chain-logo.logo-fallback .logo-fallback-text { display:flex; }
+
+/* ===== NOW PLAYING / PROGRAM GUIDE ===== */
+.program-line,.program-next{width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:18px;}
+.program-line{font-size:.76rem;font-weight:700;color:var(--text);margin-top:1px;}
+.program-next{font-size:.68rem;color:var(--subtext);}
+
+/* ===== VOLUME CONTROL 1.2.1 ===== */
+.player-controls{width:100%;max-width:600px;display:flex;align-items:center;gap:10px;}
+.player-controls audio{flex:1;min-width:0;}
+.volume-control{display:flex;align-items:center;gap:6px;flex:0 0 210px;min-width:210px;}
+.volume-btn{width:46px;height:46px;min-width:46px;border:1px solid #d6d6d6;border-radius:10px;background:#fff;font-size:1.35rem;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation;}
+.volume-btn:active{transform:scale(.96);}
+.volume-control input[type=range]{width:120px;height:28px;accent-color:var(--primary);cursor:pointer;}
+.volume-control output{width:42px;text-align:right;font-size:.75rem;font-weight:700;color:var(--text);}
+@media (max-width:640px){.player-controls{gap:7px}.volume-control{flex:0 0 170px;min-width:170px}.volume-control input[type=range]{width:86px}.volume-btn{width:44px;height:44px;min-width:44px}}
+/* ===== PODCASTS 1.3 ===== */
+.view-podcasts{position:relative;background:#f4f6f8}.pod-toolbar{padding:8px;overflow-y:auto;flex:0 0 auto;background:#fff;border-bottom:1px solid #ddd}.pod-search{display:grid;grid-template-columns:minmax(210px,1.6fr) repeat(4,minmax(120px,1fr)) auto;gap:8px;align-items:end}.pod-search-text,.pod-filter-field{min-width:0;display:flex;flex-direction:column;gap:4px}.pod-filter-label{display:block;font-size:.68rem;font-weight:800;color:#68727c;line-height:1}.pod-search input{width:100%;min-width:0;border:1px solid #ddd;border-radius:10px;padding:10px}.pod-search select,.pod-search button,.pod-modes button,.pod-actions-top button,.pod-section-title>button{border:1px solid #ddd;background:#fff;border-radius:10px;padding:10px 11px;font-weight:700}.pod-search select{width:100%;min-width:0;height:42px}.pod-search button{background:var(--primary);color:#fff;border-color:var(--primary);height:42px;padding-inline:16px}.pod-modes{display:flex;gap:6px;overflow-x:auto;padding-top:7px}.pod-modes button{white-space:nowrap}.podcast-content{flex:1;overflow-y:auto;padding:10px}.pod-section-title{display:flex;align-items:center;gap:8px;margin-bottom:10px}.pod-section-title h2{font-size:1rem;flex:1}.pod-section-title h2 span{font-size:.72rem;background:#eee;border-radius:10px;padding:3px 7px}.pod-actions-top{display:flex;gap:5px}.pod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}.pod-card{background:#fff;border:1px solid #e1e1e1;border-radius:14px;padding:8px;display:flex;gap:9px;min-height:125px}.pod-art{width:82px;height:82px;flex:0 0 82px;border-radius:10px;background:#e8edf2;display:flex;align-items:center;justify-content:center;font-size:2rem;overflow:hidden}.pod-art img{width:100%;height:100%;object-fit:cover}.pod-body{min-width:0;display:flex;flex-direction:column;gap:4px}.pod-body h3{font-size:.88rem;line-height:1.15}.pod-activity-dot{display:inline-block;width:9px;height:9px;min-width:9px;border-radius:50%;margin:0 6px 1px 0;vertical-align:middle;border:1px solid rgba(0,0,0,.14);box-sizing:border-box}.pod-activity-dot.pod-active{background:#2e9b4b!important}.pod-activity-dot.pod-activity-months{background:#e4b400!important}.pod-activity-dot.pod-inactive-1,.pod-activity-dot.pod-inactive-2,.pod-activity-dot.pod-inactive-3{background:#d83232!important}.pod-activity-dot.pod-activity-unknown{background:#9aa1a8!important}.pod-activity-dot.pod-activity-pending{background:#9aa1a8!important}.pod-meta,.pod-date{font-size:.7rem;color:#777}.pod-desc{font-size:.72rem;color:#555;line-height:1.25}.pod-activity{font-size:.67rem;font-weight:800;line-height:1.2;padding:5px 7px;border-radius:8px;background:#fff3cd;color:#795548;border:1px solid #f0d98a}.pod-activity.pod-inactive-1,.pod-activity.pod-inactive-2,.pod-activity.pod-inactive-3{background:#ffe5e5;color:#a11;border-color:#e2a0a0}.pod-activity.pod-activity-months{background:#fff8d9;color:#7a6200;border-color:#ead56d}.pod-activity.pod-active{background:#e9f7ed;color:#246b35;border-color:#9bd3a8}.pod-activity-unknown{background:#f0f2f4;color:#5f6870;border-color:#cfd5da}.pod-activity-pending{background:#f0f2f4;color:#5f6870;border-color:#cfd5da}.pod-actions{margin-top:auto;display:flex;gap:5px}.pod-actions button{border:1px solid #ddd;background:#fff;border-radius:9px;padding:6px 8px;font-size:.72rem;font-weight:700}.pod-actions .on{background:#e8f5e9;border-color:#81c784}.pod-actions .pod-play{background:var(--primary);border-color:var(--primary);color:#fff}.pod-actions .pod-share{background:#f5f7fa;border-color:#cfd6dd}.pod-episodes{display:flex;flex-direction:column;gap:7px}.pod-episodes .pod-card{min-height:105px}.pod-queue{display:flex;flex-direction:column;gap:5px}.pod-queue-row{display:grid;grid-template-columns:34px 1fr 42px;align-items:center;background:#fff;border:1px solid #e1e1e1;border-radius:10px;padding:7px}.pod-queue-row .qnum{font-weight:800;color:#999;text-align:center}.pod-queue-row strong{display:block;font-size:.8rem}.pod-queue-row small{display:block;color:#777;font-size:.7rem}.pod-queue-row button{border:0;background:var(--primary);color:#fff;border-radius:50%;width:34px;height:34px}.pod-loading,.pod-empty{text-align:center;padding:40px 20px;color:#666}.pod-empty>div{font-size:3rem}.pod-player{position:absolute;left:8px;right:8px;bottom:8px;background:#fff;border:1px solid #ddd;border-radius:14px;box-shadow:0 5px 18px rgba(0,0,0,.15);padding:8px;display:flex;align-items:center;gap:10px;z-index:5}.pod-player>div{min-width:0;flex:1}.pod-player strong{display:block;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pod-player span{display:block;font-size:.68rem;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pod-player audio{width:min(52%,420px);height:38px}@media(max-width:650px){.pod-search{grid-template-columns:1fr 1fr;gap:8px}.pod-search-text{grid-column:1/-1}.pod-search button{grid-column:1/-1;width:100%}.pod-filter-label{font-size:.72rem}.pod-search select{height:46px;padding:10px 9px;font-size:.9rem}.pod-search button{height:46px;font-size:.95rem}.pod-grid{grid-template-columns:1fr}.pod-card{min-height:105px}.pod-player{flex-direction:column;align-items:stretch}.pod-player audio{width:100%}.pod-actions-top button{padding:7px 8px;font-size:.7rem}.pod-section-title{align-items:flex-start}.pod-toolbar{padding-bottom:10px}.pod-landing{padding:10px 5px}.pod-landing-hero{padding:10px 12px;gap:10px}.pod-landing-icon{width:48px;height:48px;min-width:48px;font-size:1.6rem}.pod-landing-hero h2{font-size:1.05rem}.pod-landing-hero p{font-size:.7rem;line-height:1.22}.pod-landing-modes{margin-top:8px;gap:7px}.pod-landing-modes button{padding:11px 9px;font-size:.84rem}}
+
+/* ===== AJUSTES / MENÚ HAMBURGUESA ===== */
+.app-header{position:relative;display:flex;align-items:center;justify-content:center}
+.app-header h1{pointer-events:none}
+.menu-btn{position:absolute;left:10px;top:7px;width:38px;height:34px;border:0;border-radius:9px;background:rgba(255,255,255,.16);color:#fff;font-size:1.25rem;font-weight:800;cursor:pointer}
+.menu-btn:active{transform:scale(.96)}
+.settings-menu{position:absolute;left:10px;top:45px;width:235px;background:#fff;color:var(--text);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.24);padding:8px;z-index:1000;text-align:left}
+.settings-menu-title{font-weight:800;padding:8px 10px;border-bottom:1px solid #eee;margin-bottom:4px}
+.settings-menu button{width:100%;border:0;background:#fff;text-align:left;padding:11px 10px;border-radius:9px;font-weight:700;font-size:.9rem;color:var(--text);cursor:pointer}
+.settings-menu button:hover{background:#f4f6f8}
+.app-version-footer{flex:0 0 25px;background:#fff;border-top:1px solid #e4e4e4;text-align:center;color:#777;font-size:.72rem;line-height:25px;z-index:90}
+.error-modal,.update-modal{position:fixed;inset:0;background:rgba(0,0,0,.52);display:flex;align-items:center;justify-content:center;padding:16px;z-index:2000}
+.error-modal[hidden],.update-modal[hidden],.settings-menu[hidden]{display:none}
+.error-modal-card,.update-modal-card{width:min(720px,100%);max-height:85dvh;background:#fff;border-radius:16px;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;gap:10px}
+.error-modal-head{display:flex;align-items:center;justify-content:space-between}
+.error-modal-head h2,.update-modal-card h2{font-size:1.05rem}
+.error-modal-head button{border:0;background:#eee;border-radius:8px;width:34px;height:34px;font-size:1rem}
+.error-modal-help{font-size:.82rem;color:#666}
+.error-log-content{background:#111;color:#ddd;border-radius:10px;padding:10px;min-height:220px;max-height:48dvh;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
+.error-modal-actions{display:flex;gap:7px;justify-content:flex-end;flex-wrap:wrap}
+.error-modal-actions button,.update-modal-card button{border:0;border-radius:9px;background:var(--primary);color:#fff;padding:9px 12px;font-weight:700}
+@media(max-width:600px){.settings-menu{left:8px;width:calc(100vw - 16px)}.app-version-footer{font-size:.68rem}.error-modal-card{padding:12px}.error-log-content{min-height:180px}}
+/* ===== PODCAST PLAYER 1.3.3 ===== */
+.pod-player{position:absolute;left:8px;right:8px;bottom:8px;background:#fff;border:1px solid #ddd;border-radius:14px;box-shadow:0 5px 18px rgba(0,0,0,.15);padding:8px;display:flex;align-items:center;gap:7px;z-index:20;min-height:62px}
+.pod-mini-info{min-width:0;flex:1;cursor:pointer;touch-action:manipulation}
+.pod-mini-info strong,.pod-mini-info span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pod-mini-info strong{font-size:.78rem}.pod-mini-info span{font-size:.68rem;color:#777}
+.pod-mini-btn{width:40px;height:40px;min-width:40px;border:1px solid #ddd;border-radius:10px;background:#fff;font-weight:800;font-size:.82rem;cursor:pointer;touch-action:manipulation}
+.pod-mini-main{background:var(--primary);border-color:var(--primary);color:#fff;font-size:1rem}
+.pod-player .pod-mini-volume{flex:0 0 165px;min-width:165px}.pod-player .pod-mini-volume input[type=range]{width:75px}
+.pod-player audio{display:none}
+.pod-expanded{position:fixed;inset:0;background:rgba(0,0,0,.58);z-index:3000;display:flex;align-items:center;justify-content:center;padding:14px}
+.pod-expanded[hidden]{display:none}
+.pod-expanded-card{width:min(560px,100%);max-height:94dvh;overflow:auto;background:#fff;border-radius:22px;padding:18px;box-shadow:0 15px 50px rgba(0,0,0,.35);text-align:center}
+.pod-expanded-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;text-align:left;font-weight:800}.pod-expanded-head button{width:40px;height:40px;border:0;border-radius:10px;background:#eee;font-size:1.3rem}
+.pod-expanded-art{width:min(68vw,280px);height:min(68vw,280px);margin:8px auto 14px;border-radius:18px;background:#edf1f4;display:flex;align-items:center;justify-content:center;font-size:4rem;overflow:hidden}.pod-expanded-art img{width:100%;height:100%;object-fit:cover}
+.pod-expanded-card h2{font-size:1.05rem;margin:6px 0}.pod-expanded-card>p{font-size:.8rem;color:#777;margin:0 0 14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pod-progress{display:grid;grid-template-columns:45px 1fr 45px;align-items:center;gap:7px;font-size:.7rem;color:#777}.pod-progress input{width:100%;accent-color:var(--primary)}
+.pod-expanded-controls{display:flex;justify-content:center;gap:10px;margin:18px 0}.pod-expanded-controls button{width:48px;height:48px;border:1px solid #ddd;border-radius:50%;background:#fff;font-weight:800;font-size:.9rem}.pod-expanded-controls .main{width:60px;height:60px;background:var(--primary);border-color:var(--primary);color:#fff;font-size:1.2rem}
+.pod-expanded-volume{justify-content:center;margin:auto}.pod-expanded-volume input[type=range]{width:min(260px,55vw)}
+@media(max-width:650px){.pod-player{left:5px;right:5px;bottom:5px;gap:3px;flex-direction:row;align-items:center;min-height:54px;padding:5px;flex-wrap:nowrap}.pod-mini-info{flex:1 1 auto;min-width:70px;overflow:hidden}.pod-mini-info strong{font-size:.72rem}.pod-mini-info span{font-size:.62rem}.pod-mini-btn{width:31px;height:31px;min-width:31px;flex:0 0 31px;font-size:.62rem;padding:0}.pod-player .pod-mini-volume{flex:0 0 31px;min-width:31px;width:31px}.pod-player .pod-mini-volume input,.pod-player .pod-mini-volume output{display:none}.pod-player .pod-mini-volume .volume-btn{width:31px;height:31px;min-width:31px;padding:0;font-size:.9rem}.pod-expanded{padding:8px}.pod-expanded-card{padding:12px;border-radius:18px}.pod-expanded-art{width:min(62vw,250px);height:min(62vw,250px)}.pod-expanded-controls{gap:6px}.pod-expanded-controls button{width:44px;height:44px}.pod-expanded-controls .main{width:56px;height:56px}}
+body.podcasts-active .player-bar{display:none!important}
+/* ===== PODCASTS 1.3.4 — biblioteca prioritaria ===== */
+.pod-my-subs{width:100%;display:flex;align-items:center;gap:12px;text-align:left;border:1px solid #d8dde2;border-radius:16px;background:#fff;padding:13px 14px;box-shadow:0 2px 8px rgba(0,0,0,.07);cursor:pointer;touch-action:manipulation}
+.pod-my-subs:active{transform:scale(.995)}
+.pod-modes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:7px}.pod-modes button{min-width:0;padding:9px 7px;border:1px solid #d8dde2;border-radius:10px;background:#fff;font-weight:800;font-size:.72rem;cursor:pointer}.pod-modes button:active{transform:scale(.99)}
+.pod-bottom-tools{position:absolute;left:8px;right:8px;bottom:78px;z-index:21}.pod-bottom-tools .pod-filters{margin-top:0;background:#fff;box-shadow:0 3px 12px rgba(0,0,0,.12)}
+.pod-bottom-tools .pod-filters[open]{max-height:min(52vh,420px);overflow-y:auto}.pod-bottom-tools .pod-filters summary{padding:8px 11px;font-size:.76rem}
+
+.pod-my-subs-icon{width:44px;height:44px;min-width:44px;border-radius:12px;background:#f1f4f7;display:flex;align-items:center;justify-content:center;font-size:1.45rem}
+.pod-my-subs strong,.pod-my-subs small{display:block}.pod-my-subs strong{font-size:1rem}.pod-my-subs small{margin-top:3px;color:#777;font-size:.74rem}.pod-my-subs-arrow{margin-left:auto;font-size:2rem;line-height:1;color:#888}
+.pod-filters{margin-top:7px;border:1px solid #e1e5e8;border-radius:10px;background:#fafbfc;overflow:hidden}
+.pod-filters summary{list-style:none;cursor:pointer;padding:7px 10px;font-size:.72rem;font-weight:700;color:#666}.pod-filters summary::-webkit-details-marker{display:none}.pod-filters summary span{float:right;font-size:.9rem}.pod-filters[open] summary{border-bottom:1px solid #e1e5e8}.pod-filters .pod-search{padding:7px;flex-wrap:wrap}.pod-filters .pod-search input{flex:1 1 180px;padding:8px}.pod-filters .pod-search select,.pod-filters .pod-search button{padding:7px 8px;font-size:.72rem}
+body.podcast-subs-fullscreen .pod-toolbar{display:none}
+body.podcast-subs-fullscreen .pod-bottom-tools{display:none}
+body.podcast-subs-fullscreen .view-podcasts{position:fixed;inset:0;z-index:150;background:#f4f6f8}
+body.podcast-subs-fullscreen .podcast-content{padding:14px 14px 90px}
+.pod-subs-head{position:sticky;top:0;z-index:4;background:#f4f6f8;padding:4px 0 10px;margin-bottom:4px}
+.pod-subs-head .pod-detail-title{flex:1;min-width:0}.pod-subs-head .pod-detail-title h2{font-size:1.05rem;margin:0}.pod-subs-head .pod-detail-title span{font-size:.72rem;color:#777}.pod-subs-head .pod-actions-top{flex-wrap:wrap;justify-content:flex-end}.pod-subs-head .pod-actions-top button{font-size:.72rem;padding:7px 8px}
+body.podcast-subs-fullscreen .pod-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}.pod-subs-grid .pod-card{min-height:145px;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden}.pod-subs-grid .pod-art{width:100px;height:100px;flex:0 0 100px}.pod-subs-grid .pod-body{flex:1 1 0%;width:0;min-width:0;max-width:none;overflow:visible}.pod-subs-grid .pod-body h3,.pod-subs-grid .pod-meta,.pod-subs-grid .pod-desc,.pod-subs-grid .pod-date{min-width:0;max-width:100%;overflow:visible;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.pod-subs-grid .pod-actions{min-width:0;max-width:100%;width:100%;display:flex;flex-wrap:wrap}.pod-subs-grid .pod-actions button{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:650px){.pod-modes{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.pod-modes button{font-size:.7rem;padding:9px 5px}.pod-bottom-tools{left:5px;right:5px;bottom:64px}.pod-my-subs{padding:11px 12px}.pod-my-subs-icon{width:40px;height:40px;min-width:40px}.pod-filters .pod-search select,.pod-filters .pod-search button{flex:1 1 0;min-width:0}.pod-subs-head{align-items:center}.pod-subs-head .pod-actions-top{width:100%;justify-content:flex-start}.pod-subs-head .pod-actions-top button{flex:1}.pod-subs-grid{grid-template-columns:1fr!important}.pod-subs-grid .pod-card{min-height:120px}.pod-subs-grid .pod-art{width:82px;height:82px;flex-basis:82px}.pod-subs-grid .pod-card{gap:8px;padding:8px}}
+
+/* Radio España 1.3.5 — navegación principal y Podcasts */
+.view-toggle{display:grid!important;grid-template-columns:1fr 1fr;gap:8px;padding:8px;background:#fff;border-bottom:1px solid #ddd}
+.view-toggle .toggle-btn{width:100%;font-size:1rem;font-weight:800;padding:11px 10px}
+.radio-home-toolbar,.radio-search-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;background:#fff;border-bottom:1px solid #e1e5e8}
+.radio-home-toolbar strong,.radio-search-head strong{font-size:.95rem}
+.radio-home-toolbar button,.radio-search-head button{border:1px solid #d7dce0;background:#fff;border-radius:10px;padding:8px 11px;font-weight:700}
+.pod-landing{max-width:760px;margin:0 auto;padding:20px 8px}
+.pod-landing-hero{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #dfe4e8;border-radius:16px;padding:13px 15px;box-shadow:0 3px 12px rgba(0,0,0,.07)}
+.pod-landing-icon{width:54px;height:54px;min-width:54px;border-radius:15px;background:#eef2f5;display:flex;align-items:center;justify-content:center;font-size:1.85rem}
+.pod-landing-hero h2{margin:0 0 3px;font-size:1.18rem}.pod-landing-hero p{margin:0;color:#666;line-height:1.28;font-size:.76rem}
+.pod-landing-modes{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}.pod-landing-modes button{padding:13px 10px;border:1px solid #dfe4e8;border-radius:12px;background:#fff;font-weight:800;text-align:left}
+body.podcast-subs-fullscreen .pod-landing{display:none}
+@media(max-width:650px){.radio-home-toolbar,.radio-search-head{padding:7px 8px}.pod-landing{padding:12px 6px}.pod-landing-hero{padding:16px}.pod-landing-icon{width:56px;height:56px;min-width:56px;font-size:1.9rem}.pod-landing-modes{grid-template-columns:1fr 1fr}}
+
+/* 1.3.6 — mini reproductor compacto: una sola fila en móvil */
+@media(max-width:650px){.pod-player{flex-direction:row!important;flex-wrap:nowrap!important}.pod-player>*{min-height:0}.pod-player .pod-mini-info{overflow:hidden}.pod-player .pod-mini-btn,.pod-player .pod-mini-volume{flex-shrink:0}}
+
+/* 1.4.0 — Modo oscuro */
+html.dark-mode,
+body.dark-mode {
+  --bg: #121418;
+  --card-bg: #1c2025;
+  --text: #f1f3f5;
+  --subtext: #aeb5bd;
+  --star-inactive: #666;
+}
+html.dark-mode body { background: var(--bg); color: var(--text); }
+html.dark-mode .view-toggle,
+html.dark-mode .radio-home-toolbar,
+html.dark-mode .radio-search-head,
+html.dark-mode .app-version-footer,
+html.dark-mode .pod-toolbar,
+html.dark-mode .pod-section-title,
+html.dark-mode .pod-filters,
+html.dark-mode .pod-subs-head { background: #181b1f; color: var(--text); border-color: #30353b; }
+html.dark-mode .toggle-btn,
+html.dark-mode .radio-home-toolbar button,
+html.dark-mode .radio-search-head button,
+html.dark-mode .pod-search input,
+html.dark-mode .pod-search select,
+html.dark-mode .pod-search button,
+html.dark-mode .pod-modes button,
+html.dark-mode .pod-actions-top button,
+html.dark-mode .pod-section-title>button,
+html.dark-mode .pod-actions button,
+html.dark-mode .pod-mini-btn,
+html.dark-mode .volume-btn,
+html.dark-mode .pod-expanded-controls button,
+html.dark-mode .pod-expanded-head button,
+html.dark-mode .settings-menu button,
+html.dark-mode .settings-menu {
+  background: #23282e;
+  color: var(--text);
+  border-color: #3b424a;
+}
+html.dark-mode .toggle-btn.active,
+html.dark-mode .pod-search button,
+html.dark-mode .pod-actions .pod-play,
+html.dark-mode .pod-mini-main,
+html.dark-mode .error-modal-actions button,
+html.dark-mode .update-modal-card button { color:#fff; background:var(--primary); border-color:var(--primary); }
+html.dark-mode .station-card,
+html.dark-mode .pod-card,
+html.dark-mode .pod-queue-row,
+html.dark-mode .pod-my-subs,
+html.dark-mode .pod-landing-hero,
+html.dark-mode .pod-landing-modes button,
+html.dark-mode .pod-player,
+html.dark-mode .pod-expanded-card,
+html.dark-mode .error-modal-card,
+html.dark-mode .update-modal-card {
+  background: #1c2025;
+  color: var(--text);
+  border-color: #343a42;
+}
+html.dark-mode .pod-art,
+html.dark-mode .pod-my-subs-icon,
+html.dark-mode .pod-landing-icon { background:#292f36; }
+html.dark-mode .pod-meta,
+html.dark-mode .pod-date,
+html.dark-mode .pod-desc,
+html.dark-mode .pod-loading,
+html.dark-mode .pod-empty,
+html.dark-mode .pod-player span,
+html.dark-mode .pod-mini-info span,
+html.dark-mode .pod-expanded-card>p,
+html.dark-mode .pod-subs-head .pod-detail-title span,
+html.dark-mode .pod-filters summary,
+html.dark-mode .app-version-footer { color: var(--subtext); }
+html.dark-mode .search-grid .station-card.playing { background:#321d20; }
+html.dark-mode .active-filters .chip { background:#30280f; }
+html.dark-mode .settings-menu button:hover { background:#2d333a; }
+html.dark-mode .app-version-footer { border-color:#30353b; }
+
+
+/* 1.4.1 — Modo oscuro real y contraste reforzado */
+html.dark-mode,
+html.dark-mode body {
+  --bg: #090b0d;
+  --card-bg: #15181c;
+  --text: #f5f7f9;
+  --subtext: #c1c7ce;
+  --star-active: #ffd54a;
+  --star-inactive: #777e86;
+}
+
+html.dark-mode body {
+  background: #090b0d !important;
+  color: #f5f7f9 !important;
+}
+html.dark-mode .view,
+html.dark-mode .view-fav,
+html.dark-mode .view-search,
+html.dark-mode .view-podcasts,
+html.dark-mode .fav-grid,
+html.dark-mode .search-grid,
+html.dark-mode .podcast-content {
+  background: #090b0d !important;
+  color: #f5f7f9 !important;
+}
+
+/* Navegación superior y cabeceras */
+html.dark-mode .view-toggle,
+html.dark-mode .radio-home-toolbar,
+html.dark-mode .radio-search-head,
+html.dark-mode .fav-actions,
+html.dark-mode .pod-toolbar,
+html.dark-mode .pod-section-title,
+html.dark-mode .pod-filters,
+html.dark-mode .pod-subs-head {
+  background: #111418 !important;
+  color: #f5f7f9 !important;
+  border-color: #2d333a !important;
+}
+html.dark-mode .toggle-btn,
+html.dark-mode .radio-home-toolbar button,
+html.dark-mode .radio-search-head button,
+html.dark-mode .backup-btn {
+  background: #1b2026 !important;
+  color: #f5f7f9 !important;
+  border-color: #3a424b !important;
+}
+html.dark-mode .toggle-btn.active {
+  background: #c62828 !important;
+  color: #fff !important;
+}
+
+/* Tarjetas de radios y buscador */
+html.dark-mode .fav-grid .station-card,
+html.dark-mode .search-grid .station-card {
+  background: #15191e !important;
+  color: #f5f7f9 !important;
+  border-color: #353c44 !important;
+}
+html.dark-mode .fav-grid .station-card.playing,
+html.dark-mode .search-grid .station-card.playing {
+  background: #291418 !important;
+  border-color: #ef5350 !important;
+}
+html.dark-mode .station-card strong,
+html.dark-mode .station-card h3,
+html.dark-mode .station-card .station-name,
+html.dark-mode .station-card .station-title,
+html.dark-mode .station-card .program-line {
+  color: #ffffff !important;
+}
+html.dark-mode .station-card .program-next,
+html.dark-mode .station-card .station-tag,
+html.dark-mode .station-card .station-meta {
+  color: #c5cbd2 !important;
+}
+
+/* Amarillos que antes quedaban sobre blanco */
+html.dark-mode .fav-counter {
+  background: #332a08 !important;
+  color: #ffe082 !important;
+  border: 1px solid #66530f !important;
+}
+html.dark-mode .active-filters .chip {
+  background: #302707 !important;
+  color: #ffe082 !important;
+  border-color: #66530f !important;
+}
+html.dark-mode .active-filters .chip-label {
+  color: #ffe082 !important;
+}
+html.dark-mode .search-grid .fav-btn.is-fav,
+html.dark-mode .fav-grid .fav-btn.is-fav {
+  color: #ffd54a !important;
+}
+
+/* Formularios */
+html.dark-mode input,
+html.dark-mode select,
+html.dark-mode textarea {
+  background: #15191e !important;
+  color: #f5f7f9 !important;
+  border-color: #3a424b !important;
+  color-scheme: dark;
+}
+html.dark-mode input::placeholder,
+html.dark-mode textarea::placeholder {
+  color: #9da5ad !important;
+}
+
+/* Reproductor de radio */
+html.dark-mode .player-bar,
+html.dark-mode .player-header,
+html.dark-mode .player-info,
+html.dark-mode .now-playing,
+html.dark-mode .now-playing-wrapper {
+  background: #111418 !important;
+  color: #f5f7f9 !important;
+  border-color: #30363d !important;
+}
+html.dark-mode .player-title,
+html.dark-mode .player-info strong,
+html.dark-mode .player-info h3 {
+  color: #ffffff !important;
+}
+html.dark-mode .player-status,
+html.dark-mode .player-info span,
+html.dark-mode .program-next {
+  color: #c1c7ce !important;
+}
+html.dark-mode .volume-btn,
+html.dark-mode .player-controls button {
+  background: #1b2026 !important;
+  color: #ffffff !important;
+  border-color: #414952 !important;
+}
+
+/* Podcasts: superficies oscuras reales */
+html.dark-mode .pod-landing,
+html.dark-mode .pod-landing-hero,
+html.dark-mode .pod-landing-modes button,
+html.dark-mode .pod-card,
+html.dark-mode .pod-queue-row,
+html.dark-mode .pod-my-subs,
+html.dark-mode .pod-player,
+html.dark-mode .pod-expanded-card {
+  background: #15191e !important;
+  color: #f5f7f9 !important;
+  border-color: #353c44 !important;
+}
+html.dark-mode .pod-landing-hero p,
+html.dark-mode .pod-meta,
+html.dark-mode .pod-date,
+html.dark-mode .pod-desc,
+html.dark-mode .pod-queue-row small,
+html.dark-mode .pod-my-subs small,
+html.dark-mode .pod-my-subs-arrow,
+html.dark-mode .pod-expanded-card > p {
+  color: #c1c7ce !important;
+}
+html.dark-mode .pod-search input,
+html.dark-mode .pod-search select,
+html.dark-mode .pod-search button,
+html.dark-mode .pod-modes button,
+html.dark-mode .pod-actions-top button,
+html.dark-mode .pod-section-title > button,
+html.dark-mode .pod-actions button,
+html.dark-mode .pod-mini-btn,
+html.dark-mode .pod-expanded-controls button,
+html.dark-mode .pod-expanded-head button {
+  background: #1b2026 !important;
+  color: #f5f7f9 !important;
+  border-color: #3b434c !important;
+}
+html.dark-mode .pod-search button,
+html.dark-mode .pod-actions .pod-play,
+html.dark-mode .pod-mini-main,
+html.dark-mode .pod-expanded-controls .main,
+html.dark-mode .pod-queue-row button {
+  background: #c62828 !important;
+  color: #ffffff !important;
+  border-color: #c62828 !important;
+}
+html.dark-mode .pod-actions .on {
+  background: #17351f !important;
+  color: #b9f6ca !important;
+  border-color: #2e7d32 !important;
+}
+
+/* Menú de Ajustes y ventanas */
+html.dark-mode .settings-menu,
+html.dark-mode .settings-menu button,
+html.dark-mode .error-modal-card,
+html.dark-mode .update-modal-card {
+  background: #15191e !important;
+  color: #f5f7f9 !important;
+  border-color: #353c44 !important;
+}
+html.dark-mode .settings-menu button:hover {
+  background: #252b32 !important;
+}
+html.dark-mode .settings-menu-title,
+html.dark-mode .error-modal-card h2,
+html.dark-mode .update-modal-card h2 {
+  color: #ffffff !important;
+}
+html.dark-mode .error-modal-help {
+  color: #c1c7ce !important;
+}
+html.dark-mode .app-version-footer {
+  background: #0d1013 !important;
+  color: #aeb6bf !important;
+  border-color: #292f36 !important;
+}
+
+/* Evitar blancos residuales en elementos comunes */
+html.dark-mode .status-msg,
+html.dark-mode .status-msg.big,
+html.dark-mode .empty-icon {
+  color: #f5f7f9 !important;
+}
+html.dark-mode .status-msg p,
+html.dark-mode .status-msg small {
+  color: #c1c7ce !important;
+}
+
+/* 1.4.11 — Contraste de favoritos y filtros de Podcasts en móvil */
+html.dark-mode .fav-grid .fav-btn,
+html.dark-mode .search-grid .fav-btn {
+  background: #090b0d !important;
+  color: #8b949e !important;
+  border: 1px solid #30363d !important;
+  box-shadow: none !important;
+}
+html.dark-mode .fav-grid .fav-btn.is-fav,
+html.dark-mode .search-grid .fav-btn.is-fav {
+  background: #090b0d !important;
+  color: #ffd54a !important;
+}
+html.dark-mode .pod-filter-label { color: #cbd2d9 !important; }
+html.dark-mode .pod-search select { color: #f5f7f9 !important; }
+@media(max-width:650px){
+  html.dark-mode .pod-search select,
+  html.dark-mode .pod-search input {
+    border-color: #4a535e !important;
+    background: #15191e !important;
+  }
+}
+
+/* 1.4.11 — Ajustes finales de especificidad para el bloque de filtros */
+@media(max-width:650px){
+  .pod-filters .pod-search{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px}
+  .pod-filters .pod-search-text{grid-column:1/-1}
+  .pod-filters .pod-search select{height:46px;padding:10px 9px;font-size:.9rem}
+  .pod-filters .pod-search button{grid-column:1/-1;width:100%;height:46px;font-size:.95rem;padding:10px 12px}
+  .pod-filters .pod-filter-label{font-size:.72rem;color:#68727c}
+  .pod-landing-hero{padding:10px 12px !important;gap:10px}
+  .pod-landing-icon{width:48px !important;height:48px !important;min-width:48px !important;font-size:1.6rem !important}
+  .pod-landing-hero h2{font-size:1.05rem !important}
+  .pod-landing-hero p{font-size:.7rem !important;line-height:1.22 !important}
+}
+html.dark-mode .pod-filters .pod-filter-label{color:#cbd2d9 !important}
+
+/* 1.4.11 — Resultados de búsqueda de Podcasts: renderizado inmediato y estable */
+.view-podcasts{min-height:0}
+.podcast-content{min-height:0;display:block;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.podcast-results-active .podcast-content{visibility:visible;opacity:1}
+.pod-results-grid{padding-bottom:110px}
+.pod-search-empty{min-height:180px}
+
+/* 1.4.14 — Ordenación de Mis podcasts */
+.pod-subs-head{gap:10px;flex-wrap:wrap}
+.pod-mine-sort{display:flex;align-items:center;gap:7px;margin-left:auto;white-space:nowrap}
+.pod-mine-sort span{font-size:.72rem;font-weight:800;color:#68727c}
+.pod-mine-sort select{min-width:150px;border:1px solid #ddd;background:#fff;color:#222;border-radius:10px;padding:9px 10px;font-weight:700;font-size:.78rem;height:40px}
+html.dark-mode .pod-mine-sort span{color:#cbd2d9}
+html.dark-mode .pod-mine-sort select{background:#11151a;color:#f2f4f6;border-color:#3a4149}
+@media(max-width:650px){
+  .pod-subs-head{display:grid;grid-template-columns:auto 1fr;gap:8px}
+  .pod-subs-head .pod-detail-title{min-width:0}
+  .pod-mine-sort{grid-column:1/-1;width:100%;margin-left:0;display:grid;grid-template-columns:auto 1fr;align-items:center}
+  .pod-mine-sort span{font-size:.82rem}
+  .pod-mine-sort select{width:100%;height:46px;font-size:.9rem;padding:10px 12px}
+}
+/* 1.4.14 — Resultados de búsqueda siempre por encima de la vista Podcasts */
+body.podcast-results-active .view-podcasts{
+  position:fixed!important;
+  inset:0!important;
+  z-index:160!important;
+  background:#f4f6f8!important;
+}
+body.podcast-results-active .pod-toolbar{display:none!important}
+body.podcast-results-active .podcast-content{
+  display:block!important;
+  flex:1 1 auto!important;
+  min-height:0!important;
+  height:100%!important;
+  overflow-y:auto!important;
+  visibility:visible!important;
+  opacity:1!important;
+  padding:14px 14px 90px!important;
+}
+html.dark-mode body.podcast-results-active .view-podcasts{background:#090b0d!important}
+
+
+/* Podcast episodes — vista completa en móvil y escritorio.
+   El detalle de episodios ocupa toda la pantalla disponible, evitando que
+   la barra general de Podcasts reduzca innecesariamente el área de lectura. */
+body.podcast-detail-active .view-podcasts{
+  position:fixed!important;
+  inset:0!important;
+  z-index:155!important;
+  background:#f4f6f8!important;
+}
+body.podcast-detail-active .pod-toolbar{
+  display:none!important;
+}
+body.podcast-detail-active .podcast-content{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  min-height:0!important;
+  box-sizing:border-box!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  padding:12px 12px 96px!important;
+  -webkit-overflow-scrolling:touch;
+}
+body.podcast-detail-active .pod-detail-head{
+  position:sticky;
+  top:0;
+  z-index:6;
+  margin:0 0 10px!important;
+  padding:4px 0 10px!important;
+  background:#f4f6f8;
+}
+body.podcast-detail-active .pod-episodes{
+  width:100%;
+  min-width:0;
+}
+body.podcast-detail-active .pod-episodes .pod-card{
+  width:100%;
+  box-sizing:border-box;
+  min-width:0;
+}
+body.podcast-detail-active .pod-episodes .pod-card{
+  display:flex!important;
+  align-items:flex-start!important;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  overflow:hidden!important;
+}
+body.podcast-detail-active .pod-episodes .pod-art{
+  flex:0 0 76px!important;
+  width:76px!important;
+  min-width:76px!important;
+}
+body.podcast-detail-active .pod-episodes .pod-body{
+  flex:1 1 0%!important;
+  width:0!important;
+  min-width:0!important;
+  max-width:none!important;
+  overflow:visible!important;
+}
+body.podcast-detail-active .pod-episodes .pod-body h3,
+body.podcast-detail-active .pod-episodes .pod-desc,
+body.podcast-detail-active .pod-episodes .pod-meta,
+body.podcast-detail-active .pod-episodes .pod-date{
+  min-width:0;
+  max-width:100%;
+  overflow:visible;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+  white-space:normal!important;
+  width:auto!important;
+}
+body.podcast-detail-active .pod-episodes .pod-actions{
+  display:flex!important;
+  flex-wrap:wrap!important;
+  min-width:0!important;
+  max-width:100%!important;
+  width:100%!important;
+}
+body.podcast-detail-active .pod-episodes .pod-actions button{
+  min-width:0!important;
+  max-width:100%!important;
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+}
+@media(max-width:650px){
+  body.podcast-detail-active .podcast-content{padding:8px 8px 88px!important}
+  body.podcast-detail-active .pod-detail-head{padding:2px 0 8px!important}
+  body.podcast-detail-active .pod-episodes{gap:8px}
+  body.podcast-detail-active .pod-episodes .pod-card{padding:8px;gap:8px;min-height:0}
+  body.podcast-detail-active .pod-episodes .pod-art{width:76px;height:76px;flex-basis:76px}
+  body.podcast-detail-active .pod-episodes .pod-actions{flex-wrap:wrap}
+}
+html.dark-mode body.podcast-detail-active .view-podcasts,
+html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!important}

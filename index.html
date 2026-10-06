@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#d32f2f" />
+<script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
+<title>Radios Viferor</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="app-header">
+<button id="btnMenuSettings" class="menu-btn" type="button" aria-label="Abrir ajustes">☰</button>
+<h1>📻 Radios Viferor</h1>
+<div class="settings-menu" id="settingsMenu" hidden>
+  <div class="settings-menu-title">⚙️ Ajustes</div>
+  <button id="btnErrorLog" type="button">🧾 Registro de errores</button>
+  <button id="btnCheckUpdates" type="button">🔄 Buscar actualizaciones</button>
+  <button id="btnImportPodcasts" type="button">📂 Importar podcasts (OPML)</button>
+  <button id="btnExportPodcasts" type="button">💾 Exportar podcasts (OPML)</button>
+  <button id="btnFullBackup" type="button">💾 Backup completo de la aplicación</button>
+  <button id="btnFullRestore" type="button">📂 Restaurar backup de la aplicación</button>
+  <input id="fullBackupFile" type="file" accept=".json,application/json" hidden>
+  <button id="btnDarkMode" type="button">🌙 Modo oscuro</button>
+  <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
+  <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
+</div>
+</header>
+
+<div class="view-toggle">
+<button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
+<button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
+</div>
+
+<section class="view view-fav active" id="viewFav">
+<div class="radio-home-toolbar">
+  <strong>📻 Mis radios</strong>
+  <button id="btnRadioSearch" type="button">🔎 Buscar emisoras</button>
+</div>
+<div class="fav-actions">
+<button class="backup-btn" id="btnExportar" type="button">💾 Guardar</button>
+<label class="backup-btn">📂 Cargar<input type="file" id="fileImportar" accept=".json" hidden /></label>
+<span class="fav-counter">⭐ <span id="favCount">0</span></span>
+</div>
+<main class="fav-grid" id="favGrid">
+<div class="status-msg big">
+<div class="empty-icon">⭐</div>
+<h2>Sin favoritas</h2>
+<p>Pulsa "🔍 Buscar" y añade con ★</p>
+</div>
+</main>
+</section>
+
+<section class="view view-search" id="viewSearch">
+<div class="radio-search-head"><button id="btnBackToRadios" type="button">← Volver a Radios</button><strong>🔎 Buscar emisoras</strong></div>
+<main class="search-grid" id="stationsGrid">
+<div class="status-msg">Pulsa "Buscar" para ver emisoras</div>
+</main>
+<div class="compact-filters">
+<div class="filters-row">
+<select id="selectNetwork" title="Cadena">
+<option value="">📻 Todas</option>
+<option>Cadena SER</option>
+<option>COPE</option>
+<option>Onda Cero</option>
+<option>RNE</option>
+<option>LOS40</option>
+<option>Cadena Dial</option>
+<option>Rock FM</option>
+<option>Kiss FM</option>
+<option>Europa FM</option>
+<option>Canal Sur</option>
+<option>Radio Marca</option>
+</select>
+<select id="selectLocation" title="Provincia">
+<option value="">📍 España</option>
+<option>Madrid</option><option>Barcelona</option><option>Valencia</option>
+<option>Sevilla</option><option>Málaga</option><option>Córdoba</option>
+<option>Granada</option><option>Zaragoza</option><option>Vizcaya</option>
+<option>Alicante</option><option>Murcia</option><option>Valladolid</option>
+<option>A Coruña</option><option>Pontevedra</option><option>Asturias</option>
+<option>Cantabria</option><option>Baleares</option><option>Las Palmas</option>
+<option>S.C. Tenerife</option><option>Navarra</option><option>Cádiz</option>
+<option>Huelva</option><option>Jaén</option><option>Almería</option>
+</select>
+<select id="selectType" title="Tipo">
+<option value="">🏷️ Todo</option>
+<option value="musical">🎵 Musical</option>
+<option value="informativa">📰 Informativa</option>
+<option value="deportiva">⚽ Deportiva</option>
+<option value="autonomica">🏛️ Autonómica</option>
+<option value="tematica">🎭 Temática</option>
+</select>
+<input type="text" id="textSearch" placeholder="🔍..." autocomplete="off" />
+<button class="btn-search" id="btnAplicar" type="button">Buscar</button>
+</div>
+<div class="active-filters" id="activeFilters" hidden></div>
+</div>
+</section>
+
+<section class="view view-podcasts" id="viewPodcasts">
+  <div class="pod-toolbar">
+    <button id="podMine" class="pod-my-subs" type="button"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 suscripciones</small></span><span class="pod-my-subs-arrow">›</span></button>
+    <div class="pod-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div>
+    <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
+  </div>
+  <main id="podcastContent" class="podcast-content"></main>
+  <div class="pod-bottom-tools">
+    <details class="pod-filters">
+      <summary>🔎 Buscar y filtrar podcasts <span>▾</span></summary>
+      <div class="pod-search">
+        <div class="pod-search-text"><span class="pod-filter-label">Buscar</span><input id="podSearchText" type="text" placeholder="🔎 Buscar podcasts..." autocomplete="off"></div>
+        <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ALL">🌐 Todos</option><option value="ES">🇪🇸 España</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Buscar</option><option value="popular">Más populares</option></select></label>
+        <button id="podSearchBtn" type="button">Buscar</button>
+      </div>
+    </details>
+  </div>
+  <div class="pod-player" id="podcastPlayerMini">
+    <div class="pod-mini-info" id="podcastMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de podcast">
+      <strong id="podcastNow">Sin episodio</strong><span id="podcastNowSub"></span>
+    </div>
+    <button id="podPrev" class="pod-mini-btn" type="button" aria-label="Episodio anterior">⏮</button>
+    <button id="podBack15" class="pod-mini-btn" type="button" aria-label="Retroceder 15 segundos">↶15</button>
+    <button id="podPlayPause" class="pod-mini-btn pod-mini-main" type="button" aria-label="Reproducir o pausar">▶</button>
+    <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+    <button id="podNext" class="pod-mini-btn" type="button" aria-label="Siguiente episodio">⏭</button>
+    <div class="pod-mini-volume volume-control" aria-label="Volumen del podcast"><button id="podMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podVolumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podVolumeValue">80%</output></div>
+    <audio id="podcastAudio" preload="none"></audio>
+  </div>
+  <div class="pod-expanded" id="podExpanded" hidden>
+    <div class="pod-expanded-card">
+      <div class="pod-expanded-head"><button id="podExpandedClose" type="button" aria-label="Cerrar">←</button><span>Reproductor de podcast</span></div>
+      <div class="pod-expanded-art" id="podExpandedArt">🎙️</div>
+      <h2 id="podExpandedTitle">Sin episodio</h2><p id="podExpandedSub"></p>
+      <div class="pod-progress"><span id="podCurrentTime">0:00</span><input id="podProgressRange" type="range" min="0" max="100" step="0.1" value="0" aria-label="Progreso"><span id="podDuration">0:00</span></div>
+      <div class="pod-expanded-controls">
+        <button id="podExpPrev" type="button" aria-label="Anterior">⏮</button>
+        <button id="podExpBack15" type="button" aria-label="Retroceder 15 segundos">↶15</button>
+        <button id="podExpPlay" class="main" type="button" aria-label="Reproducir o pausar">▶</button>
+        <button id="podExpForward15" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+        <button id="podExpNext" type="button" aria-label="Siguiente">⏭</button>
+      </div>
+      <div class="pod-expanded-volume volume-control" aria-label="Volumen del podcast"><button id="podExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podExpVolumeValue">80%</output></div>
+    </div>
+  </div>
+</section>
+
+<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText">1.4.65</strong> · Compilación <strong id="appBuildText">1465</strong></footer>
+
+<div class="error-modal" id="errorModal" hidden>
+  <div class="error-modal-card">
+    <div class="error-modal-head"><h2>🧾 Registro de errores</h2><button id="btnCloseErrorLog" type="button" aria-label="Cerrar">✕</button></div>
+    <p class="error-modal-help">Los errores de JavaScript y promesas no controladas se guardan aquí para poder depurar la aplicación.</p>
+    <pre id="errorLogContent" class="error-log-content">Sin errores registrados.</pre>
+    <div class="error-modal-actions"><button id="btnCopyErrorLog" type="button">📋 Copiar</button><button id="btnExportErrorLog" type="button">💾 Exportar</button><button id="btnClearErrorLog" type="button">🗑️ Borrar</button></div>
+  </div>
+</div>
+
+<div class="update-modal" id="updateModal" hidden>
+  <div class="update-modal-card"><h2>🔄 Buscar actualizaciones</h2><p id="updateStatus">Comprobando versión…</p><button id="btnCloseUpdate" type="button">Cerrar</button></div>
+</div>
+
+<footer class="player-bar">
+<div class="player-info">
+<div class="player-header">
+<span class="player-title" id="currentStationName">Sin emisora</span>
+<span class="player-status" id="playerStatus">Listo</span>
+</div>
+<div class="now-playing-wrapper">
+<div class="now-playing" id="nowPlayingTrack">🎵 Sin información de canción</div>
+<div class="program-line" id="programNow">📻 Programa actual: sin información</div>
+<div class="program-next" id="programNext">Siguiente: —</div>
+</div>
+</div>
+<div class="player-controls"><audio id="audioPlayer" controls></audio><div class="volume-control" aria-label="Control de volumen"><button id="btnMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="volumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="volumeValue">80%</output></div></div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
+<script src="stations-data.js?v=1.2.1"></script>
+<script src="app.js?v=1.4.65"></script>
+<script src="podcasts.js?v=1.4.65"></script>
+<script src="diagnostics.js?v=1.4.65"></script>
+</body>
+</html>
