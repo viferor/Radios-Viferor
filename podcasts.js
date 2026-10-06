@@ -232,7 +232,7 @@ function restoreLastPlayback(){
     states.sort((a,b)=>Number(b.at||0)-Number(a.at||0));
     const chosen=states[0];
     if(!chosen)return;
-    if(chosen.type==='podcast'&&chosen.episode){
+    if(chosen.type==='podcast'&&chosen.episode){if(typeof window.switchToPodcasts==='function')window.switchToPodcasts();
       podcastState.current=chosen.episode;
       podcastState.queue=[chosen.episode,...podcastState.queue.filter(x=>x.id!==chosen.episode.id)];
       const a=$p('podcastAudio'); if(!a)return;
@@ -241,7 +241,7 @@ function restoreLastPlayback(){
       a.onloadedmetadata=()=>{if(savedPos>0)a.currentTime=Math.min(savedPos,Math.max(0,(a.duration||savedPos)));updatePodcastPlayerUI();retryPodcastAutoplay(a);};
       $p('podcastNow').textContent=chosen.episode.title||'Sin episodio';
       $p('podcastNowSub').textContent=chosen.episode.podcastTitle||chosen.episode.author||'';
-    } else if(chosen.type==='radio'&&chosen.station&&typeof window.reproducirRadio==='function'){
+    } else if(chosen.type==='radio'&&chosen.station&&typeof window.reproducirRadio==='function'){if(typeof window.switchToRadios==='function')window.switchToRadios();
       setTimeout(()=>window.reproducirRadio(chosen.station),900);
     }
   }catch{}
