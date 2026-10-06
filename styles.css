@@ -1017,3 +1017,18 @@ html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!im
     min-height:82px!important;
   }
 }
+
+/* SAFE-NEXT 3 — favoritos de podcasts en portada */
+.pod-home-favorites{margin-top:14px}
+.pod-home-favorites-head{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:0 2px}
+.pod-home-favorites-head h2{font-size:1rem;flex:1}
+.pod-home-favorites-head span{font-size:.72rem;background:#eee;border-radius:10px;padding:3px 7px}
+.pod-home-favorites-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.pod-fav{border:1px solid #ddd;background:#fff;color:#999;border-radius:9px;padding:6px 9px;font-size:1rem;font-weight:800;line-height:1;cursor:pointer}
+.pod-fav.on{color:#d32f2f;background:#fff3f3;border-color:#ef9a9a}
+.pod-home-favorites-empty{background:#fff;border:1px dashed #d5d9dd;border-radius:12px;padding:18px;text-align:center;color:#666;display:flex;flex-direction:column;gap:5px}
+.pod-home-favorites-empty div{font-size:2rem;opacity:.5}.pod-home-favorites-empty strong{font-size:.85rem;color:#333}.pod-home-favorites-empty small{font-size:.72rem}
+html.dark-mode .pod-home-favorites-head span{background:#292f36;color:#cbd2d9}
+html.dark-mode .pod-fav{background:#1b2026;color:#9da5ad;border-color:#3b434c}.html.dark-mode .pod-fav.on{color:#ff8a80;background:#321d20;border-color:#8b3a3a}
+html.dark-mode .pod-home-favorites-empty{background:#15191e;color:#c1c7ce;border-color:#3b434c}.html.dark-mode .pod-home-favorites-empty strong{color:#f5f7f9}
+@media(max-width:650px){.pod-home-favorites-grid{grid-template-columns:1fr!important}.pod-home-favorites{margin-top:10px}}
