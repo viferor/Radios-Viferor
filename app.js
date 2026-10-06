@@ -1,5 +1,5 @@
-const APP_VERSION = '1.7.0';
-const APP_BUILD = '1700';
+const APP_VERSION = '1.7.1';
+const APP_BUILD = '1710';
 const STORAGE_KEY = 'mis_radios_favoritas_v1';
 const LOGO_CACHE_KEY = 'radio_espana_logos_v1';
 const GLOBAL_SOURCES = {
@@ -170,8 +170,8 @@ function init(){configurarGestoRadiosPodcasts();audio.volume=.8;audio.addEventLi
 audio.addEventListener('error',()=>{if(currentStation&&audio.paused)scheduleRadioReconnect();});
 audio.addEventListener('stalled',()=>{try{window.logError?.('RADIO_AUDIO','MEDIA_STALLED | '+(currentStreamUrl||''));}catch{}});
 audio.addEventListener('waiting',()=>{try{window.logError?.('RADIO_AUDIO','MEDIA_WAITING | '+(currentStreamUrl||''));}catch{}});
-window.addEventListener('online',()=>{if(currentStation&&audio.paused)scheduleRadioReconnect();else if(currentStation)syncRadioAndroidMedia(true);});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(currentStation&&!audio.paused)syncRadioAndroidMedia(true);if(currentStation&&audio.paused&&navigator.onLine)scheduleRadioReconnect();}});
+window.addEventListener('online',()=>{const podcastAudio=document.getElementById('podcastAudio');const podcastPlaying=!!podcastAudio&&!podcastAudio.paused&&!podcastAudio.ended;if(currentStation&&!podcastPlaying&&audio.paused)scheduleRadioReconnect();else if(currentStation&&!podcastPlaying)syncRadioAndroidMedia(true);});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(currentStation&&!audio.paused)syncRadioAndroidMedia(true);const podcastAudio=document.getElementById('podcastAudio');const podcastPlaying=!!podcastAudio&&!podcastAudio.paused&&!podcastAudio.ended;if(currentStation&&!podcastPlaying&&audio.paused&&navigator.onLine)scheduleRadioReconnect();}});
 
 window.addEventListener('pagehide',()=>{clearRadioWatchdog();try{if(audio&&!audio.paused&&currentStation){const st={type:'radio',station:currentStation,streamUrl:currentStreamUrl,playing:true,at:Date.now()};localStorage.setItem('radio_resume_state',JSON.stringify(st));localStorage.setItem('radios_viferor_playback_resume_v1',JSON.stringify(st));}}catch{}clearHls();});
 window.addEventListener('beforeunload',()=>{clearRadioWatchdog();try{if(audio&&!audio.paused&&currentStation){const st={type:'radio',station:currentStation,streamUrl:currentStreamUrl,playing:true,at:Date.now()};localStorage.setItem('radio_resume_state',JSON.stringify(st));localStorage.setItem('radios_viferor_playback_resume_v1',JSON.stringify(st));}}catch{}clearHls();});window.addEventListener('error',e=>console.error('UI error',e.error||e.message));window.addEventListener('unhandledrejection',e=>console.error('Unhandled rejection',e.reason));window.addEventListener('load',init);
