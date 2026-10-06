@@ -1002,3 +1002,18 @@ html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!im
   .fav-grid{grid-auto-rows:118px!important;align-content:start!important;align-items:start!important;}
   .fav-grid .station-card{height:118px!important;min-height:118px!important;max-height:118px!important;box-sizing:border-box!important;align-self:start!important;}
 }
+
+/* SAFE-NEXT 2 — aprovechar el espacio vertical en fichas de podcasts suscritos */
+.pod-subs-grid .pod-card{
+  align-items:stretch;
+}
+.pod-subs-grid .pod-art{
+  height:auto!important;
+  min-height:100px!important;
+  align-self:stretch!important;
+}
+@media(max-width:650px){
+  .pod-subs-grid .pod-art{
+    min-height:82px!important;
+  }
+}
