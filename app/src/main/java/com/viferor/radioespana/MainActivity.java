@@ -152,8 +152,9 @@ public class MainActivity extends Activity {
         final String js = "podcast".equalsIgnoreCase(section)
                 ? "window.switchToPodcasts&&window.switchToPodcasts();"
                 : "window.switchToRadios&&window.switchToRadios();";
+        // Apply the widget destination once. A second delayed navigation can
+        // overwrite a manual tab change made by the user a few seconds later.
         webView.postDelayed(() -> webView.evaluateJavascript(js, null), 1800);
-        webView.postDelayed(() -> webView.evaluateJavascript(js, null), 3500);
         intent.removeExtra("openSection");
     }
 
