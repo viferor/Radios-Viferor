@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " RadioEspana/1.4.38");
+        settings.setUserAgentString(settings.getUserAgentString() + " RadioEspana/1.8.0");
 
         webView.setWebViewClient(new WebViewClient());
         createNotificationChannel();
