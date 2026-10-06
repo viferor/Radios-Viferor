@@ -995,3 +995,10 @@ body.podcast-detail-active .pod-episodes .pod-actions button{
 }
 html.dark-mode body.podcast-detail-active .view-podcasts,
 html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!important}
+
+
+/* SAFE-NEXT 1 — compactación de favoritos en tablet */
+@media (min-width:600px){
+  .fav-grid{grid-auto-rows:118px!important;align-content:start!important;align-items:start!important;}
+  .fav-grid .station-card{height:118px!important;min-height:118px!important;max-height:118px!important;box-sizing:border-box!important;align-self:start!important;}
+}
