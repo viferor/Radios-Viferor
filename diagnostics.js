@@ -1,5 +1,5 @@
 (function(){
-  const VERSION='1.6.0', BUILD='1600';
+  const VERSION='1.7.1', BUILD='1710';
   const KEY='radios_viferor_error_log_v1';
   function read(){try{const x=JSON.parse(localStorage.getItem(KEY)||'[]');return Array.isArray(x)?x:[]}catch{return[]}}
   function write(a){try{localStorage.setItem(KEY,JSON.stringify(a.slice(-100)))}catch{}}
