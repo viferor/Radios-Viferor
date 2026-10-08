@@ -11,26 +11,12 @@
 <body>
 <header class="app-header">
 <button id="btnMenuSettings" class="menu-btn" type="button" aria-label="Abrir ajustes">☰</button>
-<h1>📻 Radios Viferor</h1>
-<div class="settings-menu" id="settingsMenu" hidden>
-  <div class="settings-menu-title">⚙️ Ajustes</div>
-  <button id="btnErrorLog" type="button">🧾 Registro de errores</button>
-  <button id="btnCheckUpdates" type="button">🔄 Buscar actualizaciones</button>
-  <button id="btnImportPodcasts" type="button">📂 Importar podcasts (OPML)</button>
-  <button id="btnExportPodcasts" type="button">💾 Exportar podcasts (OPML)</button>
-  <button id="btnFullBackup" type="button">💾 Backup completo de la aplicación</button>
-  <button id="btnFullRestore" type="button">📂 Restaurar backup de la aplicación</button>
-  <input id="fullBackupFile" type="file" accept=".json,application/json" hidden>
-  <button id="btnDarkMode" type="button">🌙 Modo oscuro</button>
-  <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
-  <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
-</div>
-</header>
-
 <div class="view-toggle">
+
 <button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
 <button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
 </div>
+</header>
 
 <section class="view view-fav active" id="viewFav">
 <div class="radio-home-toolbar">
@@ -180,8 +166,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
 <script src="stations-data.js?v=1.2.1"></script>
-<script src="app.js?v=1.6.0"></script>
-<script src="podcasts.js?v=1.6.0"></script>
-<script src="diagnostics.js?v=1.6.0"></script>
+<script src="app.js?v=1.6.1"></script>
+<script src="podcasts.js?v=1.6.1"></script>
+<script src="diagnostics.js?v=1.6.1"></script>
 </body>
 </html>
