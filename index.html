@@ -184,8 +184,37 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
 <script src="stations-data.js?v=1.2.1"></script>
-<script src="app.js?v=1.6.2"></script>
-<script src="podcasts.js?v=1.6.2"></script>
-<script src="diagnostics.js?v=1.6.2"></script>
+<script src="app.js?v=1.6.3"></script>
+<script src="podcasts.js?v=1.6.3"></script>
+<script src="diagnostics.js?v=1.6.3"></script>
+<script>
+(function(){
+  function bindStableMenus(){
+    var settingsBtn=document.getElementById('btnMenuSettings');
+    var settings=document.getElementById('settingsMenu');
+    if(settingsBtn&&settings&&!settingsBtn.__stableBound){
+      settingsBtn.__stableBound=true;
+      settingsBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();settings.hidden=!settings.hidden;});
+      document.addEventListener('click',function(e){
+        if(!settings.hidden&&e.target!==settingsBtn&&!settings.contains(e.target))settings.hidden=true;
+      });
+    }
+    var mine=document.getElementById('podMine');
+    var mineMenu=document.getElementById('podMineMenu');
+    if(mine&&mineMenu&&!mine.__stableBound){
+      mine.__stableBound=true;
+      mine.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=!mineMenu.hidden;mine.setAttribute('aria-expanded',mineMenu.hidden?'false':'true');});
+      var open=document.getElementById('podMineOpen');
+      if(open)open.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;mine.setAttribute('aria-expanded','false');if(typeof window.pushPodcastState==='function')window.pushPodcastState('subs');if(typeof window.renderPodcastHome==='function')window.renderPodcastHome(true);});
+      var search=document.getElementById('podMineSearch');
+      if(search)search.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;var d=document.getElementById('podSearchDrawer');if(d)d.hidden=false;var q=document.getElementById('podSearchText');if(q)q.focus();});
+      var imp=document.getElementById('podMineImport');
+      if(imp)imp.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;var file=document.getElementById('podcastFile');if(file)file.click();});
+    }
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bindStableMenus);else bindStableMenus();
+  window.addEventListener('load',bindStableMenus);
+})();
+</script>
 </body>
 </html>
