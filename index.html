@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11100" />
+<link rel="stylesheet" href="styles.css?v=11200" />
 </head>
 <body>
 <header class="app-header">
@@ -81,7 +81,11 @@
 <section class="view view-podcasts" id="viewPodcasts">
   <div class="pod-toolbar">
   <div class="pod-mine-wrap">
-    <button id="podMine" class="pod-my-subs" type="button" aria-label="Abrir mis podcasts"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 favoritos</small></span><span class="pod-my-subs-arrow" aria-hidden="true">›</span></button>
+    <button id="podMine" class="pod-my-subs" type="button" aria-label="Mis podcasts: ordenar y listas" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 favoritos</small></span><span class="pod-my-subs-arrow" aria-hidden="true">▾</span></button>
+  </div>
+  <div class="pod-mine-menu pod-mine-panel" id="podMineMenu" hidden>
+    <label class="pod-mine-sort"><span>Ordenar suscripciones</span><select id="podMineSort" aria-label="Ordenar suscripciones"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option></select></label>
+    <div class="pod-mine-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div>
   </div>
   <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Abrir búsqueda de podcasts" title="Buscar podcasts">🔎</button>
   <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
@@ -167,12 +171,12 @@
   </div>
 </div>
 
-<script src="version.js?v=11100"></script>
+<script src="version.js?v=11200"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11100"></script>
-<script src="buscador-radios.js?v=11100"></script>
-<script src="app.js?v=11100"></script>
-<script src="podcasts.js?v=11100"></script>
-<script src="diagnostics.js?v=11100"></script>
+<script src="stations-data.js?v=11200"></script>
+<script src="buscador-radios.js?v=11200"></script>
+<script src="app.js?v=11200"></script>
+<script src="podcasts.js?v=11200"></script>
+<script src="diagnostics.js?v=11200"></script>
 </body>
 </html>

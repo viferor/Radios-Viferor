@@ -1112,3 +1112,13 @@ body.fav-sorting,body.fav-sorting *{cursor:grabbing!important}
 html.dark-mode .pod-home-h span{background:#2a3138;color:#cfd6dd}
 html.dark-mode .pod-actions .pod-fav{background:#1a1f25;border-color:#6d5a24;color:#f5f7f9}
 html.dark-mode .pod-actions .pod-fav.on{background:#3a2f12;color:#ffe08a}
+
+/* 1.12.0 — Menú de «Mis podcasts»: orden de suscripciones y los cuatro modos */
+.pod-mine-panel{position:fixed!important;z-index:2500!important;padding:12px!important;background:#fff;border:1px solid #d8dde2;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.22);display:flex;flex-direction:column;gap:10px}
+.pod-mine-panel[hidden]{display:none!important}
+.pod-mine-panel .pod-mine-sort{display:flex;flex-direction:column;gap:4px;font-size:.72rem;font-weight:800;color:var(--subtext)}
+.pod-mine-panel select{width:100%;height:42px;border:1px solid #d8dde2;border-radius:10px;padding:0 10px;font-size:.92rem;background:#fff;color:var(--text)}
+.pod-mine-panel .pod-mine-modes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pod-mine-panel .pod-mine-modes button{display:block;width:100%;min-height:44px;text-align:center!important;border:1px solid #ddd!important;background:#fff!important;border-radius:10px!important;padding:8px 6px!important;font-weight:800!important;font-size:.8rem!important;color:var(--text);cursor:pointer}
+html.dark-mode .pod-mine-panel{background:#15191e;border-color:#353c44}
+html.dark-mode .pod-mine-panel select,html.dark-mode .pod-mine-panel .pod-mine-modes button{background:#1a1f25!important;border-color:#353c44!important;color:#f5f7f9}

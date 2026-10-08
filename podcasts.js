@@ -681,34 +681,19 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     root.append(sec);
     root.insertAdjacentHTML('beforeend', `<h2 class="pod-home-h">📚 Mis suscripciones <span>${podcastState.subs.length}</span></h2>`);
   }
-  const title = document.createElement('div');
-  title.className = 'pod-section-title pod-subs-head' + (inline ? ' pod-subs-inline' : '');
-  title.innerHTML =
-    (inline ? '' : '<button class="pod-back-btn" id="podBack" type="button">← Volver</button>') +
-    '<div class="pod-detail-title"><h2>📚 Mis suscripciones</h2><span>' +
-    podcastSubsCountText(podcastState.subs.length) +
-    '</span></div><div class="pod-subs-controls"><label class="pod-mine-sort"><span>Ordenar por</span><select id="podMineSort" aria-label="Ordenar mis podcasts"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option></select></label><div class="pod-modes pod-modes-inline"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div></div>';
-  root.append(title);
-  if ($p('podBack')) $p('podBack').onclick = backFromPodcast;
-  // Los cuatro modos crean una lista de reproducción con tus suscripciones
-  // (antes los botones no tenían ninguna acción asociada).
-  $p('podLatestAll').onclick = () => playAll('latest');
-  $p('podMixRandom').onclick = () => playAll('random');
-  $p('podContinue').onclick = () => playAll('continue');
-  $p('podPopular').onclick = () => {
-    if ($p('podSort')) $p('podSort').value = 'popular';
-    if ($p('podSearchText')) $p('podSearchText').value = '';
-    searchPodcasts();
-  };
+  // El orden y los cuatro modos están en el menú de «Mis podcasts»; aquí solo la lista.
+  if (!inline) {
+    const title = document.createElement('div');
+    title.className = 'pod-section-title pod-subs-head';
+    title.innerHTML =
+      '<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-detail-title"><h2>📚 Mis suscripciones</h2><span>' +
+      podcastSubsCountText(podcastState.subs.length) +
+      '</span></div>';
+    root.append(title);
+    $p('podBack').onclick = backFromPodcast;
+  }
   updatePodcastMineCount();
   const sort = $p('podMineSort');
-  if (sort) {
-    sort.value = localStorage.getItem('radios_viferor_podcast_mine_sort') || 'name';
-    sort.onchange = () => {
-      localStorage.setItem('radios_viferor_podcast_mine_sort', sort.value);
-      rerenderPodcastHome();
-    };
-  }
   if (!podcastState.subs.length) {
     root.insertAdjacentHTML(
       'beforeend',
@@ -1539,6 +1524,11 @@ window.handleAndroidBack = function () {
       radioNowPanel.hidden = true;
       return true;
     }
+    const mineMenu = document.getElementById('podMineMenu');
+    if (mineMenu && !mineMenu.hidden) {
+      window.closePodcastMineMenu?.();
+      return true;
+    }
     const settings = document.getElementById('settingsMenu');
     if (settings && !settings.hidden) {
       settings.hidden = true;
@@ -1688,13 +1678,55 @@ function initPodcasts() {
   if (pf) pf.addEventListener('change', importPodcastOPML);
   // «Mis podcasts»: tus suscripciones con el orden y los cuatro modos.
   // Antes abría un desplegable que quedaba recortado e invisible dentro de la barra.
-  // «Mis podcasts» abre la pantalla completa de tus suscripciones, con el orden y los
-  // cuatro modos (la portada también los muestra, pero el botón debe hacer algo visible).
-  $p('podMine').onclick = e => {
-    e.preventDefault();
-    closePodcastSearchDrawer();
-    renderPodcastHome(false);
+  // «Mis podcasts» despliega un menú con el orden de las suscripciones y los cuatro
+  // modos. Va en una capa fija (no dentro de la barra) para que nunca quede recortado.
+  const mineMenu = $p('podMineMenu'),
+    mineBtn = $p('podMine');
+  const setMineMenu = open => {
+    if (!mineMenu || !mineBtn) return;
+    if (open) {
+      const r = mineBtn.getBoundingClientRect();
+      mineMenu.style.top = r.bottom + 6 + 'px';
+      mineMenu.style.left = Math.max(8, r.left) + 'px';
+      mineMenu.style.width = Math.min(window.innerWidth - 16, Math.max(r.width, 300)) + 'px';
+    }
+    mineMenu.hidden = !open;
+    mineBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
+  window.closePodcastMineMenu = () => setMineMenu(false);
+  mineBtn.onclick = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    closePodcastSearchDrawer();
+    setMineMenu(mineMenu.hidden);
+  };
+  document.addEventListener('click', e => {
+    if (mineMenu && !mineMenu.hidden && !mineMenu.contains(e.target) && !mineBtn.contains(e.target)) setMineMenu(false);
+  });
+  window.addEventListener('resize', () => setMineMenu(false));
+  const runMode = fn => () => {
+    setMineMenu(false);
+    fn();
+  };
+  $p('podLatestAll').onclick = runMode(() => playAll('latest'));
+  $p('podMixRandom').onclick = runMode(() => playAll('random'));
+  $p('podContinue').onclick = runMode(() => playAll('continue'));
+  $p('podPopular').onclick = runMode(() => {
+    if ($p('podSort')) $p('podSort').value = 'popular';
+    if ($p('podSearchText')) $p('podSearchText').value = '';
+    searchPodcasts();
+  });
+  const mineSort = $p('podMineSort');
+  if (mineSort) {
+    mineSort.value = localStorage.getItem('radios_viferor_podcast_mine_sort') || 'name';
+    mineSort.onchange = () => {
+      localStorage.setItem('radios_viferor_podcast_mine_sort', mineSort.value);
+      setMineMenu(false);
+      // Se ve el resultado en la portada (favoritos + suscripciones ordenadas).
+      if (podcastState.screen === 'landing' || podcastState.screen === 'subs') rerenderPodcastHome();
+      else renderPodcastLanding(false);
+    };
+  }
   $p('podSearchOpen').onclick = openPodcastSearchDrawer;
   $p('podSearchClose').onclick = closePodcastSearchDrawer;
   $p('btnViewPodcasts').onclick = switchToPodcasts;
