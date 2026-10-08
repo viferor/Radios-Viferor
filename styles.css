@@ -1077,3 +1077,15 @@ html.dark-mode .pod-home-favorites-empty{background:#15191e;color:#c1c7ce;border
 /* SAFE-NEXT 5 — eliminar el bloque decorativo de micrófono de la portada Podcasts */
 .pod-landing-hero{display:none!important}
 .pod-landing{margin-top:0!important}
+
+/* SAFE-NEXT 6 — navegación principal a ancho completo */
+.app-header .view-toggle{
+  flex:1 1 auto!important;
+  width:auto!important;
+}
+.app-header .view-toggle .toggle-btn{
+  flex:1 1 0!important;
+  width:0!important;
+  min-width:0!important;
+  text-align:center!important;
+}
