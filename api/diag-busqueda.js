@@ -21,23 +21,28 @@ export default async function handler(req, res) {
     const st = {}; a.forEach(x => { const k = x.state || '(vacío)'; st[k] = (st[k] || 0) + 1; });
     out.states = Object.entries(st).sort((x, y) => y[1] - x[1]).slice(0, 70);
     out.sample = a.filter(x => /cordoba|córdoba|ser |cope|los40|dial/i.test(x.name)).slice(0, 40).map(x => `${x.name} | ${x.state} | ${x.tags?.slice(0, 40)}`);
-  } else if (part === 'apple') {
-    const top = await j('https://itunes.apple.com/es/rss/toppodcasts/limit=5/genre=1545/json');
+  } else if (part === 'apple1') {
+    const [top, mod, top2, top3] = await Promise.all([
+      j('https://itunes.apple.com/es/rss/toppodcasts/limit=5/genre=1545/json'),
+      j('https://rss.applemarketingtools.com/api/v2/es/podcasts/top/5/podcasts.json'),
+      j('https://itunes.apple.com/es/rss/toppodcasts/limit=200/json'),
+      j('https://itunes.apple.com/es/rss/toppodcasts/limit=200/genre=1487/json')
+    ]);
     out.legacyTop = { status: top.status || top.error, keys: Object.keys(top.d?.feed || {}), first: top.d?.feed?.entry?.[0] ? { name: top.d.feed.entry[0]['im:name']?.label, id: top.d.feed.entry[0].id?.attributes?.['im:id'], cat: top.d.feed.entry[0].category?.attributes } : top.head };
-    const mod = await j('https://rss.applemarketingtools.com/api/v2/es/podcasts/top/5/podcasts.json');
     out.modernTop = { status: mod.status || mod.error, first: mod.d?.feed?.results?.[0] ? { name: mod.d.feed.results[0].name, id: mod.d.feed.results[0].id, genres: mod.d.feed.results[0].genres } : mod.head };
-    const s1 = await j('https://itunes.apple.com/search?term=historia&country=ES&media=podcast&entity=podcast&limit=50');
-    const s2 = await j('https://itunes.apple.com/search?term=historia&country=ES&media=podcast&entity=podcast&limit=50&genreId=1545');
-    out.searchNoGenre = { count: s1.d?.resultCount, genresFirst: s1.d?.results?.slice(0, 3).map(x => [x.collectionName, x.primaryGenreName, (x.genreIds || []).join('/'), x.country, x.trackCount]) , keys: Object.keys(s1.d?.results?.[0] || {}) };
-    out.searchGenreParam = { count: s2.d?.resultCount, first: s2.d?.results?.slice(0, 3).map(x => [x.collectionName, x.primaryGenreName]) };
-    const s3 = await j('https://itunes.apple.com/search?term=ser&country=ES&media=podcast&entity=podcast&attribute=artistTerm&limit=5');
+    out.legacyTopAll = { status: top2.status || top2.error, count: top2.d?.feed?.entry?.length };
+    out.legacyTopHistoria = { status: top3.status || top3.error, count: top3.d?.feed?.entry?.length, first: top3.d?.feed?.entry?.slice(0, 3).map(e => e['im:name']?.label) };
+  } else if (part === 'apple2') {
+    const [s1, s2, s3, s4] = await Promise.all([
+      j('https://itunes.apple.com/search?term=historia&country=ES&media=podcast&entity=podcast&limit=50'),
+      j('https://itunes.apple.com/search?term=historia&country=ES&media=podcast&entity=podcast&limit=50&genreId=1545'),
+      j('https://itunes.apple.com/search?term=ser&country=ES&media=podcast&entity=podcast&attribute=artistTerm&limit=5'),
+      j('https://itunes.apple.com/lookup?id=1458203451,1513766929&entity=podcast')
+    ]);
+    out.searchNoGenre = { count: s1.d?.resultCount, rows: s1.d?.results?.slice(0, 4).map(x => [x.collectionName, x.primaryGenreName, (x.genreIds || []).join('/'), x.country, x.trackCount]), keys: Object.keys(s1.d?.results?.[0] || {}) };
+    out.searchGenreParam = { count: s2.d?.resultCount, rows: s2.d?.results?.slice(0, 3).map(x => [x.collectionName, x.primaryGenreName]) };
     out.artistTerm = s3.d?.results?.map(x => [x.collectionName, x.artistName]);
-    const lk = top.d?.feed?.entry?.[0]?.id?.attributes?.['im:id'];
-    if (lk) { const l = await j('https://itunes.apple.com/lookup?id=' + lk + '&entity=podcast'); out.lookup = l.d?.results?.[0] ? [l.d.results[0].collectionName, !!l.d.results[0].feedUrl] : l.head; }
-    const top2 = await j('https://itunes.apple.com/es/rss/toppodcasts/limit=200/json');
-    out.legacyTopAll = { count: top2.d?.feed?.entry?.length, status: top2.status };
-    const top3 = await j('https://itunes.apple.com/es/rss/toppodcasts/limit=200/genre=1487/json');
-    out.legacyTopHistoria = { count: top3.d?.feed?.entry?.length, first: top3.d?.feed?.entry?.slice(0, 3).map(e => e['im:name']?.label) };
+    out.lookupMulti = s4.d?.results?.map(x => [x.collectionName, !!x.feedUrl]) || s4.head;
   }
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).send('<pre>' + JSON.stringify(out, null, 1).replace(/</g, '&lt;') + '</pre>');
