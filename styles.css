@@ -1089,3 +1089,100 @@ html.dark-mode .pod-home-favorites-empty{background:#15191e;color:#c1c7ce;border
   min-width:0!important;
   text-align:center!important;
 }
+
+
+/* SAFE-NEXT 7 — reorganización de Podcasts: menú Mis podcasts, lupa y acciones junto al orden */
+.pod-toolbar{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  position:relative;
+  z-index:20;
+}
+.pod-mine-wrap{position:relative;flex:1 1 auto;min-width:0}
+.pod-my-subs{width:100%;display:flex;align-items:center;gap:9px}
+.pod-my-subs-arrow{margin-left:auto}
+.pod-mine-menu{
+  position:absolute;
+  top:calc(100% + 6px);
+  left:0;
+  width:min(290px,calc(100vw - 24px));
+  padding:6px;
+  background:#fff;
+  border:1px solid #d8dde2;
+  border-radius:12px;
+  box-shadow:0 10px 24px rgba(0,0,0,.16);
+  z-index:40;
+}
+.pod-mine-menu[hidden],.pod-search-drawer[hidden]{display:none!important}
+.pod-mine-menu button{
+  display:block;width:100%;text-align:left;border:0;background:transparent;
+  padding:11px 12px;border-radius:9px;font-weight:700;font-size:.82rem;cursor:pointer;
+}
+.pod-mine-menu button:hover{background:#f1f3f5}
+.pod-search-open{
+  flex:0 0 42px;width:42px;height:42px;border:1px solid #d8dde2;
+  border-radius:10px;background:#fff;font-size:1.05rem;cursor:pointer;
+}
+.pod-search-drawer{
+  position:relative;
+  z-index:15;
+  margin:8px 0 10px;
+  background:#fff;
+  border:1px solid #d8dde2;
+  border-radius:12px;
+  box-shadow:0 6px 16px rgba(0,0,0,.08);
+  overflow:hidden;
+}
+.pod-search-drawer-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 12px;border-bottom:1px solid #e5e8eb;
+}
+.pod-search-drawer-head button{
+  border:0;background:transparent;font-size:1rem;cursor:pointer;padding:4px 7px;
+}
+.pod-search-drawer .pod-search{padding:10px}
+.pod-subs-controls{
+  margin-left:auto;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.pod-modes-inline{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.pod-modes-inline button{
+  min-height:40px;
+  padding:8px 10px;
+  border:1px solid #ddd;
+  border-radius:10px;
+  background:#fff;
+  color:#333;
+  font-weight:700;
+  font-size:.72rem;
+  cursor:pointer;
+}
+html.dark-mode .pod-mine-menu,
+html.dark-mode .pod-search-open,
+html.dark-mode .pod-search-drawer{
+  background:#15191e!important;color:#f5f7f9;border-color:#353c44;
+}
+html.dark-mode .pod-mine-menu button{color:#f5f7f9}
+html.dark-mode .pod-mine-menu button:hover{background:#252b32}
+html.dark-mode .pod-search-drawer-head{border-color:#353c44}
+html.dark-mode .pod-search-open,
+html.dark-mode .pod-modes-inline button{background:#1b2026;color:#f5f7f9;border-color:#3b434c}
+@media(max-width:900px){
+  .pod-subs-controls{width:100%;margin-left:0;justify-content:flex-start}
+  .pod-modes-inline{width:100%}
+  .pod-modes-inline button{flex:1 1 calc(50% - 5px);min-width:150px}
+}
+@media(max-width:650px){
+  .pod-toolbar{gap:6px}
+  .pod-search-open{flex-basis:40px;width:40px;height:40px}
+  .pod-mine-menu{width:calc(100vw - 20px)}
+  .pod-subs-controls{display:block}
+  .pod-mine-sort{width:100%!important}
+  .pod-modes-inline{display:grid;width:100%;grid-template-columns:1fr 1fr;gap:6px;margin-top:7px}
+  .pod-modes-inline button{min-width:0;width:100%;font-size:.7rem;padding:8px 5px}
+}
