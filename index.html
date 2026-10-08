@@ -16,6 +16,19 @@
 <button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
 <button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
 </div>
+<div class="settings-menu" id="settingsMenu" hidden>
+  <div class="settings-menu-title">⚙️ Ajustes</div>
+  <button id="btnErrorLog" type="button">🧾 Registro de errores</button>
+  <button id="btnCheckUpdates" type="button">🔄 Buscar actualizaciones</button>
+  <button id="btnImportPodcasts" type="button">📂 Importar podcasts (OPML)</button>
+  <button id="btnExportPodcasts" type="button">💾 Exportar podcasts (OPML)</button>
+  <button id="btnFullBackup" type="button">💾 Backup completo de la aplicación</button>
+  <button id="btnFullRestore" type="button">📂 Restaurar backup de la aplicación</button>
+  <input id="fullBackupFile" type="file" accept=".json,application/json" hidden>
+  <button id="btnDarkMode" type="button">🌙 Modo oscuro</button>
+  <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
+  <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
+</div>
 </header>
 
 <section class="view view-fav active" id="viewFav">
