@@ -76,6 +76,14 @@ export default async function handler(req, res) {
       try { await meta({ query: { url: u, name: k }, headers: { 'x-forwarded-for': 'diag' + k }, url: '/x' }, res); out[k] = res.body; } catch (e) { out[k] = 'crash ' + e.message; }
     }));
   }
+  if (part === 'genres') {
+    const ids = ['1301','1321','1303','1488','1304','1483','1511','1512','1487','1305','1310','1489','1314','1437','1533','1324','1545','1318','1309','1502','1320'];
+    await Promise.all(ids.map(async id => {
+      const t = await j(`https://itunes.apple.com/es/rss/toppodcasts/limit=2/genre=${id}/json`, 7000);
+      const e = t.d?.feed?.entry; const first = Array.isArray(e) ? e[0] : e;
+      out[id] = first ? `${first.category?.attributes?.label} / ${first.category?.attributes?.term} (${first.category?.attributes?.['im:id']}) — ${first['im:name']?.label}` : 'sin datos ' + (t.status || t.error);
+    }));
+  }
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).send('<pre>' + JSON.stringify(out, null, 1).replace(/</g, '&lt;') + '</pre>');
 }
