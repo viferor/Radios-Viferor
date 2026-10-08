@@ -599,6 +599,16 @@ function renderPodcastHome(fromHistory = false) {
     ' suscripciones</span></div><div class="pod-subs-controls"><label class="pod-mine-sort"><span>Ordenar por</span><select id="podMineSort" aria-label="Ordenar mis podcasts"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option></select></label><div class="pod-modes pod-modes-inline"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div></div>';
   root.append(title);
   $p('podBack').onclick = backFromPodcast;
+  // Los cuatro modos crean una lista de reproducción con tus suscripciones
+  // (antes los botones no tenían ninguna acción asociada).
+  $p('podLatestAll').onclick = () => playAll('latest');
+  $p('podMixRandom').onclick = () => playAll('random');
+  $p('podContinue').onclick = () => playAll('continue');
+  $p('podPopular').onclick = () => {
+    if ($p('podSort')) $p('podSort').value = 'popular';
+    if ($p('podSearchText')) $p('podSearchText').value = '';
+    searchPodcasts();
+  };
   if ($p('podMineCount')) $p('podMineCount').textContent = podcastState.subs.length + ' suscripciones';
   const sort = $p('podMineSort');
   if (sort) {
@@ -611,8 +621,13 @@ function renderPodcastHome(fromHistory = false) {
   if (!podcastState.subs.length) {
     root.insertAdjacentHTML(
       'beforeend',
-      '<div class="pod-empty"><div>🎙️</div><h3>Aún no tienes suscripciones</h3><p>Importa tu OPML o descubre podcasts nuevos.</p></div>'
+      '<div class="pod-empty"><div>🎙️</div><h3>Aún no tienes suscripciones</h3><p>Importa tu OPML o descubre podcasts nuevos.</p><div class="pod-empty-actions"><button type="button" id="podEmptyImport">📥 Importar OPML</button><button type="button" id="podEmptySearch">🔎 Buscar podcasts</button></div></div>'
     );
+    $p('podEmptyImport')?.addEventListener('click', () => $p('podcastFile')?.click());
+    $p('podEmptySearch')?.addEventListener('click', () => {
+      backFromPodcast();
+      window.openPodcastSearchDrawer?.();
+    });
     return;
   }
   const grid = document.createElement('div');
@@ -1504,20 +1519,12 @@ function initPodcasts() {
     $p('podLanguage').addEventListener('change', e =>
       localStorage.setItem('radios_viferor_podcast_language', e.target.value || '')
     );
-  const togglePodcastMineMenu = (force = null) => {
-    const m = $p('podMineMenu'),
-      b = $p('podMine');
-    if (!m || !b) return;
-    const open = force === null ? m.hidden : !!force;
-    m.hidden = !open;
-    b.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
   const openPodcastSearchDrawer = () => {
     const d = $p('podSearchDrawer');
     if (d) d.hidden = false;
-    togglePodcastMineMenu(false);
     $p('podSearchText')?.focus();
   };
+  window.openPodcastSearchDrawer = openPodcastSearchDrawer;
   const closePodcastSearchDrawer = () => {
     const d = $p('podSearchDrawer');
     if (d) d.hidden = true;
@@ -1531,26 +1538,15 @@ function initPodcasts() {
   });
   const pf = $p('podcastFile');
   if (pf) pf.addEventListener('change', importPodcastOPML);
+  // «Mis podcasts» abre directamente las suscripciones (orden y los cuatro modos).
+  // Antes abría un desplegable que quedaba recortado e invisible dentro de la barra.
   $p('podMine').onclick = e => {
     e.preventDefault();
-    e.stopPropagation();
-    togglePodcastMineMenu();
-  };
-  $p('podMineOpen').onclick = () => {
-    togglePodcastMineMenu(false);
-    pushPodcastState('subs');
-    renderPodcastHome(true);
-  };
-  $p('podMineSearch').onclick = openPodcastSearchDrawer;
-  $p('podMineImport').onclick = () => {
-    $p('podcastFile')?.click();
-    togglePodcastMineMenu(false);
+    closePodcastSearchDrawer();
+    renderPodcastHome(false);
   };
   $p('podSearchOpen').onclick = openPodcastSearchDrawer;
   $p('podSearchClose').onclick = closePodcastSearchDrawer;
-  document.addEventListener('click', e => {
-    if (!e.target.closest('.pod-mine-wrap')) togglePodcastMineMenu(false);
-  });
   $p('btnViewPodcasts').onclick = switchToPodcasts;
   $p('btnViewRadios').onclick = switchToRadios;
   window.addEventListener('popstate', () => {

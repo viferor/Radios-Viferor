@@ -1006,3 +1006,10 @@ html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!im
 .app-header .view-toggle{flex:1 1 auto!important;min-width:0;border-radius:12px;padding:4px!important;gap:4px!important;border-bottom:0!important}
 .app-header .view-toggle .toggle-btn{width:auto!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:9px 6px!important}
 .settings-menu{top:52px}
+
+/* 1.7.1 — «Mis podcasts» abre directamente las suscripciones. La barra ya no recorta su contenido. */
+.pod-toolbar{overflow:visible!important}
+.pod-my-subs-arrow{font-size:1.4rem;line-height:1;opacity:.6}
+.pod-empty-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
+.pod-empty-actions button{border:1px solid #d8dde2;background:#fff;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+html.dark-mode .pod-empty-actions button{background:#15191e;color:#f5f7f9;border-color:#353c44}
