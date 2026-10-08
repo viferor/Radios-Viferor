@@ -12,7 +12,6 @@
 <header class="app-header">
 <button id="btnMenuSettings" class="menu-btn" type="button" aria-label="Abrir ajustes">☰</button>
 <div class="view-toggle">
-
 <button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
 <button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
 </div>
@@ -99,30 +98,31 @@
 
 <section class="view view-podcasts" id="viewPodcasts">
   <div class="pod-toolbar">
-    <div class="pod-mine-wrap">
-      <button id="podMine" class="pod-my-subs" type="button" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 suscripciones</small></span><span class="pod-my-subs-arrow">▾</span></button>
-      <div class="pod-mine-menu" id="podMineMenu" hidden>
-        <button id="podMineOpen" type="button">⭐ Mis podcasts</button>
-        <button id="podMineSearch" type="button">🔎 Buscar podcasts</button>
-        <button id="podMineImport" type="button">📥 Importar suscripciones</button>
-      </div>
-    </div>
-    <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Abrir búsqueda de podcasts" title="Buscar podcasts">🔎</button>
-    <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
-  </div>
-  <div class="pod-search-drawer" id="podSearchDrawer" hidden>
-    <div class="pod-search-drawer-head"><strong>🔎 Buscar podcasts</strong><button id="podSearchClose" type="button" aria-label="Cerrar búsqueda">✕</button></div>
-    <div class="pod-search">
-      <div class="pod-search-text"><span class="pod-filter-label">Buscar</span><input id="podSearchText" type="text" placeholder="🔎 Nombre, tema o podcast..." autocomplete="off"></div>
-      <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
-      <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ALL">🌐 Todos</option><option value="ES">🇪🇸 España</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
-      <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
-      <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Buscar</option><option value="popular">Más populares</option></select></label>
-      <button id="podSearchBtn" type="button">Buscar</button>
+  <div class="pod-mine-wrap">
+    <button id="podMine" class="pod-my-subs" type="button" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 suscripciones</small></span><span class="pod-my-subs-arrow">▾</span></button>
+    <div class="pod-mine-menu" id="podMineMenu" hidden>
+      <button id="podMineOpen" type="button">⭐ Mis podcasts</button>
+      <button id="podMineSearch" type="button">🔎 Buscar podcasts</button>
+      <button id="podMineImport" type="button">📥 Importar suscripciones</button>
     </div>
   </div>
-  <main id="podcastContent" class="podcast-content"></main>
-  <div class="pod-player" id="podcastPlayerMini">
+  <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Abrir búsqueda de podcasts" title="Buscar podcasts">🔎</button>
+  <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
+</div>
+<div class="pod-search-drawer" id="podSearchDrawer" hidden>
+  <div class="pod-search-drawer-head"><strong>🔎 Buscar podcasts</strong><button id="podSearchClose" type="button" aria-label="Cerrar búsqueda">✕</button></div>
+  <div class="pod-search">
+    <div class="pod-search-text"><span class="pod-filter-label">Buscar</span><input id="podSearchText" type="text" placeholder="🔎 Nombre, tema o podcast..." autocomplete="off"></div>
+    <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
+    <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ALL">🌐 Todos</option><option value="ES">🇪🇸 España</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
+    <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
+    <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Buscar</option><option value="popular">Más populares</option></select></label>
+    <button id="podSearchBtn" type="button">Buscar</button>
+  </div>
+</div>
+<main id="podcastContent" class="podcast-content"></main>
+
+<div class="pod-player" id="podcastPlayerMini">
     <div class="pod-mini-info" id="podcastMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de podcast">
       <strong id="podcastNow">Sin episodio</strong><span id="podcastNowSub"></span>
     </div>
@@ -152,7 +152,7 @@
   </div>
 </section>
 
-<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText">1.6.2</strong> · Compilación <strong id="appBuildText">1620</strong></footer>
+<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText">1.6.0</strong> · Compilación <strong id="appBuildText">1600</strong></footer>
 
 <div class="error-modal" id="errorModal" hidden>
   <div class="error-modal-card">
@@ -186,6 +186,6 @@
 <script src="stations-data.js?v=1.2.1"></script>
 <script src="app.js?v=1.6.2"></script>
 <script src="podcasts.js?v=1.6.2"></script>
-<script src="diagnostics.js?v=1.6.1"></script>
+<script src="diagnostics.js?v=1.6.2"></script>
 </body>
 </html>
