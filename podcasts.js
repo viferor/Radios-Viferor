@@ -228,46 +228,96 @@ const podcastActivityCache = new Map();
 function podcastActivityKey(p) {
   return podcastKey(p);
 }
+// Metadatos ligeros de cada feed (fecha del último episodio, portada, autor).
+// Usa /api/podcast-feed?meta=1, que no devuelve la lista de episodios, con un
+// máximo de 4 peticiones simultáneas y sin repetir peticiones en curso.
+const podcastMetaInFlight = new Map();
+let podcastMetaActive = 0;
+const podcastMetaWaiters = [];
+async function podcastMetaSlot(fn) {
+  if (podcastMetaActive >= 4) await new Promise(r => podcastMetaWaiters.push(r));
+  podcastMetaActive++;
+  try {
+    return await fn();
+  } finally {
+    podcastMetaActive--;
+    podcastMetaWaiters.shift()?.();
+  }
+}
+function fetchPodcastMeta(p) {
+  const feed = podcastFeedUrl(p);
+  if (!feed) return Promise.resolve(null);
+  const key = podcastActivityKey(p);
+  if (podcastMetaInFlight.has(key)) return podcastMetaInFlight.get(key);
+  const job = podcastMetaSlot(async () => {
+    try {
+      const u = new URL('/api/podcast-feed', location.origin);
+      u.searchParams.set('url', feed);
+      u.searchParams.set('meta', '1');
+      const r = await fetch(u);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const latest = podcastDateValue(d.latest?.date) || 0;
+      podcastActivityCache.set(key, { t: Date.now(), latest });
+      return { latest, feed: d.feed || {} };
+    } catch {
+      podcastActivityCache.set(key, { t: Date.now(), latest: 0 });
+      return null;
+    } finally {
+      podcastMetaInFlight.delete(key);
+    }
+  });
+  podcastMetaInFlight.set(key, job);
+  return job;
+}
 async function refreshPodcastActivity(items, { rerender = null, maxAge = 86400000 } = {}) {
   const now = Date.now();
   const pending = items.filter(p => {
-    const feed = podcastFeedUrl(p);
-    if (!feed) return false;
-    const key = podcastActivityKey(p),
-      cached = podcastActivityCache.get(key);
-    return !cached || !Number.isFinite(cached.t) || now - cached.t > maxAge;
+    if (!podcastFeedUrl(p)) return false;
+    const cached = podcastActivityCache.get(podcastActivityKey(p));
+    if (cached && Number.isFinite(cached.t) && now - cached.t <= maxAge) return false;
+    // Lo comprobado hace poco y guardado en la suscripción también vale.
+    const checked = Number(p.latestEpisodeCheckedAt || 0);
+    if (checked && now - checked <= maxAge && (p.artwork || p.image)) return false;
+    return true;
   });
-  if (!pending.length) return;
-  for (let i = 0; i < pending.length; i += 5) {
-    await Promise.all(
-      pending.slice(i, i + 5).map(async p => {
-        const key = podcastActivityKey(p);
-        try {
-          const u = new URL('/api/podcast-feed', location.origin);
-          u.searchParams.set('url', podcastFeedUrl(p));
-          const r = await fetch(u, { cache: 'no-store' });
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          const d = await r.json();
-          const dates = (d.episodes || [])
-            .flatMap(e => [e.date, e.pubDate, e.published, e.updated, e.releaseDate, e.lastBuildDate])
-            .map(podcastDateValue)
-            .filter(Boolean);
-          const latest = dates.length ? Math.max(...dates) : 0;
-          podcastActivityCache.set(key, { t: Date.now(), latest });
-          if (latest) {
-            p.latestEpisodeAt = new Date(latest).toISOString();
-            p.latestEpisodeCheckedAt = Date.now();
-          } else if (!p.latestEpisodeAt) {
-            p.latestEpisodeCheckedAt = Date.now();
+  if (!pending.length) return false;
+  let changed = false;
+  await Promise.all(
+    pending.map(async p => {
+      const x = await fetchPodcastMeta(p);
+      const i = podcastState.subs.findIndex(s => podcastKey(s) === podcastKey(p));
+      const targets = i >= 0 && podcastState.subs[i] !== p ? [p, podcastState.subs[i]] : [p];
+      for (const cur of targets) {
+        cur.latestEpisodeCheckedAt = Date.now();
+        if (!x) continue;
+        if (x.latest) {
+          const iso = new Date(x.latest).toISOString();
+          if (cur.latestEpisodeAt !== iso) {
+            cur.latestEpisodeAt = iso;
+            changed = true;
           }
-        } catch {
-          podcastActivityCache.set(key, { t: Date.now(), latest: 0 });
         }
-      })
-    );
-    savePodcastSubs();
-    if (typeof rerender === 'function') rerender();
-  }
+        const img = x.feed.image || x.feed.artwork || '';
+        if (img && !(cur.artwork || cur.image)) {
+          cur.artwork = img;
+          cur.image = img;
+          changed = true;
+        }
+        if (x.feed.author && !cur.author) {
+          cur.author = x.feed.author;
+          changed = true;
+        }
+        if (x.feed.description && !cur.description) {
+          cur.description = x.feed.description;
+          changed = true;
+        }
+      }
+    })
+  );
+  savePodcastSubs();
+  if (typeof rerender === 'function') rerender();
+  return changed;
 }
 function getPodcastLatestDate(p) {
   const ownFields = [
@@ -321,62 +371,141 @@ function getSortedPodcastSubs() {
     return String(a.author || '').localeCompare(String(b.author || ''), 'es', { sensitivity: 'base' });
   });
 }
-async function refreshPodcastLatestDates() {
-  const items = podcastState.subs.filter(p => podcastFeedUrl(p));
-  if (!items.length) return;
-  const results = await Promise.all(
-    items.map(async p => {
-      try {
-        const u = new URL('/api/podcast-feed', location.origin);
-        u.searchParams.set('url', podcastFeedUrl(p));
-        const r = await fetch(u, { cache: 'no-store' });
-        if (!r.ok) return null;
-        const d = await r.json();
-        const dates = (d.episodes || [])
-          .flatMap(e => [e.date, e.pubDate, e.published, e.updated, e.releaseDate, e.lastBuildDate])
-          .map(podcastDateValue)
-          .filter(Boolean);
-        const latest = dates.length ? Math.max(...dates) : 0;
-        podcastActivityCache.set(podcastActivityKey(p), { t: Date.now(), latest });
-        return {
-          p,
-          latest,
-          artwork: d.feed?.image || d.feed?.artwork || '',
-          author: d.feed?.author || '',
-          description: d.feed?.description || ''
-        };
-      } catch {
-        return null;
-      }
-    })
-  );
-  let changed = false;
-  for (const x of results) {
-    if (!x) continue;
-    const i = podcastState.subs.findIndex(p => podcastKey(p) === podcastKey(x.p));
-    if (i < 0) continue;
-    const cur = podcastState.subs[i];
-    if (x.latest && Number(cur.latestEpisodeAt) !== x.latest) {
-      cur.latestEpisodeAt = new Date(x.latest).toISOString();
-      changed = true;
-    }
-    cur.latestEpisodeCheckedAt = Date.now();
-    if (x.artwork && !cur.artwork) {
-      cur.artwork = x.artwork;
-      cur.image = x.artwork;
-      changed = true;
-    }
-    if (x.author && !cur.author) {
-      cur.author = x.author;
-      changed = true;
-    }
-    if (x.description && !cur.description) {
-      cur.description = x.description;
-      changed = true;
-    }
-  }
-  if (changed) savePodcastSubs();
+function refreshPodcastLatestDates() {
+  return refreshPodcastActivity(podcastState.subs, { maxAge: 600000 });
 }
+
+// --- Progreso de episodios -------------------------------------------------
+// Antes se guardaba una clave pod_pos_<id> y otra pod_done_<id> por episodio,
+// sin límite. Ahora hay dos objetos con tope y se migran las claves antiguas.
+const PODCAST_PROGRESS_KEY = 'radios_viferor_podcast_progress_v1';
+const PODCAST_DONE_KEY = 'radios_viferor_podcast_done_v1';
+const PODCAST_PROGRESS_MAX = 300;
+const PODCAST_DONE_MAX = 3000;
+let podcastProgressCache = null;
+let podcastDoneCache = null;
+let podcastProgressDirty = false;
+let podcastProgressLastWrite = 0;
+function readJsonObject(key) {
+  try {
+    const x = JSON.parse(localStorage.getItem(key) || '{}');
+    return x && typeof x === 'object' && !Array.isArray(x) ? x : {};
+  } catch {
+    return {};
+  }
+}
+function podcastProgress() {
+  if (!podcastProgressCache) podcastProgressCache = readJsonObject(PODCAST_PROGRESS_KEY);
+  return podcastProgressCache;
+}
+function podcastDone() {
+  if (!podcastDoneCache) podcastDoneCache = readJsonObject(PODCAST_DONE_KEY);
+  return podcastDoneCache;
+}
+function trimByTime(obj, max, timeOf) {
+  const keys = Object.keys(obj);
+  if (keys.length <= max) return obj;
+  keys
+    .sort((a, b) => timeOf(obj[b]) - timeOf(obj[a]))
+    .slice(max)
+    .forEach(k => delete obj[k]);
+  return obj;
+}
+function flushPodcastProgress(force = false) {
+  if (!podcastProgressDirty) return;
+  const now = Date.now();
+  if (!force && now - podcastProgressLastWrite < 5000) return;
+  podcastProgressLastWrite = now;
+  podcastProgressDirty = false;
+  try {
+    trimByTime(podcastProgress(), PODCAST_PROGRESS_MAX, v => Number(v?.t || 0));
+    localStorage.setItem(PODCAST_PROGRESS_KEY, JSON.stringify(podcastProgress()));
+  } catch {}
+}
+function minimalEpisode(e) {
+  if (!e) return null;
+  const out = {};
+  for (const k of ['id', 'title', 'audioUrl', 'podcastTitle', 'podcastArt', 'author', 'feedUrl', 'date', 'image'])
+    if (e[k]) out[k] = e[k];
+  return out;
+}
+function getEpisodePos(id) {
+  return Number(podcastProgress()[String(id)]?.pos || 0);
+}
+function setEpisodePos(e, pos, duration, force = false) {
+  if (!e?.id || !Number.isFinite(pos)) return;
+  const id = String(e.id);
+  const store = podcastProgress();
+  const prev = store[id];
+  const p = Math.floor(pos);
+  if (p <= 5) {
+    // Al principio del episodio no merece la pena guardar nada.
+    if (prev && force) {
+      delete store[id];
+      podcastProgressDirty = true;
+    }
+  } else {
+    store[id] = {
+      pos: p,
+      dur: Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : prev?.dur || 0,
+      t: Date.now(),
+      ep: prev?.ep || minimalEpisode(e)
+    };
+    podcastProgressDirty = true;
+  }
+  flushPodcastProgress(force);
+}
+function clearEpisodePos(id) {
+  const store = podcastProgress();
+  if (store[String(id)]) {
+    delete store[String(id)];
+    podcastProgressDirty = true;
+    flushPodcastProgress(true);
+  }
+}
+function markEpisodeDone(id) {
+  if (!id) return;
+  const done = podcastDone();
+  done[String(id)] = Date.now();
+  trimByTime(done, PODCAST_DONE_MAX, v => Number(v || 0));
+  try {
+    localStorage.setItem(PODCAST_DONE_KEY, JSON.stringify(done));
+  } catch {}
+}
+function isEpisodeDone(id) {
+  return !!podcastDone()[String(id)];
+}
+function inProgressEpisodes() {
+  const store = podcastProgress();
+  return Object.values(store)
+    .filter(x => x?.ep?.audioUrl && !isEpisodeDone(x.ep.id))
+    .sort((a, b) => Number(b.t || 0) - Number(a.t || 0))
+    .map(x => x.ep);
+}
+function migrateLegacyPodcastProgress() {
+  try {
+    const legacy = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('pod_pos_') || k.startsWith('pod_done_'))) legacy.push(k);
+    }
+    if (!legacy.length) return;
+    const store = podcastProgress(),
+      done = podcastDone(),
+      now = Date.now();
+    legacy.forEach(k => {
+      const v = localStorage.getItem(k);
+      if (k.startsWith('pod_done_')) done[k.slice(9)] = now;
+      else if (Number(v) > 5 && !store[k.slice(8)]) store[k.slice(8)] = { pos: Number(v), dur: 0, t: now - 1, ep: null };
+      localStorage.removeItem(k);
+    });
+    trimByTime(done, PODCAST_DONE_MAX, v => Number(v || 0));
+    localStorage.setItem(PODCAST_DONE_KEY, JSON.stringify(done));
+    podcastProgressDirty = true;
+    flushPodcastProgress(true);
+  } catch {}
+}
+// ---------------------------------------------------------------------------
 
 function savePodcastQueue() {
   localStorage.setItem(PODCAST_QUEUE_KEY, JSON.stringify(podcastState.queue));
@@ -389,7 +518,7 @@ function savePodcastResume(forcePlaying = null) {
       const pos = Number.isFinite(a.currentTime) ? Number(a.currentTime) : 0;
       const state = { type: 'podcast', episode: podcastState.current, pos, playing, at: Date.now() };
       localStorage.setItem(PODCAST_RESUME_KEY, JSON.stringify(state));
-      localStorage.setItem('pod_pos_' + podcastState.current.id, String(Math.floor(pos)));
+      setEpisodePos(podcastState.current, pos, a.duration, !playing || podcastClosing);
       if (playing || podcastClosing)
         localStorage.setItem(
           PLAYBACK_RESUME_KEY,
@@ -478,15 +607,6 @@ function renderPodcastHome(fromHistory = false) {
       localStorage.setItem('radios_viferor_podcast_mine_sort', sort.value);
       renderPodcastHome(true);
     };
-    if (
-      (sort.value === 'recent' || sort.value === 'oldest') &&
-      podcastState.subs.some(p => Date.now() - Number(p.latestEpisodeCheckedAt || 0) > 600000)
-    ) {
-      refreshPodcastLatestDates().then(() => {
-        if (podcastState.screen === 'subs' && $p('podMineSort')?.value === sort.value)
-          renderPodcastHome(true);
-      });
-    }
   }
   if (!podcastState.subs.length) {
     root.insertAdjacentHTML(
@@ -500,7 +620,9 @@ function renderPodcastHome(fromHistory = false) {
   getSortedPodcastSubs().forEach(p => grid.appendChild(podcastCard(p)));
   root.append(grid);
   const keepScroll = root.scrollTop;
+  const byDate = sort && (sort.value === 'recent' || sort.value === 'oldest');
   refreshPodcastActivity(podcastState.subs, {
+    maxAge: byDate ? 600000 : 86400000,
     rerender: () => {
       if (podcastState.screen === 'subs') {
         const sc = $p('podcastContent')?.scrollTop || keepScroll;
@@ -567,7 +689,7 @@ function podcastCard(p, episode = false) {
   const img = p.artwork || p.image || '';
   const activity = !episode ? podcastActivityStatus(p) : null;
   const subscribed = !episode && isSubscribed(p);
-  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button><button class="pod-open" type="button">Episodios</button>${subscribed ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
+  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button><button class="pod-open" type="button">Episodios</button>${subscribed ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
   if (episode) d.querySelector('.pod-play').onclick = () => playPodcastEpisode(p);
   else {
     d.querySelector('.pod-sub').onclick = () => togglePodcast(p);
@@ -732,6 +854,7 @@ async function fetchSubEpisodes(limitEach = 8) {
       try {
         const u = new URL('/api/podcast-feed', location.origin);
         u.searchParams.set('url', podcastFeedUrl(p));
+        u.searchParams.set('limit', String(limitEach));
         const r = await fetch(u);
         if (!r.ok) return [];
         const d = await r.json();
@@ -753,6 +876,15 @@ async function fetchSubEpisodes(limitEach = 8) {
   }
   return all;
 }
+function shuffled(list) {
+  // Fisher-Yates: barajado uniforme (sort con Math.random no lo es).
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 async function playAll(mode) {
   pushPodcastState(
     mode === 'random' ? 'queue-random' : mode === 'continue' ? 'queue-continue' : 'queue-latest'
@@ -760,34 +892,40 @@ async function playAll(mode) {
   podcastState.screen = 'queue';
   setPodcastLayout(true);
   const root = $p('podcastContent');
-  root.innerHTML = '<div class="pod-loading">Preparando una cola con todas tus suscripciones…</div>';
-  const eps = await fetchSubEpisodes(10);
-  if (!eps.length) {
-    root.innerHTML =
-      '<div class="pod-empty"><div>🎙️</div><h3>No hay episodios disponibles</h3><p>Comprueba tus suscripciones o la conexión.</p><button id="podBack" class="pod-back-btn" type="button">← Volver</button></div>';
-    $p('podBack').onclick = backFromPodcast;
-    return;
-  }
+  // «Continuar» usa los episodios que dejaste a medias (no hace falta red).
+  const resumable = mode === 'continue' ? inProgressEpisodes() : [];
   let q;
-  if (mode === 'random') q = [...eps].sort(() => Math.random() - 0.5);
-  else if (mode === 'continue') q = [...eps].filter(e => !localStorage.getItem('pod_done_' + e.id));
-  else q = [...eps].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  if (resumable.length) {
+    q = resumable;
+  } else {
+    root.innerHTML = '<div class="pod-loading">Preparando una cola con todas tus suscripciones…</div>';
+    const eps = await fetchSubEpisodes(10);
+    if (!eps.length) {
+      root.innerHTML =
+        '<div class="pod-empty"><div>🎙️</div><h3>No hay episodios disponibles</h3><p>Comprueba tus suscripciones o la conexión.</p><button id="podBack" class="pod-back-btn" type="button">← Volver</button></div>';
+      $p('podBack').onclick = backFromPodcast;
+      return;
+    }
+    if (mode === 'random') q = shuffled(eps);
+    else if (mode === 'continue')
+      q = eps
+        .filter(e => !isEpisodeDone(e.id))
+        .sort((a, b) => podcastDateValue(b.date) - podcastDateValue(a.date));
+    else q = [...eps].sort((a, b) => podcastDateValue(b.date) - podcastDateValue(a.date));
+  }
   podcastState.queue = q;
   savePodcastQueue();
   playPodcastQueue();
   renderPodcastQueue(mode, true);
 }
+// Hosts cuyo audio se sirve a través de /api/podcast-audio (Radio MARCA y
+// otros de Omny/Triton). Debe coincidir con la lista de api/podcast-audio.js.
+const PODCAST_PROXY_HOSTS = /(^|\.)omny\.fm$|(^|\.)omnycontent\.com$|(^|\.)tritondigital\.com$/i;
 function podcastAudioSource(raw) {
   let src = String(raw || '').replace(/&amp;/gi, '&');
   if (!src) return '';
   try {
-    const u = new URL(src, location.href);
-    const host = u.hostname.toLowerCase();
-    const needsProxy =
-      /(^|\.)traffic\.omny\.fm$|(^|\.)omny\.fm$|(^|\.)omnycontent\.com$|(^|\.)tritondigital\.com$|(^|\.)omny-us\.pdn\.tritondigital\.com$/i.test(
-        host
-      );
-    if (needsProxy) {
+    if (podcastAudioNeedsProxy(src)) {
       const proxy = new URL('/api/podcast-audio', location.origin);
       proxy.searchParams.set('url', src);
       proxy.searchParams.set('stream', '1');
@@ -799,9 +937,7 @@ function podcastAudioSource(raw) {
 function podcastAudioNeedsProxy(raw) {
   try {
     const host = new URL(String(raw || ''), location.href).hostname.toLowerCase();
-    return /(^|\.)traffic\.omny\.fm$|(^|\.)omny\.fm$|(^|\.)omnycontent\.com$|(^|\.)tritondigital\.com$|(^|\.)omny-us\.pdn\.tritondigital\.com$/i.test(
-      host
-    );
+    return PODCAST_PROXY_HOSTS.test(host);
   } catch {
     return false;
   }
@@ -838,7 +974,7 @@ async function playPodcastQueue() {
     if (!src) throw new Error('El episodio no tiene URL de audio');
     let retriedDirect = false;
     const applyResume = () => {
-      const saved = Number(localStorage.getItem('pod_pos_' + e.id) || 0);
+      const saved = getEpisodePos(e.id);
       if (saved > 5 && saved < Math.max(0, a.duration - 10)) a.currentTime = saved;
       updatePodcastPlayerUI();
     };
@@ -991,34 +1127,16 @@ async function exportPodcastOPML() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-async function hydratePodcastArtwork(items) {
+function hydratePodcastArtwork(items) {
   const pending = items.filter(p => podcastFeedUrl(p) && !(p.artwork || p.image));
-  for (let i = 0; i < pending.length; i += 5) {
-    await Promise.all(
-      pending.slice(i, i + 5).map(async p => {
-        try {
-          const u = new URL('/api/podcast-feed', location.origin);
-          u.searchParams.set('url', podcastFeedUrl(p));
-          const r = await fetch(u);
-          if (!r.ok) return;
-          const d = await r.json();
-          const image = d.feed?.image || d.feed?.artwork || d.image || '';
-          const idx = podcastState.subs.findIndex(x => podcastKey(x) === podcastKey(p));
-          if (idx >= 0 && image) {
-            podcastState.subs[idx] = {
-              ...podcastState.subs[idx],
-              artwork: image,
-              image: image,
-              author: podcastState.subs[idx].author || d.feed?.author || '',
-              description: podcastState.subs[idx].description || d.feed?.description || ''
-            };
-          }
-        } catch {}
-      })
-    );
-    savePodcastSubs();
-    if (podcastState.screen === 'subs') renderPodcastHome(true);
-  }
+  if (!pending.length) return Promise.resolve(false);
+  // maxAge 0: se consulta aunque haya caché, porque falta la portada.
+  return refreshPodcastActivity(pending, {
+    maxAge: 0,
+    rerender: () => {
+      if (podcastState.screen === 'subs') renderPodcastHome(true);
+    }
+  });
 }
 
 function importPodcastOPML(ev) {
@@ -1282,13 +1400,17 @@ window.handleAndroidBack = function () {
 window.openPodcastFromNotification = async function (url) {
   try {
     switchToPodcasts();
-    const sub = podcastState.subs.find(p => String(p.feedUrl || '') === String(url));
+    // La notificación nativa envía la URL del feed de la suscripción.
+    const wanted = String(url || '').trim().toLowerCase();
+    const sub = podcastState.subs.find(p => podcastKey(p) === wanted);
     if (sub) {
       await loadPodcastEpisodes(sub);
       return;
     }
-    // If the notification points to an episode URL rather than a feed URL,
-    // show Podcasts and let the user continue from the subscribed feed.
+    if (/^https?:\/\//i.test(wanted)) {
+      await loadPodcastEpisodes({ feedUrl: String(url).trim(), title: 'Podcast' });
+      return;
+    }
     renderPodcastLanding(false);
   } catch (e) {
     console.warn('Podcast notification', e);
@@ -1320,30 +1442,37 @@ function restoreLastPlayback() {
     states.sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
     const chosen = states[0];
     if (!chosen) return;
+    // Por defecto solo se deja preparado (sin sonar); con «Reanudar al abrir»
+    // activado en Ajustes, se reanuda automáticamente.
+    let autoplay = false;
+    try {
+      autoplay = localStorage.getItem('radios_viferor_autoresume') === '1';
+    } catch {}
     if (chosen.type === 'podcast' && chosen.episode) {
       podcastState.current = chosen.episode;
       podcastState.queue = [chosen.episode, ...podcastState.queue.filter(x => x.id !== chosen.episode.id)];
       const a = $p('podcastAudio');
       if (!a) return;
-      const savedPos = Math.max(
-        Number(chosen.pos) || 0,
-        Number(localStorage.getItem('pod_pos_' + chosen.episode.id) || 0)
-      );
+      const savedPos = Math.max(Number(chosen.pos) || 0, getEpisodePos(chosen.episode.id));
+      a.preload = 'metadata';
       a.src = podcastAudioSource(chosen.episode.audioUrl);
       a.onloadedmetadata = () => {
         if (savedPos > 0) a.currentTime = Math.min(savedPos, Math.max(0, a.duration || savedPos));
         updatePodcastPlayerUI();
-        retryPodcastAutoplay(a);
+        if (autoplay) retryPodcastAutoplay(a);
       };
       $p('podcastNow').textContent = chosen.episode.title || 'Sin episodio';
       $p('podcastNowSub').textContent = chosen.episode.podcastTitle || chosen.episode.author || '';
-    } else if (chosen.type === 'radio' && chosen.station && typeof window.reproducirRadio === 'function') {
-      setTimeout(() => window.reproducirRadio(chosen.station), 900);
+    } else if (chosen.type === 'radio' && chosen.station) {
+      if (autoplay && typeof window.reproducirRadio === 'function')
+        setTimeout(() => window.reproducirRadio(chosen.station), 900);
+      else if (typeof window.prepararRadio === 'function') window.prepararRadio(chosen.station);
     }
   } catch {}
 }
 
 function initPodcasts() {
+  migrateLegacyPodcastProgress();
   loadPodcastSubs();
   try {
     if (window.Android && typeof window.Android.syncPodcastSubscriptions === 'function')
@@ -1420,8 +1549,8 @@ function initPodcasts() {
       try {
         radioAudio.pause();
       } catch {}
-      return;
     }
+    window.__radioMediaStarted = false;
     try {
       window.Android?.setPlaybackSection?.('podcast');
     } catch {}
@@ -1432,13 +1561,14 @@ function initPodcasts() {
     lastAndroidMediaSync = 0;
   pa.addEventListener('timeupdate', () => {
     const now = Date.now();
-    if (now - lastAndroidMediaSync >= 750) {
+    // La sesión multimedia de Android extrapola la posición; basta con sincronizar cada 5 s.
+    if (now - lastAndroidMediaSync >= 5000) {
       lastAndroidMediaSync = now;
       syncPodcastAndroidMedia(false);
     }
     if (podcastState.current && Number.isFinite(pa.currentTime)) {
-      localStorage.setItem('pod_pos_' + podcastState.current.id, String(Math.floor(pa.currentTime)));
-      if (now - lastResumeSave >= 2000) {
+      setEpisodePos(podcastState.current, pa.currentTime, pa.duration);
+      if (now - lastResumeSave >= 5000) {
         lastResumeSave = now;
         savePodcastResume(true);
       }
@@ -1449,14 +1579,8 @@ function initPodcasts() {
     syncPodcastAndroidMedia(false);
     updatePodcastPlayerUI();
   });
-  pa.addEventListener('play', () => {
-    try {
-      window.Android?.setPlaybackSection?.('podcast');
-    } catch {}
-    syncPodcastAndroidMedia(true);
-    updatePodcastPlayerUI();
-  });
   pa.addEventListener('pause', () => {
+    flushPodcastProgress(true);
     syncPodcastAndroidMedia(true);
     updatePodcastPlayerUI();
   });
@@ -1465,15 +1589,17 @@ function initPodcasts() {
       window.Android?.stopPodcastMedia?.();
     } catch {}
     window.__podMediaStarted = false;
-    if (podcastState.current) localStorage.setItem('pod_done_' + podcastState.current.id, '1');
-    if (podcastState.current) localStorage.removeItem('pod_pos_' + podcastState.current.id);
+    if (podcastState.current) {
+      markEpisodeDone(podcastState.current.id);
+      clearEpisodePos(podcastState.current.id);
+    }
     nextPodcast();
   });
   ['podBack15', 'podExpBack15'].forEach(id => {
     if ($p(id)) $p(id).onclick = () => seekPodcast(-15);
   });
   ['podForward15', 'podExpForward15'].forEach(id => {
-    if ($p(id)) $p(id).onclick = () => seekPodcast(15);
+    if ($p(id)) $p(id).onclick = () => seekPodcast(30);
   });
   ['podPrev', 'podExpPrev'].forEach(id => {
     if ($p(id)) $p(id).onclick = previousPodcast;
@@ -1509,8 +1635,12 @@ function initPodcasts() {
     });
   const savePodcastOnHidden = () => {
     if (document.visibilityState === 'hidden') {
-      podcastClosing = true;
-      savePodcastResume(true);
+      flushPodcastProgress(true);
+      // Solo cuenta como «cerrando» si estaba sonando; si no, no se reanuda.
+      podcastClosing = !pa.paused;
+      if (!pa.paused) savePodcastResume(true);
+    } else {
+      podcastClosing = false;
     }
   };
   document.addEventListener('visibilitychange', savePodcastOnHidden);
