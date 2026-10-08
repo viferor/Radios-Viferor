@@ -128,7 +128,7 @@ async function fetchJson(url, ms = 8000) {
     clearTimeout(t);
   }
 }
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   if (Date.now() - cache.at < TTL && cache.stations.length)

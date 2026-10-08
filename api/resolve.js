@@ -101,7 +101,7 @@ async function radioBrowser(name, state, network) {
   }
   return null;
 }
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=600');
   const q = req.query || {};
   const name = String(q.name || '').trim();

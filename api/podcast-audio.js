@@ -1,7 +1,13 @@
+import { safeFetch, rateLimited, HttpError } from './_lib/net.js';
+
+// Solo se sirven a través de este proxy los audios de Omny/Triton (Radio MARCA y
+// similares), que fallan al reproducirse directamente en el WebView. Debe
+// coincidir con PODCAST_PROXY_HOSTS de podcasts.js.
+const ALLOWED = /(^|\.)omny\.fm$|(^|\.)omnycontent\.com$|(^|\.)tritondigital\.com$/i;
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('X-Podcast-Proxy', '1.4.55');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (rateLimited(req, res, 'audio', 600)) return;
   try {
     const u = new URL(req.url, 'http://localhost');
     let audioUrl = u.searchParams.get('url');
@@ -10,18 +16,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'URL de audio no válida' });
     const target = new URL(audioUrl);
     const host = target.hostname.toLowerCase();
-    const allowed =
-      /(^|\.)traffic\.omny\.fm$|(^|\.)omny\.fm$|(^|\.)omnycontent\.com$|(^|\.)tritondigital\.com$|(^|\.)omny-us\.pdn\.tritondigital\.com$|(^|\.)traffic\.megaphone\.fm$|(^|\.)megaphone\.fm$|(^|\.)cdn\.megaphone\.fm$|(^|\.)transistor\.fm$|(^|\.)anchor\.fm$|(^|\.)googleusercontent\.com$|(^|\.)cloudfront\.net$/i.test(
-        host
-      );
+    const allowed = ALLOWED.test(host);
     if (!allowed) return res.status(400).json({ error: 'Fuente de audio no permitida' });
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Radios-Viferor/1.4.55',
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Radios-Viferor',
       Accept: 'audio/mpeg,audio/mp4,audio/aac,audio/ogg,audio/*,*/*;q=0.8'
     };
     const range = req.headers?.range || req.headers?.Range;
     if (range) headers.Range = range;
-    const r = await fetch(audioUrl, { method: 'GET', redirect: 'follow', headers });
+    // El primer destino debe estar en la lista; las redirecciones (rastreadores de
+    // audiencia, CDN) pueden ir a otro dominio, pero nunca a direcciones internas.
+    const r = await safeFetch(audioUrl, { method: 'GET', headers }, { allowFirstHost: h => ALLOWED.test(h), maxRedirects: 8 });
     const ct0 = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
     const looksAudio = /\.(mp3|m4a|mp4|aac|ogg|opus|wav)(?:$|[?#])/i.test(target.pathname + target.search);
     const audioTypes =
@@ -61,6 +66,12 @@ export default async function handler(req, res) {
       return;
     }
     const reader = r.body.getReader();
+    // Si el reproductor corta (cambio de episodio, salto), se deja de descargar.
+    req.on?.('close', () => {
+      try {
+        reader.cancel();
+      } catch {}
+    });
     try {
       while (true) {
         const x = await reader.read();
@@ -75,7 +86,7 @@ export default async function handler(req, res) {
     res.end();
   } catch (e) {
     try {
-      res.status(502).json({ error: 'No se pudo reproducir el audio', detail: String(e?.message || e) });
+      res.status(e instanceof HttpError ? e.status : 502).json({ error: 'No se pudo reproducir el audio', detail: String(e?.message || e) });
     } catch {}
   }
 }
