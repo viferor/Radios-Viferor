@@ -1090,3 +1090,7 @@ html.dark-mode .search-remote-head{border-color:#353c44}
   .compact-filters .filters-row #selectLocation{grid-column:2}
   .compact-filters .filters-row #selectType{grid-column:3/5}
 }
+
+/* 1.9.0 — Resultados de podcasts: filtros aplicados */
+.pod-detail-head .pod-search-filters{flex-basis:100%;font-size:.74rem;color:var(--subtext);font-weight:700;margin-top:2px}
+.pod-detail-head{flex-wrap:wrap}

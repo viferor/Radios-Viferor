@@ -23,6 +23,7 @@ const podcastGenres = [
   'Arte',
   'Negocios',
   'Comedia',
+  'Crímenes reales',
   'Educación',
   'Ficción',
   'Gobierno',
@@ -729,53 +730,78 @@ function podcastCard(p, episode = false) {
   return d;
 }
 
+const PODCAST_FILTERS_KEY = 'radios_viferor_podcast_filters_v1';
+function savePodcastFilters() {
+  try {
+    localStorage.setItem(
+      PODCAST_FILTERS_KEY,
+      JSON.stringify({
+        genre: $p('podGenre')?.value || 'Todas',
+        country: $p('podCountry')?.value || 'ES',
+        language: $p('podLanguage')?.value || '',
+        sort: $p('podSort')?.value || 'search'
+      })
+    );
+  } catch {}
+}
+function restorePodcastFilters() {
+  let f = null;
+  try {
+    f = JSON.parse(localStorage.getItem(PODCAST_FILTERS_KEY) || 'null');
+  } catch {}
+  // Compatibilidad con el idioma guardado por versiones anteriores.
+  if (!f) f = { language: localStorage.getItem('radios_viferor_podcast_language') || '' };
+  const set = (id, v) => {
+    const el = $p(id);
+    if (el && v != null && [...el.options].some(o => o.value === v)) el.value = v;
+  };
+  set('podGenre', f.genre);
+  set('podCountry', f.country || 'ES');
+  set('podLanguage', f.language);
+  set('podSort', f.sort);
+}
+function podcastSelectLabel(id) {
+  return $p(id)?.selectedOptions?.[0]?.textContent?.trim() || '';
+}
 async function searchPodcasts() {
   const requestToken = podcastNavToken;
   const q = $p('podSearchText').value.trim(),
-    genre = $p('podGenre').value,
+    genre = $p('podGenre').value || 'Todas',
     country = $p('podCountry').value || 'ES',
     language = $p('podLanguage')?.value || '',
     mode = $p('podSort').value;
+  savePodcastFilters();
+  const popular = mode === 'popular' || !q;
   const root = $p('podcastContent');
   document.body.classList.remove('podcast-subs-fullscreen');
   document.body.classList.add('podcast-results-active');
   root.scrollTop = 0;
-  root.innerHTML = '<div class="pod-loading">Buscando podcasts…</div>';
+  root.innerHTML = `<div class="pod-loading">${popular ? 'Cargando los más populares…' : 'Buscando podcasts…'}${language ? '<br><small>Comprobando el idioma de cada podcast…</small>' : ''}</div>`;
   try {
     const u = new URL('/api/podcast-search', location.origin);
-    u.searchParams.set('mode', mode === 'popular' ? 'popular' : 'search');
+    u.searchParams.set('mode', popular ? 'popular' : 'search');
     u.searchParams.set('q', q);
     u.searchParams.set('genre', genre);
     u.searchParams.set('country', country);
     u.searchParams.set('language', language);
-    u.searchParams.set('limit', '80');
+    u.searchParams.set('limit', '60');
     const r = await fetch(u);
     const d = await r.json();
     if (!r.ok) throw Error(d.error || 'Error');
-    if (
-      requestToken !== podcastNavToken ||
-      !document.getElementById('viewPodcasts')?.classList.contains('active')
-    )
-      return;
+    if (requestToken !== podcastNavToken || !document.getElementById('viewPodcasts')?.classList.contains('active')) return;
     podcastState.search = (d.items || []).map(normalizePodcastObject);
+    const genreTxt = genre && genre !== 'Todas' ? genre : '';
+    const title = popular
+      ? `🔥 Populares${genreTxt ? ' · ' + genreTxt : ''}${q ? ` · «${q}»` : ''}`
+      : `🔎 «${q}»${genreTxt ? ' · ' + genreTxt : ''}`;
+    podcastState.searchInfo = {
+      filters: [podcastSelectLabel('podCountry'), language ? podcastSelectLabel('podLanguage') : ''].filter(Boolean).join(' · '),
+      partial: !!d.partial
+    };
     pushPodcastState('search');
-    renderPodcastResults(
-      podcastState.search,
-      mode === 'popular'
-        ? genre
-          ? `🔥 Más populares · ${genre}`
-          : '🔥 Más populares'
-        : genre
-          ? `🔎 ${genre}`
-          : '🔎 Resultados de búsqueda',
-      true
-    );
+    renderPodcastResults(podcastState.search, title, true);
   } catch (e) {
-    if (
-      requestToken !== podcastNavToken ||
-      !document.getElementById('viewPodcasts')?.classList.contains('active')
-    )
-      return;
+    if (requestToken !== podcastNavToken || !document.getElementById('viewPodcasts')?.classList.contains('active')) return;
     root.innerHTML = `<div class="pod-empty"><div>⚠️</div><h3>No se pudo buscar</h3><p>${pEsc(e.message)}</p><button id="podBackError" type="button">← Volver</button></div>`;
     $p('podBackError').onclick = backFromPodcast;
   }
@@ -790,7 +816,10 @@ function renderPodcastResults(items, title, fromHistory = false) {
   root.scrollTop = 0;
   const h = document.createElement('div');
   h.className = 'pod-section-title pod-detail-head';
-  h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><h2>${pEsc(title)} <span>${items.length}</span></h2>`;
+  const info = podcastState.searchInfo || {};
+  h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><h2>${pEsc(title)} <span>${items.length}</span></h2>${
+    info.filters ? `<div class="pod-search-filters">${pEsc(info.filters)}${info.partial ? ' · algunos podcasts no respondieron a tiempo' : ''}</div>` : ''
+  }`;
   root.append(h);
   $p('podBack').onclick = backFromPodcast;
   const grid = document.createElement('div');
@@ -801,12 +830,12 @@ function renderPodcastResults(items, title, fromHistory = false) {
     const empty = document.createElement('div');
     empty.className = 'pod-empty pod-search-empty';
     empty.innerHTML =
-      '<div>🔎</div><h3>No se encontraron podcasts</h3><p>Prueba otro texto, categoría, país u orden.</p>';
+      '<div>🔎</div><h3>No se encontraron podcasts</h3><p>Prueba otro texto o quita algún filtro (categoría, país o idioma).</p>';
     root.append(empty);
     return;
   }
   root.append(grid);
-  refreshPodcastActivity(items, {
+  refreshPodcastActivity(items.slice(0, 40), {
     rerender: () => {
       if (podcastState.screen === 'search' && podcastState.search === items) {
         const sc = $p('podcastContent')?.scrollTop || 0;
@@ -1544,12 +1573,15 @@ function initPodcasts() {
   if ($p('podMineCount')) $p('podMineCount').textContent = `${podcastFavCountText(podcastState.subs.length)}`;
   const g = $p('podGenre');
   if (g) g.innerHTML = podcastGenres.map(x => `<option>${x}</option>`).join('');
-  if ($p('podLanguage'))
-    $p('podLanguage').value = localStorage.getItem('radios_viferor_podcast_language') || '';
-  if ($p('podLanguage'))
-    $p('podLanguage').addEventListener('change', e =>
-      localStorage.setItem('radios_viferor_podcast_language', e.target.value || '')
-    );
+  // Filtros recordados entre sesiones; si ya hay resultados en pantalla, cambiar un
+  // filtro vuelve a buscar al momento.
+  restorePodcastFilters();
+  ['podGenre', 'podCountry', 'podLanguage', 'podSort'].forEach(id =>
+    $p(id)?.addEventListener('change', () => {
+      savePodcastFilters();
+      if (podcastState.screen === 'search') searchPodcasts();
+    })
+  );
   const openPodcastSearchDrawer = () => {
     const d = $p('podSearchDrawer');
     if (d) d.hidden = false;
