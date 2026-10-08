@@ -3,7 +3,9 @@ Radios y podcast
 
 ## 1.7.0 — Correcciones generales
 
-**Versión.** La versión de la web está solo en `version.js`; la de Android, en `app/build.gradle`
+**Versión.** Para publicar una versión nueva de la web: `node scripts/version.mjs 1.7.3 1730`
+(actualiza `version.js` y las marcas `?v=` de `index.html`, para que el móvil no mezcle scripts
+antiguos de su caché con los nuevos). La de Android está en `app/build.gradle`
 (`versionName` / `versionCode`). «Buscar actualizaciones» compara la versión en uso con el
 `version.js` publicado.
 

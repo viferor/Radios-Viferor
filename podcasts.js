@@ -1566,14 +1566,12 @@ function initPodcasts() {
   if (pf) pf.addEventListener('change', importPodcastOPML);
   // «Mis podcasts»: tus favoritos con el orden y los cuatro modos.
   // Antes abría un desplegable que quedaba recortado e invisible dentro de la barra.
-  // La portada ya muestra los favoritos: el botón vuelve a ella (arriba del todo).
+  // «Mis podcasts» abre la pantalla completa de tus favoritos, con el orden y los
+  // cuatro modos (la portada también los muestra, pero el botón debe hacer algo visible).
   $p('podMine').onclick = e => {
     e.preventDefault();
     closePodcastSearchDrawer();
-    if (podcastState.screen === 'landing') {
-      rerenderPodcastHome();
-      $p('podcastContent').scrollTop = 0;
-    } else renderPodcastLanding(false);
+    renderPodcastHome(false);
   };
   $p('podSearchOpen').onclick = openPodcastSearchDrawer;
   $p('podSearchClose').onclick = closePodcastSearchDrawer;
