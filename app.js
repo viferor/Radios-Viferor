@@ -581,6 +581,17 @@ let radioPollingFor = null;
 // true solo mientras la radio está sonando de verdad; una pausa con esto a
 // false es interna (cambio de fuente, corte detectado) y no del usuario.
 let radioWasPlaying = false;
+let radioReconnectPending = false;
+// «Activa» = suena, está conectando o espera para reconectar. Mientras lo esté,
+// Android mantiene el servicio en primer plano; si se avisara de «pausa» durante
+// un corte, en segundo plano ya no se podría volver a arrancar.
+function radioActiva() {
+  return (
+    !!currentStation &&
+    !radioUserPaused &&
+    (!audio.paused || radioConnecting || radioReconnectPending)
+  );
+}
 
 function clearRadioWatchdog() {
   clearInterval(radioWatchdogTimer);
@@ -703,6 +714,7 @@ async function reproducirRadio(s, opciones = {}) {
   if (!s) return;
   const token = ++radioToken;
   radioWasPlaying = false;
+  radioConnecting = true;
   clearTimeout(reconnectTimer);
   if (!opciones.reconnect) reconnectAttempts = 0;
   radioUserPaused = false;
@@ -723,7 +735,6 @@ async function reproducirRadio(s, opciones = {}) {
   actualizarCancion('🎵 Buscando información…');
   actualizarPrograma(null, null);
   currentStreamUrl = '';
-  radioConnecting = true;
   try {
     let fuentes = Array.isArray(s.options) ? fuentesLocales(s) : [];
     if (!fuentes.length || !s.url) {
@@ -751,7 +762,11 @@ async function reproducirRadio(s, opciones = {}) {
       try {
         statusEl.textContent = `Conectando… ${String(f.format || 'stream').toUpperCase()}`;
         await intentarFuente(f, token);
-        if (token !== radioToken) return;
+        if (token !== radioToken) {
+          // Llegó tarde: el usuario pausó mientras conectaba.
+          if (radioUserPaused) audio.pause();
+          return;
+        }
         currentStreamUrl = f.url;
         reconnectAttempts = 0;
         radioWasPlaying = true;
@@ -855,9 +870,11 @@ async function startProgramGuide(s) {
 
 function scheduleRadioReconnect() {
   clearTimeout(reconnectTimer);
+  radioReconnectPending = false;
   clearRadioWatchdog();
   if (!currentStation || radioUserPaused || radioConnecting) return;
   if (reconnectAttempts >= RADIO_MAX_RECONNECTS) {
+    radioReconnectPending = false;
     statusEl.textContent = '⚠️ Sin conexión · toca para reintentar';
     actualizarCancion('🎵 No se pudo reconectar');
     stopRadioPolling();
@@ -867,7 +884,9 @@ function scheduleRadioReconnect() {
   const delay = Math.min(60000, 2000 * Math.pow(2, reconnectAttempts));
   const token = radioToken;
   statusEl.textContent = `Reconectando en ${Math.round(delay / 1000)} s… ⏳`;
+  radioReconnectPending = true;
   reconnectTimer = setTimeout(() => {
+    radioReconnectPending = false;
     if (token !== radioToken || !currentStation || !audio.paused || radioUserPaused) return;
     reconnectAttempts++;
     reproducirRadio(currentStation, { reconnect: true }).catch(() => {});
@@ -878,7 +897,7 @@ function syncRadioAndroidMedia() {
     if (!window.Android || !currentStation || !audio) return;
     const podcastAudio = document.getElementById('podcastAudio');
     if (podcastAudio && !podcastAudio.paused && !podcastAudio.ended) return;
-    const playing = !audio.paused && !audio.ended;
+    const playing = radioActiva();
     const station = currentStation.name || 'Radio';
     const track = nowPlayingEl?.textContent || '🎵 En directo';
     const art = currentStation.logo || '';
@@ -907,6 +926,16 @@ window.viferorNativeRadioPause = () => {
   try {
     radioUserPaused = true;
     clearTimeout(reconnectTimer);
+    radioReconnectPending = false;
+    radioConnecting = false;
+    radioToken++; // cancela una conexión en curso
+    stopRadioPolling();
+    clearRadioWatchdog();
+    if (currentStation) {
+      statusEl.textContent = '⏸ En pausa';
+      saveRadioResume(false);
+    }
+    syncRadioAndroidMedia();
     if (audio) audio.pause();
   } catch {}
 };
@@ -1219,12 +1248,14 @@ function init() {
     if (currentStation && !internal) {
       radioUserPaused = true;
       clearTimeout(reconnectTimer);
+      radioReconnectPending = false;
       stopRadioPolling();
       clearRadioWatchdog();
       statusEl.textContent = '⏸ En pausa';
       saveRadioResume(false);
     }
-    if (currentStation) {
+    // Solo una pausa del usuario se comunica a Android como «pausado».
+    if (currentStation && !internal) {
       try {
         window.Android?.updateRadioMedia?.(
           currentStation.name || 'Radio',

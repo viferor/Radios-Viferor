@@ -43,7 +43,7 @@ public final class PodcastMediaController {
     private static final String PREF_WIDGET_SUBTITLE = "widget_subtitle";
     private static final String PREF_WIDGET_PLAYING = "widget_playing";
     private static final String PREF_WIDGET_TYPE = "widget_type";
-    private static final int NOTIFICATION_ID = 49052;
+    static final int NOTIFICATION_ID = 49052;
     private static PodcastMediaController instance;
 
     private final MainActivity activity;
@@ -56,6 +56,10 @@ public final class PodcastMediaController {
     private long durationMs = 0;
     private long positionMs = 0;
     private boolean playing = false;
+    // Última portada descargada: se reutiliza en cada actualización de la
+    // notificación (antes desaparecía con la siguiente actualización).
+    private Bitmap artworkBitmap;
+    private String artworkBitmapUrl = "";
     private static String widgetTitle = "Radios Viferor";
     private static String widgetSubtitle = "Sin reproducción";
     private static boolean widgetPlaying = false;
@@ -130,6 +134,12 @@ public final class PodcastMediaController {
     public void refreshNotification() { postNotification(null); WidgetProvider.updateAll(activity); }
 
     public void release() {
+        // Al cerrarse la actividad se destruye el WebView y el audio se detiene:
+        // se retiran el servicio en primer plano y la notificación.
+        try { MediaPlaybackService.stop(activity); } catch (Exception ignored) {}
+        try { if (notifications != null) notifications.cancel(NOTIFICATION_ID); } catch (Exception ignored) {}
+        playing = false;
+        try { persistWidgetState(); WidgetProvider.updateAll(activity); } catch (Exception ignored) {}
         try { session.setActive(false); } catch (Exception ignored) {}
         try { session.release(); } catch (Exception ignored) {}
         try { imageExecutor.shutdownNow(); } catch (Exception ignored) {}
@@ -174,7 +184,8 @@ public final class PodcastMediaController {
         if (!isPlaybackSection("radio")) return;
         playing = false;
         persistWidgetState();
-        session.setPlaybackState(new PlaybackState.Builder().setState(PlaybackState.STATE_PAUSED, positionMs, 0f).build());
+        updateState();
+        postNotification(null);
         WidgetProvider.updateAll(activity);
     }
 
@@ -217,6 +228,7 @@ public final class PodcastMediaController {
         playing = false; persistWidgetState();
         session.setPlaybackState(new PlaybackState.Builder().setState(PlaybackState.STATE_NONE, positionMs, 0f).build());
         session.setActive(false);
+        MediaPlaybackService.stop(activity);
         if (notifications != null) notifications.cancel(NOTIFICATION_ID);
         WidgetProvider.updateAll(activity);
     }
@@ -241,14 +253,16 @@ public final class PodcastMediaController {
 
     private void postNotification(Bitmap artwork) {
         if (notifications == null) return;
-        if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        // Sin permiso de notificaciones el aviso no se ve, pero el servicio en primer
+        // plano sigue siendo necesario para que Android no corte el audio.
+        boolean canShow = Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         Intent open = new Intent(activity, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         String section = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
         boolean podcast = "podcast".equalsIgnoreCase(section);
         open.putExtra("openSection", section);
         PendingIntent content = PendingIntent.getActivity(activity, 490520, open, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(activity, CHANNEL_ID) : new Notification.Builder(activity);
-        b.setSmallIcon(R.mipmap.ic_launcher)
+        b.setSmallIcon(R.drawable.ic_stat_app)
                 .setContentTitle(title)
                 .setContentText(subtitle)
                 .setContentIntent(content)
@@ -256,7 +270,11 @@ public final class PodcastMediaController {
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOngoing(playing)
                 .setOnlyAlertOnce(true);
-        if (artwork != null) b.setLargeIcon(artwork);
+        if (artwork != null) {
+            artworkBitmap = artwork;
+            artworkBitmapUrl = artworkUrl;
+        }
+        if (artworkBitmap != null && artworkBitmapUrl.equals(artworkUrl)) b.setLargeIcon(artworkBitmap);
         if (Build.VERSION.SDK_INT >= 21) {
             if (podcast) {
                 b.setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0,1,2));
@@ -268,7 +286,19 @@ public final class PodcastMediaController {
                 b.addAction(new Notification.Action.Builder(playing ? R.drawable.ic_media_pause : R.drawable.ic_media_play, playing ? "Pausar" : "Reproducir", action(playing ? ACTION_WIDGET_PAUSE : ACTION_WIDGET_PLAY)).build());
             }
         }
-        notifications.notify(NOTIFICATION_ID, b.build());
+        Notification n = b.build();
+        if (playing) {
+            // Si el servicio ya está en primer plano basta con actualizar su notificación;
+            // solo se (re)arranca cuando no está en marcha.
+            if (MediaPlaybackService.isRunning()) {
+                if (canShow) notifications.notify(NOTIFICATION_ID, n);
+            } else if (!MediaPlaybackService.show(activity, NOTIFICATION_ID, n) && canShow) {
+                notifications.notify(NOTIFICATION_ID, n);
+            }
+        } else {
+            if (canShow) notifications.notify(NOTIFICATION_ID, n);
+            MediaPlaybackService.pause(activity);
+        }
     }
 
     private PendingIntent action(String action) {
@@ -287,7 +317,15 @@ public final class PodcastMediaController {
         final String u = artworkUrl;
         imageExecutor.execute(() -> {
             try {
-                Bitmap bmp = BitmapFactory.decodeStream(new URL(u).openStream());
+                Bitmap bmp;
+                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new URL(u).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(10000);
+                try (java.io.InputStream in = c.getInputStream()) {
+                    bmp = BitmapFactory.decodeStream(in);
+                } finally {
+                    c.disconnect();
+                }
                 if (bmp != null) {
                     int max = 512;
                     int w = bmp.getWidth(), h = bmp.getHeight();

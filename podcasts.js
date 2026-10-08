@@ -1379,6 +1379,22 @@ function previousPodcast() {
 }
 window.handleAndroidBack = function () {
   try {
+    // Ajustes o menús abiertos: Atrás los cierra.
+    const settings = document.getElementById('settingsMenu');
+    if (settings && !settings.hidden) {
+      settings.hidden = true;
+      return true;
+    }
+    const modal = document.querySelector('.error-modal:not([hidden]), .update-modal:not([hidden])');
+    if (modal) {
+      modal.hidden = true;
+      return true;
+    }
+    const expanded = document.getElementById('podExpanded');
+    if (expanded && !expanded.hidden && typeof closePodcastExpanded === 'function') {
+      closePodcastExpanded();
+      return true;
+    }
     const pods = document.getElementById('viewPodcasts');
     const search = document.getElementById('viewSearch');
     if (search?.classList.contains('active')) {
@@ -1389,8 +1405,9 @@ window.handleAndroidBack = function () {
       backFromPodcast();
       return true;
     }
-    // En la pantalla raíz de Radios no hacemos nada: la app nunca sale con Atrás.
-    return true;
+    // Pantalla principal de Radios: false → Android manda la app a segundo plano
+    // (no se cierra; la radio sigue sonando).
+    return false;
   } catch (e) {
     console.warn('Android back handler', e);
     return true;
