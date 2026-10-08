@@ -568,17 +568,31 @@ function clearHls() {
     hls = null;
   }
 }
+// --- Reproducción de radio -------------------------------------------------
+// Cada llamada a reproducirRadio abre una «sesión» con un token. Cualquier
+// trabajo asíncrono de una sesión anterior (resolver el stream, probar fuentes,
+// reconectar) se descarta en cuanto el token deja de ser el actual. Así, si se
+// cambia rápido de emisora, la búsqueda anterior no puede «ganar».
+const RADIO_MAX_RECONNECTS = 8;
+let radioToken = 0;
+let radioConnecting = false;
+let radioUserPaused = false;
+let radioPollingFor = null;
+// true solo mientras la radio está sonando de verdad; una pausa con esto a
+// false es interna (cambio de fuente, corte detectado) y no del usuario.
+let radioWasPlaying = false;
+
 function clearRadioWatchdog() {
   clearInterval(radioWatchdogTimer);
   radioWatchdogTimer = null;
   radioWatchdogLastTime = 0;
   radioWatchdogStalls = 0;
 }
-function startRadioWatchdog() {
+function startRadioWatchdog(token) {
   clearRadioWatchdog();
   radioWatchdogLastTime = audio.currentTime || 0;
   radioWatchdogTimer = setInterval(() => {
-    if (!currentStation || audio.paused || audio.ended) return;
+    if (token !== radioToken || !currentStation || audio.paused || audio.ended) return;
     const now = audio.currentTime || 0;
     if (Math.abs(now - radioWatchdogLastTime) < 0.25) {
       radioWatchdogStalls++;
@@ -588,6 +602,7 @@ function startRadioWatchdog() {
     }
     if (radioWatchdogStalls >= 3) {
       radioWatchdogStalls = 0;
+      radioWasPlaying = false;
       try {
         audio.pause();
       } catch {}
@@ -595,13 +610,14 @@ function startRadioWatchdog() {
     }
   }, 10000);
 }
-function waitForAudio(timeout = 8000) {
+function waitForAudio(token, timeout = 8000) {
   return new Promise((resolve, reject) => {
     let done = false;
     const finish = (ok, e) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearInterval(stale);
       audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('error', onError);
       ok ? resolve() : reject(e || new Error('audio error'));
@@ -609,11 +625,15 @@ function waitForAudio(timeout = 8000) {
     const onPlaying = () => finish(true);
     const onError = e => finish(false, e);
     const timer = setTimeout(() => finish(false, new Error('timeout')), timeout);
+    // Si mientras tanto se ha elegido otra emisora, se abandona enseguida.
+    const stale = setInterval(() => {
+      if (token !== radioToken) finish(false, new Error('cancelado'));
+    }, 250);
     audio.addEventListener('playing', onPlaying, { once: true });
     audio.addEventListener('error', onError, { once: true });
   });
 }
-async function intentarFuente(source) {
+async function intentarFuente(source, token) {
   clearHls();
   audio.pause();
   audio.removeAttribute('src');
@@ -627,7 +647,8 @@ async function intentarFuente(source) {
       });
       hls.on(Hls.Events.MANIFEST_PARSED, async () => {
         try {
-          const ready = waitForAudio(8000);
+          const ready = waitForAudio(token, 8000);
+          ready.catch(() => {});
           await audio.play();
           await ready;
           resolve();
@@ -641,14 +662,52 @@ async function intentarFuente(source) {
   }
   audio.src = url;
   audio.load();
-  const ready = waitForAudio(8000);
+  const ready = waitForAudio(token, 8000);
+  ready.catch(() => {});
   await audio.play();
   await ready;
 }
-async function reproducirRadio(s) {
+function saveRadioResume(playing) {
+  if (!currentStation) return;
+  try {
+    const st = {
+      type: 'radio',
+      station: currentStation,
+      streamUrl: currentStreamUrl,
+      playing: !!playing,
+      at: Date.now()
+    };
+    localStorage.setItem('radio_resume_state', JSON.stringify(st));
+    if (playing) localStorage.setItem('radios_viferor_playback_resume_v1', JSON.stringify(st));
+  } catch {}
+}
+// Canción y programación solo se consultan mientras la radio suena.
+function stopRadioPolling() {
+  clearInterval(metadataTimer);
+  clearInterval(programTimer);
+  metadataTimer = null;
+  programTimer = null;
+  radioPollingFor = null;
+}
+function startRadioPolling(s, streamUrl) {
+  if (radioPollingFor === s && metadataTimer && programTimer) return;
+  stopRadioPolling();
+  radioPollingFor = s;
+  startMetadata(s, streamUrl);
+  startProgramGuide(s);
+}
+// opciones.reconnect = true cuando la llama la reconexión automática: en ese
+// caso no se reinicia el contador de intentos (antes se ponía a 0 en cada
+// intento, la espera nunca crecía y reintentaba cada 1,5 s para siempre).
+async function reproducirRadio(s, opciones = {}) {
+  if (!s) return;
+  const token = ++radioToken;
+  radioWasPlaying = false;
   clearTimeout(reconnectTimer);
-  reconnectAttempts = 0;
+  if (!opciones.reconnect) reconnectAttempts = 0;
+  radioUserPaused = false;
   clearRadioWatchdog();
+  stopRadioPolling();
   const podcastAudio = document.getElementById('podcastAudio');
   if (podcastAudio && !podcastAudio.paused) {
     try {
@@ -658,79 +717,93 @@ async function reproducirRadio(s) {
   currentStation = s;
   updatePlayingCards();
   currentNameEl.textContent = s.name;
-  statusEl.textContent = 'Conectando... ⏳';
+  statusEl.textContent = opciones.reconnect
+    ? `Reconectando (${reconnectAttempts}/${RADIO_MAX_RECONNECTS})… ⏳`
+    : 'Conectando... ⏳';
   actualizarCancion('🎵 Buscando información…');
   actualizarPrograma(null, null);
-  clearInterval(metadataTimer);
-  clearInterval(programTimer);
   currentStreamUrl = '';
-  let fuentes = Array.isArray(s.options) ? fuentesLocales(s) : [];
-  if (!fuentes.length || !s.url) {
-    statusEl.textContent = 'Buscando stream... ⏳';
-    const remote = await resolveRemote(s);
-    if (remote) {
-      if (remote.logo) s.logo = remote.logo;
-      if (remote.web) s.web = remote.web;
-      if (remote.epg_id) s.epg_id = remote.epg_id;
-      if (remote.stationuuid) s.stationuuid = remote.stationuuid;
-      s.options = remote.options || [];
-      fuentes = fuentesLocales(s);
-      if (remote.source === 'radio-browser' && remote.name) s.remoteName = remote.name;
-    } else {
+  radioConnecting = true;
+  try {
+    let fuentes = Array.isArray(s.options) ? fuentesLocales(s) : [];
+    if (!fuentes.length || !s.url) {
+      statusEl.textContent = 'Buscando stream... ⏳';
+      const remote = await resolveRemote(s);
+      if (token !== radioToken) return;
+      if (remote) {
+        if (remote.logo) s.logo = remote.logo;
+        if (remote.web) s.web = remote.web;
+        if (remote.epg_id) s.epg_id = remote.epg_id;
+        if (remote.stationuuid) s.stationuuid = remote.stationuuid;
+        s.options = remote.options || [];
+        if (remote.source === 'radio-browser' && remote.name) s.remoteName = remote.name;
+      }
       fuentes = fuentesLocales(s);
     }
-  }
-  if (!fuentes.length) {
-    statusEl.textContent = '❌ Sin stream disponible';
-    actualizarCancion('🎵 Emisión no disponible');
-    return;
-  }
-  let last = null;
-  for (const f of fuentes) {
-    try {
-      statusEl.textContent = `Conectando… ${String(f.format || 'stream').toUpperCase()}`;
-      await intentarFuente(f);
-      currentStreamUrl = f.url;
-      reconnectAttempts = 0;
-      startRadioWatchdog();
-      try {
-        window.Android?.setPlaybackSection?.('radio');
-        window.__radioMediaStarted = false;
-        window.Android?.startRadioMedia?.(
-          s.name || 'Radio',
-          nowPlayingEl?.textContent || '🎵 En directo',
-          s.logo || '',
-          true
-        );
-      } catch {}
-      localStorage.setItem(
-        'radio_resume_state',
-        JSON.stringify({ station: s, streamUrl: f.url, playing: true, at: Date.now() })
-      );
-      localStorage.setItem(
-        'radios_viferor_playback_resume_v1',
-        JSON.stringify({ type: 'radio', station: s, streamUrl: f.url, playing: true, at: Date.now() })
-      );
-      statusEl.textContent = 'En directo ✅';
-      actualizarCancion('🎵 En directo');
-      startMetadata(s, f.url);
-      startProgramGuide(s);
+    if (!fuentes.length) {
+      statusEl.textContent = '❌ Sin stream disponible';
+      actualizarCancion('🎵 Emisión no disponible');
       return;
-    } catch (e) {
-      last = e;
     }
+    let last = null;
+    for (const f of fuentes) {
+      if (token !== radioToken) return;
+      try {
+        statusEl.textContent = `Conectando… ${String(f.format || 'stream').toUpperCase()}`;
+        await intentarFuente(f, token);
+        if (token !== radioToken) return;
+        currentStreamUrl = f.url;
+        reconnectAttempts = 0;
+        radioWasPlaying = true;
+        startRadioWatchdog(token);
+        try {
+          window.Android?.setPlaybackSection?.('radio');
+          window.__radioMediaStarted = false;
+          window.Android?.startRadioMedia?.(
+            s.name || 'Radio',
+            nowPlayingEl?.textContent || '🎵 En directo',
+            s.logo || '',
+            true
+          );
+        } catch {}
+        saveRadioResume(true);
+        statusEl.textContent = 'En directo ✅';
+        actualizarCancion('🎵 En directo');
+        startRadioPolling(s, f.url);
+        return;
+      } catch (e) {
+        last = e;
+      }
+    }
+    if (token !== radioToken) return;
+    console.warn('Radio playback failed', s, last);
+    statusEl.textContent = '❌ No se pudo reproducir';
+    actualizarCancion('🎵 Ninguna fuente disponible');
+    radioConnecting = false;
+    scheduleRadioReconnect();
+  } finally {
+    if (token === radioToken) radioConnecting = false;
   }
-  statusEl.textContent = '❌ No se pudo reproducir';
-  actualizarCancion('🎵 Ninguna fuente disponible');
-  console.warn('Radio playback failed', s, last);
-  scheduleRadioReconnect();
 }
+// Deja una emisora lista en el reproductor sin que suene (al abrir la app con
+// «Reanudar al abrir» desactivado). Se reanuda con ▶ o tocando el nombre.
+function prepararRadio(s) {
+  if (!s || currentStation) return;
+  currentStation = s;
+  updatePlayingCards();
+  currentNameEl.textContent = s.name || 'Radio';
+  radioUserPaused = true;
+  statusEl.textContent = '▶ Toca para reanudar';
+  actualizarCancion('🎵 En pausa');
+}
+window.prepararRadio = prepararRadio;
+window.reproducirRadio = reproducirRadio;
 async function startMetadata(s, streamUrl) {
   clearInterval(metadataTimer);
   metadataBusy = false;
   let interval = 20000;
   const run = async () => {
-    if (metadataBusy || !currentStation || currentStation !== s) return;
+    if (metadataBusy || !currentStation || currentStation !== s || radioPollingFor !== s) return;
     metadataBusy = true;
     let found = '';
     try {
@@ -742,10 +815,8 @@ async function startMetadata(s, streamUrl) {
       });
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 7000);
-      const r = await fetch('/api/metadata?' + q.toString(), {
-        cache: 'no-store',
-        signal: controller.signal
-      });
+      // Sin no-store: el CDN cachea la respuesta unos segundos y la comparten todos los oyentes.
+      const r = await fetch('/api/metadata?' + q.toString(), { signal: controller.signal });
       clearTimeout(timeout);
       if (r.ok) {
         const d = await r.json();
@@ -757,22 +828,9 @@ async function startMetadata(s, streamUrl) {
         }
       }
     } catch {}
-    if (!found && s.stationuuid) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        const r = await fetch(
-          'https://de1.api.radio-browser.info/json/stations/byuuid/' + encodeURIComponent(s.stationuuid),
-          { cache: 'no-store', signal: controller.signal }
-        );
-        clearTimeout(timeout);
-        const d = await r.json();
-        const x = d?.[0];
-        found = x?.songtitle || x?.streamtitle || x?.title || '';
-      } catch {}
-    }
-    actualizarCancion(found ? '🎵 ' + found : '🎵 En directo');
     metadataBusy = false;
+    if (radioPollingFor !== s) return;
+    actualizarCancion(found ? '🎵 ' + found : '🎵 En directo');
     interval = found ? 20000 : 30000;
     clearInterval(metadataTimer);
     metadataTimer = setInterval(run, interval);
@@ -781,29 +839,38 @@ async function startMetadata(s, streamUrl) {
 }
 async function startProgramGuide(s) {
   const run = async () => {
+    if (radioPollingFor !== s) return;
     try {
       const q = new URLSearchParams({ name: s.name || '', epg_id: s.epg_id || '' });
-      const r = await fetch('/api/program?' + q.toString(), { cache: 'no-store' });
-      if (!r.ok) return;
+      const r = await fetch('/api/program?' + q.toString());
+      if (!r.ok || radioPollingFor !== s) return;
       const d = await r.json();
       actualizarPrograma(d.current, d.next);
     } catch {}
   };
   run();
+  clearInterval(programTimer);
   programTimer = setInterval(run, 60000);
 }
+
 function scheduleRadioReconnect() {
   clearTimeout(reconnectTimer);
   clearRadioWatchdog();
-  if (!currentStation || (document.hidden && false)) return;
-  const delay = Math.min(30000, 1500 * Math.pow(2, reconnectAttempts));
-  reconnectTimer = setTimeout(async () => {
-    if (!currentStation || !audio.paused) return;
+  if (!currentStation || radioUserPaused || radioConnecting) return;
+  if (reconnectAttempts >= RADIO_MAX_RECONNECTS) {
+    statusEl.textContent = '⚠️ Sin conexión · toca para reintentar';
+    actualizarCancion('🎵 No se pudo reconectar');
+    stopRadioPolling();
+    return;
+  }
+  // 2 s, 4 s, 8 s… hasta 60 s entre intentos.
+  const delay = Math.min(60000, 2000 * Math.pow(2, reconnectAttempts));
+  const token = radioToken;
+  statusEl.textContent = `Reconectando en ${Math.round(delay / 1000)} s… ⏳`;
+  reconnectTimer = setTimeout(() => {
+    if (token !== radioToken || !currentStation || !audio.paused || radioUserPaused) return;
     reconnectAttempts++;
-    statusEl.textContent = 'Reconectando… ⏳';
-    try {
-      await reproducirRadio(currentStation);
-    } catch {}
+    reproducirRadio(currentStation, { reconnect: true }).catch(() => {});
   }, delay);
 }
 function syncRadioAndroidMedia() {
@@ -824,13 +891,22 @@ function syncRadioAndroidMedia() {
     }
   } catch {}
 }
+// Reanudar desde la notificación, el widget o el nombre de la emisora: en
+// directo conviene reconectar (si no, suena lo que quedó en el búfer, con
+// retraso respecto a la emisión real).
+function reanudarRadio() {
+  if (!currentStation || radioConnecting) return;
+  reproducirRadio(currentStation);
+}
 window.viferorNativeRadioPlay = () => {
   try {
-    if (audio) audio.play().catch(() => {});
+    reanudarRadio();
   } catch {}
 };
 window.viferorNativeRadioPause = () => {
   try {
+    radioUserPaused = true;
+    clearTimeout(reconnectTimer);
     if (audio) audio.pause();
   } catch {}
 };
@@ -853,31 +929,41 @@ function actualizarPrograma(current, next) {
     programNextEl.title = next?.description || '';
   }
 }
+// Reordenar favoritas arrastrando el asa ⋮⋮. Durante el gesto solo se mueven
+// los nodos del DOM (antes se redibujaba la cuadrícula en cada intercambio, la
+// tarjeta arrastrada desaparecía y el gesto se cortaba). Al soltar se guarda.
+let dragCard = null;
 function handleTouchStart(e, i, card, g) {
   e.stopPropagation();
-  card.dataset.dragIndex = i;
+  dragCard = card;
   card.classList.add('dragging');
-  card._dragging = true;
 }
 function handleTouchMove(e, g) {
-  const active = g.querySelector('.dragging');
-  if (!active) return;
+  if (!dragCard) return;
   e.preventDefault();
-  const t = e.touches[0],
-    el = document.elementFromPoint(t.clientX, t.clientY)?.closest('.station-card');
-  if (el && el !== active) {
-    const a = +active.dataset.dragIndex,
-      b = +el.dataset.index;
-    if (Number.isInteger(a) && Number.isInteger(b) && a !== b) {
-      const item = favorites.splice(a, 1)[0];
-      favorites.splice(b, 0, item);
-      saveFavorites();
-      renderFavoritas();
-    }
-  }
+  const t = e.touches[0];
+  const over = document.elementFromPoint(t.clientX, t.clientY)?.closest('.station-card');
+  if (!over || over === dragCard || over.parentElement !== g) return;
+  const cards = [...g.children];
+  const from = cards.indexOf(dragCard),
+    to = cards.indexOf(over);
+  if (from < 0 || to < 0) return;
+  g.insertBefore(dragCard, from < to ? over.nextSibling : over);
 }
 function handleTouchEnd() {
-  document.querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging'));
+  if (!dragCard) return;
+  const g = dragCard.parentElement;
+  dragCard.classList.remove('dragging');
+  dragCard = null;
+  if (!g) return;
+  const order = [...g.querySelectorAll('.station-card')].map(c => c.dataset.uuid);
+  const byId = new Map(favorites.map(f => [String(f.uuid || f.stationuuid), f]));
+  const reordered = order.map(id => byId.get(String(id))).filter(Boolean);
+  if (reordered.length === favorites.length) {
+    favorites = reordered;
+    saveFavorites();
+  }
+  renderFavoritas();
 }
 function exportarFavoritas() {
   if (!favorites.length) {
@@ -913,6 +999,12 @@ function exportarFavoritas() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+// Carga una copia de favoritas: valida cada emisora y la añade a las actuales
+// sin duplicados (antes sustituía la lista entera sin comprobar nada).
+function emisoraValida(x) {
+  // Basta con nombre e identificador: si no trae URL, se resuelve al reproducir (/api/resolve).
+  return !!x && typeof x === 'object' && !Array.isArray(x) && !!String(x.name || '').trim() && !!stationId(x);
+}
 function importarFavoritas(ev) {
   const f = ev.target.files?.[0];
   if (!f) return;
@@ -920,11 +1012,26 @@ function importarFavoritas(ev) {
   r.onload = e => {
     try {
       const d = JSON.parse(e.target.result);
-      if (!Array.isArray(d)) throw Error('Formato no válido');
-      favorites = d;
+      const lista = Array.isArray(d) ? d : Array.isArray(d?.favorites) ? d.favorites : null;
+      if (!lista) throw Error('El archivo no es una copia de emisoras válida');
+      const validas = lista.filter(emisoraValida);
+      const ids = new Set(favorites.map(stationId));
+      let nuevas = 0;
+      for (const x of validas) {
+        const id = stationId(x);
+        if (ids.has(id)) continue;
+        ids.add(id);
+        favorites.push({ ...x, stationuuid: x.stationuuid || x.uuid });
+        nuevas++;
+      }
       saveFavorites();
       renderFavoritas();
-      alert('✅ ' + d.length + ' emisoras cargadas');
+      const ignoradas = lista.length - validas.length;
+      alert(
+        `✅ ${nuevas} emisoras añadidas` +
+          (validas.length - nuevas ? ` · ${validas.length - nuevas} ya estaban` : '') +
+          (ignoradas ? ` · ${ignoradas} no válidas ignoradas` : '')
+      );
     } catch (err) {
       alert('Error: ' + err.message);
     }
@@ -1092,7 +1199,31 @@ function init() {
     }
     syncRadioAndroidMedia();
   });
+  // Vuelve a sonar (también con el ▶ nativo del reproductor): se retoma el
+  // sondeo de canción/programa y la vigilancia de cortes.
+  audio.addEventListener('playing', () => {
+    if (!currentStation || radioConnecting || !audio.currentSrc) return;
+    radioWasPlaying = true;
+    radioUserPaused = false;
+    clearTimeout(reconnectTimer);
+    statusEl.textContent = 'En directo ✅';
+    startRadioWatchdog(radioToken);
+    startRadioPolling(currentStation, currentStreamUrl || audio.currentSrc);
+    saveRadioResume(true);
+  });
   audio.addEventListener('pause', () => {
+    // Las pausas internas (cambio de fuente, vigilancia de cortes) no cuentan
+    // como pausa del usuario: esas sí deben reconectar.
+    const internal = radioConnecting || !radioWasPlaying;
+    radioWasPlaying = false;
+    if (currentStation && !internal) {
+      radioUserPaused = true;
+      clearTimeout(reconnectTimer);
+      stopRadioPolling();
+      clearRadioWatchdog();
+      statusEl.textContent = '⏸ En pausa';
+      saveRadioResume(false);
+    }
     if (currentStation) {
       try {
         window.Android?.updateRadioMedia?.(
@@ -1167,53 +1298,29 @@ function init() {
   actualizarChips();
   cambiarVista('fav');
   cargarCatalogoNacional();
-  try {
-    const rs = JSON.parse(localStorage.getItem('radio_resume_state') || 'null');
-    if (rs?.station && rs.playing !== false && Date.now() - Number(rs.at || 0) < 86400000) {
-      /* Podcasts decide later which active playback is newest. */
-    }
-  } catch {}
+  // Tocar el nombre o el estado de la emisora la reanuda si está parada.
+  [currentNameEl, statusEl].forEach(el =>
+    el?.addEventListener('click', () => {
+      if (currentStation && audio.paused) reanudarRadio();
+    })
+  );
 }
 audio.addEventListener('error', () => {
-  if (currentStation && audio.paused) scheduleRadioReconnect();
+  if (currentStation && audio.paused && !radioConnecting && !radioUserPaused) scheduleRadioReconnect();
 });
 window.addEventListener('online', () => {
-  if (currentStation && audio.paused) scheduleRadioReconnect();
+  // Al recuperar la red se reintenta desde cero, aunque se hubieran agotado los intentos.
+  if (currentStation && audio.paused && !radioUserPaused && !radioConnecting) {
+    reconnectAttempts = 0;
+    scheduleRadioReconnect();
+  }
 });
-window.addEventListener('pagehide', () => {
+function guardarAlSalir() {
   clearRadioWatchdog();
-  try {
-    if (audio && !audio.paused && currentStation) {
-      const st = {
-        type: 'radio',
-        station: currentStation,
-        streamUrl: currentStreamUrl,
-        playing: true,
-        at: Date.now()
-      };
-      localStorage.setItem('radio_resume_state', JSON.stringify(st));
-      localStorage.setItem('radios_viferor_playback_resume_v1', JSON.stringify(st));
-    }
-  } catch {}
-  clearHls();
-});
-window.addEventListener('beforeunload', () => {
-  clearRadioWatchdog();
-  try {
-    if (audio && !audio.paused && currentStation) {
-      const st = {
-        type: 'radio',
-        station: currentStation,
-        streamUrl: currentStreamUrl,
-        playing: true,
-        at: Date.now()
-      };
-      localStorage.setItem('radio_resume_state', JSON.stringify(st));
-      localStorage.setItem('radios_viferor_playback_resume_v1', JSON.stringify(st));
-    }
-  } catch {}
-  clearHls();
-});
+  if (audio && !audio.paused && currentStation) saveRadioResume(true);
+}
+window.addEventListener('pagehide', guardarAlSalir);
+window.addEventListener('beforeunload', guardarAlSalir);
 window.addEventListener('error', e => console.error('UI error', e.error || e.message));
 window.addEventListener('unhandledrejection', e => console.error('Unhandled rejection', e.reason));
 window.addEventListener('load', init);
