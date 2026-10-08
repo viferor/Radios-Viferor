@@ -442,12 +442,7 @@ function cardFor(s, i, favMode = false) {
     e.stopPropagation();
     toggleFav(s.uuid || s.stationuuid, card);
   });
-  if (favMode) {
-    const h = card.querySelector('.drag-handle');
-    h.ontouchstart = e => handleTouchStart(e, i, card, favGrid);
-    h.ontouchmove = e => handleTouchMove(e, favGrid);
-    h.ontouchend = handleTouchEnd;
-  }
+  if (favMode) setupFavSortable(card);
   return card;
 }
 function renderFavoritas() {
@@ -1175,41 +1170,177 @@ window.viferorNativeRadioPause = () => {
     if (audio) audio.pause();
   } catch {}
 };
-// Reordenar favoritas arrastrando el asa ⋮⋮. Durante el gesto solo se mueven
-// los nodos del DOM (antes se redibujaba la cuadrícula en cada intercambio, la
-// tarjeta arrastrada desaparecía y el gesto se cortaba). Al soltar se guarda.
-let dragCard = null;
-function handleTouchStart(e, i, card, g) {
-  e.stopPropagation();
-  dragCard = card;
-  card.classList.add('dragging');
+// Reordenar favoritas arrastrando. Se puede empezar desde el asa ⋮⋮ (al instante)
+// o manteniendo pulsada la tarjeta (medio segundo). Una copia de la tarjeta sigue
+// al dedo, las demás se apartan con animación y la lista se desplaza sola cerca de
+// los bordes. Al soltar se guarda el orden.
+const favSort = {
+  active: false,
+  card: null,
+  ghost: null,
+  offX: 0,
+  offY: 0,
+  x: 0,
+  y: 0,
+  raf: 0,
+  longTimer: 0,
+  startX: 0,
+  startY: 0,
+  suppressClick: false
+};
+function favScroller() {
+  return favGrid.scrollHeight > favGrid.clientHeight + 2 ? favGrid : document.scrollingElement;
 }
-function handleTouchMove(e, g) {
-  if (!dragCard) return;
+function setupFavSortable(card) {
+  const handle = card.querySelector('.drag-handle');
+  handle?.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startFavDrag(e, card);
+  });
+  // Pulsación larga sobre la tarjeta (en táctil).
+  card.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' || favSort.active || e.target.closest('.fav-btn,.drag-handle')) return;
+    clearTimeout(favSort.longTimer);
+    favSort.startX = e.clientX;
+    favSort.startY = e.clientY;
+    favSort.longTimer = setTimeout(() => startFavDrag(e, card), 450);
+  });
+  const cancelLong = () => clearTimeout(favSort.longTimer);
+  card.addEventListener('pointermove', e => {
+    if (!favSort.active && Math.hypot(e.clientX - favSort.startX, e.clientY - favSort.startY) > 8) cancelLong();
+  });
+  card.addEventListener('pointerup', cancelLong);
+  card.addEventListener('pointercancel', cancelLong);
+  card.addEventListener('contextmenu', e => e.preventDefault());
+  // Tras arrastrar, el «clic» al soltar no debe poner la emisora.
+  card.addEventListener(
+    'click',
+    e => {
+      if (favSort.suppressClick) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        favSort.suppressClick = false;
+      }
+    },
+    true
+  );
+}
+function startFavDrag(e, card) {
+  if (favSort.active) return;
+  clearTimeout(favSort.longTimer);
+  const r = card.getBoundingClientRect();
+  const ghost = card.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  Object.assign(ghost.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  document.body.appendChild(ghost);
+  card.classList.add('drag-placeholder');
+  Object.assign(favSort, {
+    active: true,
+    card,
+    ghost,
+    offX: e.clientX - r.left,
+    offY: e.clientY - r.top,
+    x: e.clientX,
+    y: e.clientY,
+    suppressClick: true
+  });
+  document.body.classList.add('fav-sorting');
+  try {
+    navigator.vibrate?.(15);
+  } catch {}
+  window.addEventListener('pointermove', onFavDragMove, { passive: false });
+  window.addEventListener('pointerup', endFavDrag);
+  window.addEventListener('pointercancel', endFavDrag);
+  favDragLoop();
+}
+// Mientras se arrastra no debe desplazarse la página con el dedo.
+document.addEventListener(
+  'touchmove',
+  e => {
+    if (favSort.active) e.preventDefault();
+  },
+  { passive: false }
+);
+function onFavDragMove(e) {
+  if (!favSort.active) return;
   e.preventDefault();
-  const t = e.touches[0];
-  const over = document.elementFromPoint(t.clientX, t.clientY)?.closest('.station-card');
-  if (!over || over === dragCard || over.parentElement !== g) return;
-  const cards = [...g.children];
-  const from = cards.indexOf(dragCard),
-    to = cards.indexOf(over);
-  if (from < 0 || to < 0) return;
-  g.insertBefore(dragCard, from < to ? over.nextSibling : over);
+  favSort.x = e.clientX;
+  favSort.y = e.clientY;
 }
-function handleTouchEnd() {
-  if (!dragCard) return;
-  const g = dragCard.parentElement;
-  dragCard.classList.remove('dragging');
-  dragCard = null;
-  if (!g) return;
-  const order = [...g.querySelectorAll('.station-card')].map(c => c.dataset.uuid);
-  const byId = new Map(favorites.map(f => [String(f.uuid || f.stationuuid), f]));
-  const reordered = order.map(id => byId.get(String(id))).filter(Boolean);
-  if (reordered.length === favorites.length) {
-    favorites = reordered;
-    saveFavorites();
+function favDragLoop() {
+  if (!favSort.active) return;
+  const { ghost, x, y, offX, offY } = favSort;
+  ghost.style.transform = `translate(${x - offX - parseFloat(ghost.style.left)}px, ${y - offY - parseFloat(ghost.style.top)}px) scale(1.06)`;
+  // Desplazamiento automático cerca de los bordes de la lista.
+  const sc = favScroller();
+  const box = sc === favGrid ? favGrid.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+  const edge = 70;
+  if (y < box.top + edge) sc.scrollTop -= Math.ceil((box.top + edge - y) / 6);
+  else if (y > box.bottom - edge) sc.scrollTop += Math.ceil((y - (box.bottom - edge)) / 6);
+  moveFavPlaceholder(x, y);
+  favSort.raf = requestAnimationFrame(favDragLoop);
+}
+function moveFavPlaceholder(x, y) {
+  const card = favSort.card;
+  const over = document.elementFromPoint(x, y)?.closest('.station-card');
+  if (!over || over === card || over.parentElement !== favGrid) return;
+  const r = over.getBoundingClientRect();
+  const sameRow = y > r.top && y < r.bottom;
+  const after = sameRow ? x > r.left + r.width / 2 : y > r.top + r.height / 2;
+  const ref = after ? over.nextSibling : over;
+  if (ref === card || card.nextSibling === ref) return;
+  // Animación FLIP: las tarjetas se deslizan a su nueva posición.
+  const cards = [...favGrid.querySelectorAll('.station-card')];
+  const before = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+  favGrid.insertBefore(card, ref);
+  for (const c of cards) {
+    if (c === card) continue;
+    const a = before.get(c),
+      b = c.getBoundingClientRect();
+    const dx = a.left - b.left,
+      dy = a.top - b.top;
+    if (!dx && !dy) continue;
+    c.style.transition = 'none';
+    c.style.transform = `translate(${dx}px, ${dy}px)`;
+    requestAnimationFrame(() => {
+      c.style.transition = 'transform 160ms ease';
+      c.style.transform = '';
+    });
   }
-  renderFavoritas();
+}
+function endFavDrag() {
+  if (!favSort.active) return;
+  favSort.active = false;
+  cancelAnimationFrame(favSort.raf);
+  window.removeEventListener('pointermove', onFavDragMove);
+  window.removeEventListener('pointerup', endFavDrag);
+  window.removeEventListener('pointercancel', endFavDrag);
+  document.body.classList.remove('fav-sorting');
+  const { card, ghost } = favSort;
+  // La copia vuela al hueco y desaparece.
+  const r = card.getBoundingClientRect();
+  ghost.style.transition = 'transform 140ms ease';
+  ghost.style.transform = `translate(${r.left - parseFloat(ghost.style.left)}px, ${r.top - parseFloat(ghost.style.top)}px) scale(1)`;
+  setTimeout(() => {
+    ghost.remove();
+    card.classList.remove('drag-placeholder');
+    favGrid.querySelectorAll('.station-card').forEach(c => {
+      c.style.transition = '';
+      c.style.transform = '';
+    });
+    const order = [...favGrid.querySelectorAll('.station-card')].map(c => c.dataset.uuid);
+    const byId = new Map(favorites.map(f => [String(f.uuid || f.stationuuid), f]));
+    const reordered = order.map(id => byId.get(String(id))).filter(Boolean);
+    if (reordered.length === favorites.length) {
+      favorites = reordered;
+      saveFavorites();
+    }
+    renderFavoritas();
+    // El clic que genera soltar llega justo después; luego se permite tocar de nuevo.
+    setTimeout(() => (favSort.suppressClick = false), 350);
+  }, 150);
 }
 function exportarFavoritas() {
   if (!favorites.length) {

@@ -150,6 +150,65 @@ function savePodcastSubs() {
       window.Android.syncPodcastSubscriptions(json);
   } catch {}
 }
+// --- Favoritos de podcasts --------------------------------------------------
+// Independientes de las suscripciones: puedes marcar como favorito cualquier
+// podcast (suscrito o no), y quitar uno no toca el otro.
+const PODCAST_FAVS_KEY = 'radios_viferor_podcast_favs_v1';
+podcastState.favs = [];
+function loadPodcastFavs() {
+  try {
+    const x = JSON.parse(localStorage.getItem(PODCAST_FAVS_KEY) || '[]');
+    podcastState.favs = Array.isArray(x) ? x.map(normalizePodcastObject).filter(p => podcastKey(p)) : [];
+  } catch {
+    podcastState.favs = [];
+  }
+}
+function savePodcastFavs() {
+  try {
+    localStorage.setItem(PODCAST_FAVS_KEY, JSON.stringify(podcastState.favs));
+  } catch {}
+}
+function isPodcastFav(p) {
+  const k = podcastKey(p);
+  return podcastState.favs.some(f => podcastKey(f) === k);
+}
+function podcastFavButtonHtml(p, extraClass = '') {
+  const on = isPodcastFav(p);
+  return `<button class="pod-fav ${on ? 'on' : ''} ${extraClass}" data-podcast-key="${pEsc(podcastKey(p))}" type="button" aria-pressed="${on}" aria-label="${on ? 'Quitar de favoritos' : 'Añadir a favoritos'}">${on ? '⭐ Favorito' : '☆ Favorito'}</button>`;
+}
+function refreshPodcastFavUI() {
+  document.querySelectorAll('.pod-fav[data-podcast-key]').forEach(btn => {
+    const k = btn.getAttribute('data-podcast-key') || '';
+    const on = podcastState.favs.some(f => podcastKey(f) === k);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Quitar de favoritos' : 'Añadir a favoritos');
+    btn.textContent = on ? '⭐ Favorito' : '☆ Favorito';
+  });
+  updatePodcastMineCount();
+}
+function togglePodcastFav(p) {
+  const k = podcastKey(p);
+  if (!k) return;
+  if (isPodcastFav(p)) podcastState.favs = podcastState.favs.filter(f => podcastKey(f) !== k);
+  else {
+    const item = normalizePodcastObject({ ...p });
+    for (const key of ['episodes', 'stores', 'pos', 'rank']) delete item[key];
+    podcastState.favs.push({ ...item, favAt: new Date().toISOString() });
+  }
+  savePodcastFavs();
+  refreshPodcastFavUI();
+  // En la portada la sección de favoritos cambia: se redibuja manteniendo la posición.
+  if (podcastState.screen === 'landing') rerenderPodcastHome();
+}
+function updatePodcastMineCount() {
+  const el = $p('podMineCount');
+  if (!el) return;
+  const n = podcastState.subs.length,
+    f = podcastState.favs.length;
+  el.textContent = `${n === 1 ? '1 suscripción' : n + ' suscripciones'} · ${f === 1 ? '1 favorito' : f + ' favoritos'}`;
+}
+
 function getPodcastPlayCounts() {
   try {
     const x = JSON.parse(localStorage.getItem(PODCAST_PLAY_COUNTS_KEY) || '{}');
@@ -343,6 +402,11 @@ function getSortedPodcastSubs() {
   const arr = [...podcastState.subs],
     mode = $p('podMineSort')?.value || 'name';
   return arr.sort((a, b) => {
+    if (mode === 'favs') {
+      const d = Number(isPodcastFav(b)) - Number(isPodcastFav(a));
+      if (d) return d;
+      return String(a.title || '').localeCompare(String(b.title || ''), 'es', { sensitivity: 'base' });
+    }
     if (mode === 'listened') {
       const d = getPodcastPlayCount(b) - getPodcastPlayCount(a);
       if (d) return d;
@@ -582,8 +646,8 @@ function rerenderPodcastHome() {
   else renderPodcastHome(true);
   if ($p('podcastContent')) $p('podcastContent').scrollTop = sc;
 }
-function podcastFavCountText(n) {
-  return n === 1 ? '1 favorito' : `${n} favoritos`;
+function podcastSubsCountText(n) {
+  return n === 1 ? '1 suscripción' : `${n} suscripciones`;
 }
 function renderPodcastHome(fromHistory = false, inline = false) {
   if (inline) {
@@ -600,13 +664,30 @@ function renderPodcastHome(fromHistory = false, inline = false) {
   }
   const root = $p('podcastContent');
   root.replaceChildren();
+  // Portada: primero los favoritos (independientes de las suscripciones).
+  if (inline) {
+    const favs = podcastState.favs;
+    const sec = document.createElement('section');
+    sec.className = 'pod-favs-section';
+    sec.innerHTML = `<h2 class="pod-home-h">⭐ Favoritos <span>${favs.length}</span></h2>`;
+    if (favs.length) {
+      const g = document.createElement('div');
+      g.className = 'pod-grid pod-subs-grid pod-favs-grid';
+      favs.forEach(f => g.appendChild(podcastCard(f)));
+      sec.append(g);
+    } else {
+      sec.insertAdjacentHTML('beforeend', '<p class="pod-home-hint">Pulsa «☆ Favorito» en cualquier podcast para tenerlo aquí, estés suscrito o no.</p>');
+    }
+    root.append(sec);
+    root.insertAdjacentHTML('beforeend', `<h2 class="pod-home-h">📚 Mis suscripciones <span>${podcastState.subs.length}</span></h2>`);
+  }
   const title = document.createElement('div');
   title.className = 'pod-section-title pod-subs-head' + (inline ? ' pod-subs-inline' : '');
   title.innerHTML =
     (inline ? '' : '<button class="pod-back-btn" id="podBack" type="button">← Volver</button>') +
-    '<div class="pod-detail-title"><h2>⭐ Mis podcasts</h2><span>' +
-    podcastFavCountText(podcastState.subs.length) +
-    '</span></div><div class="pod-subs-controls"><label class="pod-mine-sort"><span>Ordenar por</span><select id="podMineSort" aria-label="Ordenar mis podcasts"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option></select></label><div class="pod-modes pod-modes-inline"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div></div>';
+    '<div class="pod-detail-title"><h2>📚 Mis suscripciones</h2><span>' +
+    podcastSubsCountText(podcastState.subs.length) +
+    '</span></div><div class="pod-subs-controls"><label class="pod-mine-sort"><span>Ordenar por</span><select id="podMineSort" aria-label="Ordenar mis podcasts"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option></select></label><div class="pod-modes pod-modes-inline"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div></div>';
   root.append(title);
   if ($p('podBack')) $p('podBack').onclick = backFromPodcast;
   // Los cuatro modos crean una lista de reproducción con tus suscripciones
@@ -619,7 +700,7 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     if ($p('podSearchText')) $p('podSearchText').value = '';
     searchPodcasts();
   };
-  if ($p('podMineCount')) $p('podMineCount').textContent = podcastFavCountText(podcastState.subs.length);
+  updatePodcastMineCount();
   const sort = $p('podMineSort');
   if (sort) {
     sort.value = localStorage.getItem('radios_viferor_podcast_mine_sort') || 'name';
@@ -631,7 +712,7 @@ function renderPodcastHome(fromHistory = false, inline = false) {
   if (!podcastState.subs.length) {
     root.insertAdjacentHTML(
       'beforeend',
-      '<div class="pod-empty"><div>⭐</div><h3>Aún no tienes podcasts favoritos</h3><p>Busca podcasts y pulsa «Añadir a favoritos», o importa tu OPML.</p><div class="pod-empty-actions"><button type="button" id="podEmptyImport">📥 Importar OPML</button><button type="button" id="podEmptySearch">🔎 Buscar podcasts</button></div></div>'
+      '<div class="pod-empty"><div>📚</div><h3>Aún no tienes suscripciones</h3><p>Busca podcasts y pulsa «Suscribirse», o importa tu OPML.</p><div class="pod-empty-actions"><button type="button" id="podEmptyImport">📥 Importar OPML</button><button type="button" id="podEmptySearch">🔎 Buscar podcasts</button></div></div>'
     );
     $p('podEmptyImport')?.addEventListener('click', () => $p('podcastFile')?.click());
     $p('podEmptySearch')?.addEventListener('click', () => {
@@ -654,12 +735,12 @@ function renderPodcastHome(fromHistory = false, inline = false) {
   });
 }
 function refreshPodcastSubscriptionUI() {
-  if ($p('podMineCount')) $p('podMineCount').textContent = `${podcastFavCountText(podcastState.subs.length)}`;
+  updatePodcastMineCount();
   document.querySelectorAll('.pod-sub[data-podcast-key]').forEach(btn => {
     const k = btn.getAttribute('data-podcast-key') || '';
     const sub = podcastState.subs.some(s => podcastKey(s) === k);
     btn.classList.toggle('on', sub);
-    btn.textContent = sub ? '⭐ En favoritos · Quitar' : '☆ Añadir a favoritos';
+    btn.textContent = sub ? '✓ Suscrito · Quitar' : '＋ Suscribirse';
   });
   document.dispatchEvent(
     new CustomEvent('podcasts:subscriptions-changed', { detail: { count: podcastState.subs.length } })
@@ -668,7 +749,8 @@ function refreshPodcastSubscriptionUI() {
 function togglePodcast(p) {
   const k = podcastKey(p);
   if (isSubscribed(p)) {
-    if (!confirm(`¿Quitar «${podcastText(p.title || 'este podcast')}» de tus favoritos?`)) return;
+    const fav = isPodcastFav(p) ? '\n\nSeguirá en tus favoritos.' : '';
+    if (!confirm(`¿Cancelar la suscripción a «${podcastText(p.title || 'este podcast')}»?${fav}`)) return;
     podcastState.subs = podcastState.subs.filter(s => podcastKey(s) !== k);
   }
   else
@@ -719,10 +801,11 @@ function podcastCard(p, episode = false) {
   const img = p.artwork || p.image || '';
   const activity = !episode ? podcastActivityStatus(p) : null;
   const subscribed = !episode && isSubscribed(p);
-  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '⭐ En favoritos · Quitar' : '☆ Añadir a favoritos'}</button><button class="pod-open" type="button">Episodios</button>${subscribed ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
+  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(p)}<button class="pod-open" type="button">Episodios</button>${subscribed || isPodcastFav(p) ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
   if (episode) d.querySelector('.pod-play').onclick = () => playPodcastEpisode(p);
   else {
     d.querySelector('.pod-sub').onclick = () => togglePodcast(p);
+    d.querySelector('.pod-fav').onclick = () => togglePodcastFav(p);
     d.querySelector('.pod-open').onclick = () => loadPodcastEpisodes(p);
     const share = d.querySelector('.pod-share');
     if (share) share.onclick = () => sharePodcast(p);
@@ -885,7 +968,7 @@ async function loadPodcastEpisodes(p) {
     }
     const h = document.createElement('div');
     h.className = 'pod-section-title pod-detail-head';
-    // Datos completos del podcast para poder añadirlo a favoritos desde aquí
+    // Datos completos del podcast para poder suscribirse o marcarlo como favorito desde aquí
     // (si se llegó desde una notificación puede venir solo con la URL del feed).
     const favItem = {
       ...p,
@@ -895,11 +978,12 @@ async function loadPodcastEpisodes(p) {
       description: p.description || feed.description || '',
       feedUrl
     };
-    const fav = isSubscribed(favItem);
-    h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-detail-title"><h2>${pEsc(favItem.title)}</h2><span>${eps.length} episodios</span></div><div class="pod-actions pod-detail-fav"><button class="pod-sub ${fav ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(favItem))}" type="button">${fav ? '⭐ En favoritos · Quitar' : '☆ Añadir a favoritos'}</button></div>`;
+    const sub = isSubscribed(favItem);
+    h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-detail-title"><h2>${pEsc(favItem.title)}</h2><span>${eps.length} episodios</span></div><div class="pod-actions pod-detail-fav"><button class="pod-sub ${sub ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(favItem))}" type="button">${sub ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(favItem)}</div>`;
     root.replaceChildren(h);
     $p('podBack').onclick = backFromPodcast;
     h.querySelector('.pod-detail-fav .pod-sub').onclick = () => togglePodcast(favItem);
+    h.querySelector('.pod-detail-fav .pod-fav').onclick = () => togglePodcastFav(favItem);
     if (!eps.length) {
       const empty = document.createElement('div');
       empty.className = 'pod-empty';
@@ -968,11 +1052,11 @@ async function playAll(mode) {
   if (resumable.length) {
     q = resumable;
   } else {
-    root.innerHTML = '<div class="pod-loading">Preparando una lista con todos tus favoritos…</div>';
+    root.innerHTML = '<div class="pod-loading">Preparando una lista con todas tus suscripciones…</div>';
     const eps = await fetchSubEpisodes(10);
     if (!eps.length) {
       root.innerHTML =
-        '<div class="pod-empty"><div>🎙️</div><h3>No hay episodios disponibles</h3><p>Comprueba tus favoritos o la conexión.</p><button id="podBack" class="pod-back-btn" type="button">← Volver</button></div>';
+        '<div class="pod-empty"><div>🎙️</div><h3>No hay episodios disponibles</h3><p>Comprueba tus suscripciones o la conexión.</p><button id="podBack" class="pod-back-btn" type="button">← Volver</button></div>';
       $p('podBack').onclick = backFromPodcast;
       return;
     }
@@ -1154,7 +1238,7 @@ function renderPodcastQueue(mode, fromHistory = false) {
 }
 async function exportPodcastOPML() {
   if (!podcastState.subs.length) {
-    alert('No tienes podcasts favoritos.');
+    alert('No tienes suscripciones.');
     return;
   }
   const esc = v =>
@@ -1232,7 +1316,7 @@ function importPodcastOPML(ev) {
       podcastState.subs = [...map.values()];
       savePodcastSubs();
       renderPodcastHome(true);
-      alert(`✅ ${found.length} podcasts encontrados en el OPML. Favoritos: ${podcastState.subs.length}`);
+      alert(`✅ ${found.length} podcasts encontrados en el OPML. Suscripciones: ${podcastState.subs.length}`);
       hydratePodcastArtwork(podcastState.subs);
     } catch (e) {
       alert('Error al importar OPML: ' + e.message);
@@ -1566,11 +1650,12 @@ function restoreLastPlayback() {
 function initPodcasts() {
   migrateLegacyPodcastProgress();
   loadPodcastSubs();
+  loadPodcastFavs();
   try {
     if (window.Android && typeof window.Android.syncPodcastSubscriptions === 'function')
       window.Android.syncPodcastSubscriptions(JSON.stringify(podcastState.subs));
   } catch {}
-  if ($p('podMineCount')) $p('podMineCount').textContent = `${podcastFavCountText(podcastState.subs.length)}`;
+  updatePodcastMineCount();
   const g = $p('podGenre');
   if (g) g.innerHTML = podcastGenres.map(x => `<option>${x}</option>`).join('');
   // Filtros recordados entre sesiones; si ya hay resultados en pantalla, cambiar un
@@ -1601,9 +1686,9 @@ function initPodcasts() {
   });
   const pf = $p('podcastFile');
   if (pf) pf.addEventListener('change', importPodcastOPML);
-  // «Mis podcasts»: tus favoritos con el orden y los cuatro modos.
+  // «Mis podcasts»: tus suscripciones con el orden y los cuatro modos.
   // Antes abría un desplegable que quedaba recortado e invisible dentro de la barra.
-  // «Mis podcasts» abre la pantalla completa de tus favoritos, con el orden y los
+  // «Mis podcasts» abre la pantalla completa de tus suscripciones, con el orden y los
   // cuatro modos (la portada también los muestra, pero el botón debe hacer algo visible).
   $p('podMine').onclick = e => {
     e.preventDefault();
