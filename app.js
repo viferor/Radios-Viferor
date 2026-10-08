@@ -291,7 +291,7 @@ function construirLogo(s) {
   const [clase, texto] = detectarCadena(s);
   const logo = logoFor(s);
   const safeLogo = logo ? escapeHtml(logo) : '';
-  return `<div class="chain-logo ${clase}">${safeLogo ? `<img src="${safeLogo}" alt="Logo ${escapeHtml(s.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.add('logo-fallback')">` : ''}<span class="logo-fallback-text">${escapeHtml(texto)}</span></div>`;
+  return `<div class="chain-logo ${clase}">${safeLogo ? `<img src="${safeLogo}" alt="Logo ${escapeHtml(s.name)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement&&this.parentElement.classList.add('logo-fallback');this.remove()">` : ''}<span class="logo-fallback-text">${escapeHtml(texto)}</span></div>`;
 }
 function obtenerFiltros() {
   return {
