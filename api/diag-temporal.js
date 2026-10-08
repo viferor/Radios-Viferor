@@ -1,25 +1,25 @@
 // TEMPORAL: diagnóstico de red en Vercel. Se elimina en el siguiente commit.
-import dns from 'node:dns';
-import { isPrivateIp, safeFetch, parsePublicUrl } from './_lib/net.js';
+import feed from './podcast-feed.js';
+import meta from './metadata.js';
+function fakeRes() {
+  return { code: 200, h: {}, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; }, setHeader(k, v) { this.h[k] = v; }, write() {}, end() {} };
+}
+async function run(fn, url, query) {
+  const r = fakeRes();
+  try {
+    await fn({ url, query, headers: { 'x-forwarded-for': 'diag-' + Math.random() }, on() {} }, r);
+  } catch (e) {
+    return { crash: String(e && e.stack || e).slice(0, 400) };
+  }
+  const b = r.body ? JSON.stringify(r.body).slice(0, 300) : null;
+  return { code: r.code, body: b };
+}
 export default async function handler(req, res) {
   const out = {};
-  for (const h of ['playerservices.streamtheworld.com', 'feeds.npr.org']) {
-    try {
-      const a = await dns.promises.lookup(h, { all: true, verbatim: true });
-      out[h] = a.map(x => [x.address, x.family, isPrivateIp(x.address)]);
-    } catch (e) {
-      out[h] = 'lookup error: ' + e.message;
-    }
-  }
-  out.parse = !!parsePublicUrl('https://feeds.npr.org/510289/podcast.xml');
-  try {
-    const r = await safeFetch('https://feeds.npr.org/510289/podcast.xml', {}, { timeoutMs: 8000 });
-    out.fetch = [r.status, r.finalUrl];
-    try { await r.body?.cancel(); } catch {}
-  } catch (e) {
-    out.fetch = 'error: ' + (e.status || '') + ' ' + e.message + ' ' + (e.cause?.message || '');
-  }
-  out.xff = req.headers['x-forwarded-for'];
+  const fu = 'https://feeds.npr.org/510289/podcast.xml';
+  out.feedMeta = await run(feed, '/api/podcast-feed?meta=1&url=' + encodeURIComponent(fu), { url: fu, meta: '1' });
+  const su = 'https://playerservices.streamtheworld.com/api/livestream-redirect/CADENASER.mp3';
+  out.meta = await run(meta, '/api/metadata?url=' + encodeURIComponent(su), { url: su, name: 'Cadena SER' });
   res.setHeader('Cache-Control', 'no-store');
-  res.status(200).json(out);
+  res.status(200).send('<pre>' + JSON.stringify(out, null, 1).replace(/</g, '&lt;') + '</pre>');
 }
