@@ -1,5 +1,5 @@
-const APP_VERSION = '1.6.3';
-const APP_BUILD = '1630';
+const APP_VERSION = window.RV_VERSION?.version || '0';
+const APP_BUILD = String(window.RV_VERSION?.build || '0');
 const STORAGE_KEY = 'mis_radios_favoritas_v1';
 const LOGO_CACHE_KEY = 'radio_espana_logos_v1';
 const GLOBAL_SOURCES = {

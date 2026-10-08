@@ -1,6 +1,6 @@
 (function () {
-  const VERSION = '1.6.0',
-    BUILD = '1600';
+  const VERSION = window.RV_VERSION?.version || '0',
+    BUILD = String(window.RV_VERSION?.build || '0');
   const KEY = 'radios_viferor_error_log_v1';
   function read() {
     try {
@@ -92,13 +92,19 @@
     out.textContent = 'Comprobando versión…';
     if (apply) apply.hidden = true;
     try {
-      const r = await nativeFetch('/api/version?ts=' + Date.now(), { cache: 'no-store' });
+      // Se compara la versión que está ejecutándose con el version.js publicado.
+      const r = await nativeFetch('/version.js?ts=' + Date.now(), { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const d = await r.json();
+      const txt = await r.text();
+      const d = {
+        version: (txt.match(/version:\s*'([^']+)'/) || [])[1] || '',
+        build: (txt.match(/build:\s*'([^']+)'/) || [])[1] || ''
+      };
+      if (!d.version || !d.build) throw new Error('version.js no válido');
       if (d.version === VERSION && String(d.build) === BUILD) {
         out.textContent = `Estás al día. Versión ${d.version} · Compilación ${d.build}.`;
       } else {
-        out.textContent = `Hay una versión nueva: ${d.version} · Compilación ${d.build}. Pulsa «Aplicar actualización» para cargarla sin borrar la caché manualmente.`;
+        out.textContent = `Hay una versión nueva: ${d.version} · Compilación ${d.build} (tienes ${VERSION} · ${BUILD}). Pulsa «Aplicar actualización» para cargarla.`;
         if (apply) apply.hidden = false;
       }
     } catch (e) {
@@ -245,6 +251,23 @@
       }
     });
     notificationStatus();
+    const resumeBtn = document.getElementById('btnAutoResume');
+    const resumeText = () => {
+      if (!resumeBtn) return;
+      let on = false;
+      try {
+        on = localStorage.getItem('radios_viferor_autoresume') === '1';
+      } catch {}
+      resumeBtn.textContent = on ? '▶️ Reanudar al abrir: sí' : '⏸️ Reanudar al abrir: no';
+    };
+    resumeText();
+    resumeBtn?.addEventListener('click', () => {
+      try {
+        const on = localStorage.getItem('radios_viferor_autoresume') === '1';
+        localStorage.setItem('radios_viferor_autoresume', on ? '0' : '1');
+      } catch {}
+      resumeText();
+    });
     const v = document.getElementById('appVersionText'),
       b = document.getElementById('appBuildText');
     if (v) v.textContent = VERSION;
