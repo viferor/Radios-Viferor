@@ -1013,3 +1013,14 @@ html.dark-mode body.podcast-detail-active .pod-detail-head{background:#090b0d!im
 .pod-empty-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
 .pod-empty-actions button{border:1px solid #d8dde2;background:#fff;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
 html.dark-mode .pod-empty-actions button{background:#15191e;color:#f5f7f9;border-color:#353c44}
+
+/* 1.8.0 — Favoritos en la portada de Podcasts y botón de favoritos en la vista de episodios */
+.pod-detail-head .pod-detail-fav{margin:0 0 0 auto;flex:0 0 auto}
+.pod-detail-head .pod-detail-fav .pod-sub{white-space:nowrap}
+@media(max-width:650px){.pod-detail-head{flex-wrap:wrap}.pod-detail-head .pod-detail-fav{width:100%;margin:6px 0 0}.pod-detail-head .pod-detail-fav .pod-sub{width:100%;padding:9px}}
+.pod-subs-inline .pod-detail-title{display:none}
+.pod-subs-inline .pod-subs-controls{flex:1 1 100%!important;width:100%!important;max-width:none!important;margin-left:0;justify-content:flex-start}
+.pod-subs-inline .pod-modes-inline{width:100%!important}
+.pod-subs-inline .pod-mine-sort{display:flex;align-items:center;gap:8px;width:100%}
+.pod-subs-inline .pod-mine-sort select{flex:1}
+.pod-subs-head.pod-subs-inline{display:block!important}
