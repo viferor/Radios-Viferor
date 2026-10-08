@@ -1,4 +1,4 @@
-RADIO ESPAÑA 1.2.1 — PROYECTO ANDROID
+RADIOS VIFEROR — PROYECTO ANDROID
 =====================================
 
 Proyecto Android Studio preparado para generar un APK de Radio España.
@@ -7,8 +7,8 @@ La aplicación nativa es un WebView que carga:
 https://radiosviferor.vercel.app/
 
 Versión:
-- versionName: 1.2.1
-- versionCode: 1201
+- versionName: 1.7.0 (ver app/build.gradle)
+- versionCode: 1700
 - package: com.viferor.radioespana
 
 Requisitos:

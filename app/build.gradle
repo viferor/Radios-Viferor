@@ -10,8 +10,8 @@ android {
         applicationId 'com.viferor.radioespana'
         minSdk 23
         targetSdk 34
-        versionCode 1465
-        versionName '1.4.65'
+        versionCode 1700
+        versionName '1.7.0'
     }
 }
 

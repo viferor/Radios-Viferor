@@ -26,6 +26,7 @@
   <input id="fullBackupFile" type="file" accept=".json,application/json" hidden>
   <button id="btnDarkMode" type="button">🌙 Modo oscuro</button>
   <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
+  <button id="btnAutoResume" type="button">⏸️ Reanudar al abrir: no</button>
   <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
 </div>
 </header>
@@ -129,7 +130,7 @@
     <button id="podPrev" class="pod-mini-btn" type="button" aria-label="Episodio anterior">⏮</button>
     <button id="podBack15" class="pod-mini-btn" type="button" aria-label="Retroceder 15 segundos">↶15</button>
     <button id="podPlayPause" class="pod-mini-btn pod-mini-main" type="button" aria-label="Reproducir o pausar">▶</button>
-    <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+    <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 30 segundos">30↷</button>
     <button id="podNext" class="pod-mini-btn" type="button" aria-label="Siguiente episodio">⏭</button>
     <div class="pod-mini-volume volume-control" aria-label="Volumen del podcast"><button id="podMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podVolumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podVolumeValue">80%</output></div>
     <audio id="podcastAudio" preload="none"></audio>
@@ -144,7 +145,7 @@
         <button id="podExpPrev" type="button" aria-label="Anterior">⏮</button>
         <button id="podExpBack15" type="button" aria-label="Retroceder 15 segundos">↶15</button>
         <button id="podExpPlay" class="main" type="button" aria-label="Reproducir o pausar">▶</button>
-        <button id="podExpForward15" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+        <button id="podExpForward15" type="button" aria-label="Avanzar 30 segundos">30↷</button>
         <button id="podExpNext" type="button" aria-label="Siguiente">⏭</button>
       </div>
       <div class="pod-expanded-volume volume-control" aria-label="Volumen del podcast"><button id="podExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podExpVolumeValue">80%</output></div>
@@ -152,7 +153,7 @@
   </div>
 </section>
 
-<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText">1.6.3</strong> · Compilación <strong id="appBuildText">1630</strong></footer>
+<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText"></strong> · Compilación <strong id="appBuildText"></strong></footer>
 
 <div class="error-modal" id="errorModal" hidden>
   <div class="error-modal-card">
@@ -182,39 +183,11 @@
 <div class="player-controls"><audio id="audioPlayer" controls></audio><div class="volume-control" aria-label="Control de volumen"><button id="btnMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="volumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="volumeValue">80%</output></div></div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
-<script src="stations-data.js?v=1.2.1"></script>
-<script src="app.js?v=1.6.3"></script>
-<script src="podcasts.js?v=1.6.3"></script>
-<script src="diagnostics.js?v=1.6.3"></script>
-<script>
-(function(){
-  function bindStableMenus(){
-    var settingsBtn=document.getElementById('btnMenuSettings');
-    var settings=document.getElementById('settingsMenu');
-    if(settingsBtn&&settings&&!settingsBtn.__stableBound){
-      settingsBtn.__stableBound=true;
-      settingsBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();settings.hidden=!settings.hidden;});
-      document.addEventListener('click',function(e){
-        if(!settings.hidden&&e.target!==settingsBtn&&!settings.contains(e.target))settings.hidden=true;
-      });
-    }
-    var mine=document.getElementById('podMine');
-    var mineMenu=document.getElementById('podMineMenu');
-    if(mine&&mineMenu&&!mine.__stableBound){
-      mine.__stableBound=true;
-      mine.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=!mineMenu.hidden;mine.setAttribute('aria-expanded',mineMenu.hidden?'false':'true');});
-      var open=document.getElementById('podMineOpen');
-      if(open)open.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;mine.setAttribute('aria-expanded','false');if(typeof window.pushPodcastState==='function')window.pushPodcastState('subs');if(typeof window.renderPodcastHome==='function')window.renderPodcastHome(true);});
-      var search=document.getElementById('podMineSearch');
-      if(search)search.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;var d=document.getElementById('podSearchDrawer');if(d)d.hidden=false;var q=document.getElementById('podSearchText');if(q)q.focus();});
-      var imp=document.getElementById('podMineImport');
-      if(imp)imp.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();mineMenu.hidden=true;var file=document.getElementById('podcastFile');if(file)file.click();});
-    }
-  }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bindStableMenus);else bindStableMenus();
-  window.addEventListener('load',bindStableMenus);
-})();
-</script>
+<script src="version.js"></script>
+<script src="vendor/hls.min.js"></script>
+<script src="stations-data.js"></script>
+<script src="app.js"></script>
+<script src="podcasts.js"></script>
+<script src="diagnostics.js"></script>
 </body>
 </html>

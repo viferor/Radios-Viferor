@@ -1,65 +1,181 @@
 package com.viferor.radioespana;
 
-import android.app.*;
-import android.content.*;
-import android.media.MediaMetadata;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
-import android.os.*;
-import android.text.TextUtils;
-import java.util.Locale;
+import android.app.Notification;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ServiceInfo;
+import android.net.wifi.WifiManager;
+import android.os.Build;
+import android.os.IBinder;
+import android.os.PowerManager;
 
+/**
+ * Servicio en primer plano mientras suena la radio o un podcast.
+ *
+ * El audio lo sigue reproduciendo el WebView; este servicio solo existe para que
+ * Android no cierre el proceso con la pantalla apagada o la app en segundo plano.
+ * Mantiene además un bloqueo de Wi-Fi y de CPU mientras hay reproducción, para que
+ * el stream no se corte al dormirse el teléfono.
+ *
+ * La notificación la construye PodcastMediaController y se la pasa con show().
+ * Al pausar se llama a pause(): el servicio deja de estar en primer plano (la
+ * notificación queda y se puede descartar) y se detiene.
+ */
 public class MediaPlaybackService extends Service {
-    public static final String ACTION_UPDATE = "com.viferor.radioespana.MEDIA_UPDATE";
-    public static final String ACTION_PLAY_PAUSE = "com.viferor.radioespana.MEDIA_PLAY_PAUSE";
-    public static final String ACTION_NEXT = "com.viferor.radioespana.MEDIA_NEXT";
-    public static final String ACTION_PREV = "com.viferor.radioespana.MEDIA_PREV";
-    public static final String ACTION_SEEK = "com.viferor.radioespana.MEDIA_SEEK";
-    public static final String ACTION_STOP = "com.viferor.radioespana.MEDIA_STOP";
-    public static final String EXTRA_TITLE="title", EXTRA_SUBTITLE="subtitle", EXTRA_TYPE="type", EXTRA_PLAYING="playing", EXTRA_DURATION="duration", EXTRA_POSITION="position", EXTRA_DELTA="delta";
-    private static final String CHANNEL="media_playback";
-    private static final int NOTIFICATION_ID=8101;
-    private MediaSession session;
-    private String title="Radios Viferor", subtitle="";
-    private boolean playing=false;
-    private long duration=0, position=0;
+    private static final String ACTION_SHOW = "com.viferor.radioespana.PLAYBACK_SHOW";
+    private static final String ACTION_PAUSE = "com.viferor.radioespana.PLAYBACK_PAUSE";
+    private static final String ACTION_STOP = "com.viferor.radioespana.PLAYBACK_STOP";
 
-    @Override public void onCreate(){super.onCreate();createChannel();
-        session=new MediaSession(this,"RadiosViferor");
-        session.setCallback(new MediaSession.Callback(){
-            @Override public void onPlay(){send(ACTION_PLAY_PAUSE);}
-            @Override public void onPause(){send(ACTION_PLAY_PAUSE);}
-            @Override public void onSkipToNext(){send(ACTION_NEXT);}
-            @Override public void onSkipToPrevious(){send(ACTION_PREV);}
-            @Override public void onSeekTo(long p){ Intent i=new Intent(ACTION_SEEK); i.setPackage(getPackageName()); i.putExtra(EXTRA_POSITION,p); sendToApp(i); }
-        });
-        session.setActive(true);
+    private static volatile boolean running;
+    private static volatile Notification pendingNotification;
+    private static volatile int pendingId;
+
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+
+    public static boolean isRunning() {
+        return running;
     }
-    private void send(String action){Intent i=new Intent(action);i.setPackage(getPackageName());sendToApp(i);}
-    private void sendToApp(Intent i){sendBroadcast(i);}
-    @Override public int onStartCommand(Intent intent,int flags,int startId){
-        if(intent!=null){String a=intent.getAction();
-            if(ACTION_UPDATE.equals(a)){title=intent.getStringExtra(EXTRA_TITLE);subtitle=intent.getStringExtra(EXTRA_SUBTITLE);playing=intent.getBooleanExtra(EXTRA_PLAYING,false);duration=intent.getLongExtra(EXTRA_DURATION,0);position=intent.getLongExtra(EXTRA_POSITION,0);updateNotification();}
-            else if(ACTION_STOP.equals(a)){stopForeground(true);stopSelf();return START_NOT_STICKY;}
-            else if(ACTION_PLAY_PAUSE.equals(a)||ACTION_NEXT.equals(a)||ACTION_PREV.equals(a)){send(a);}
-            else if(ACTION_SEEK.equals(a)){Intent i=new Intent(ACTION_SEEK);i.setPackage(getPackageName());if(intent.hasExtra(EXTRA_DELTA)) i.putExtra(EXTRA_DELTA,intent.getLongExtra(EXTRA_DELTA,0)); else i.putExtra(EXTRA_POSITION,intent.getLongExtra(EXTRA_POSITION,0));sendToApp(i);}
+
+    /** Pone (o actualiza) el servicio en primer plano con esta notificación. */
+    public static boolean show(Context context, int id, Notification notification) {
+        pendingNotification = notification;
+        pendingId = id;
+        Intent i = new Intent(context, MediaPlaybackService.class).setAction(ACTION_SHOW);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i);
+            else context.startService(i);
+            return true;
+        } catch (Exception e) {
+            // Android 12+ puede denegar el inicio desde segundo plano. En ese caso el
+            // llamante publica la notificación normal y el audio sigue sonando.
+            return false;
         }
-        if(session!=null) updatePlaybackState();
-        return START_STICKY;
     }
-    private void updatePlaybackState(){int state=playing?PlaybackState.STATE_PLAYING:PlaybackState.STATE_PAUSED;long actions=PlaybackState.ACTION_PLAY|PlaybackState.ACTION_PAUSE|PlaybackState.ACTION_PLAY_PAUSE|PlaybackState.ACTION_SKIP_TO_NEXT|PlaybackState.ACTION_SKIP_TO_PREVIOUS; if(duration>0)actions|=PlaybackState.ACTION_SEEK_TO|PlaybackState.ACTION_FAST_FORWARD|PlaybackState.ACTION_REWIND;session.setPlaybackState(new PlaybackState.Builder().setActions(actions).setState(state,position,1f).build());}
-    private void updateNotification(){
-        getSharedPreferences(MediaWidgetProvider.PREF,0).edit().putString("title",title==null?"Radios Viferor":title).putString("subtitle",subtitle==null?"":subtitle).apply();
-        MediaWidgetProvider.refresh(this);
-        updatePlaybackState();Intent open=new Intent(this,MainActivity.class);open.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_CLEAR_TOP);PendingIntent content=PendingIntent.getActivity(this,8100,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        Notification.Action prev=new Notification.Action.Builder(android.R.drawable.ic_media_previous,"Anterior",broadcast(ACTION_PREV,8102)).build();
-        Notification.Action play=new Notification.Action.Builder(playing?android.R.drawable.ic_media_pause:android.R.drawable.ic_media_play,playing?"Pausar":"Reproducir",broadcast(ACTION_PLAY_PAUSE,8103)).build();
-        Notification.Action next=new Notification.Action.Builder(android.R.drawable.ic_media_next,"Siguiente",broadcast(ACTION_NEXT,8104)).build();
-        Notification.Builder b=new Notification.Builder(this,CHANNEL).setSmallIcon(R.mipmap.ic_launcher).setContentTitle(TextUtils.isEmpty(title)?"Radios Viferor":title).setContentText(subtitle).setContentIntent(content).setOngoing(playing).setOnlyAlertOnce(true).setShowWhen(false).setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0,1,2)).addAction(prev).addAction(play).addAction(next);
-        if(Build.VERSION.SDK_INT>=26)startForeground(NOTIFICATION_ID,b.build());
+
+    /** Sale de primer plano dejando la notificación (reproducción en pausa). */
+    public static void pause(Context context) {
+        sendIfRunning(context, ACTION_PAUSE);
     }
-    private PendingIntent broadcast(String action,int req){Intent i=new Intent(this,MediaControlReceiver.class);i.setAction(action);return PendingIntent.getBroadcast(this,req,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
-    private void createChannel(){if(Build.VERSION.SDK_INT>=26){NotificationManager nm=getSystemService(NotificationManager.class);if(nm!=null)nm.createNotificationChannel(new NotificationChannel(CHANNEL,"Reproductor multimedia",NotificationManager.IMPORTANCE_LOW));}}
-    @Override public IBinder onBind(Intent intent){return null;}
-    @Override public void onDestroy(){if(session!=null){session.setActive(false);session.release();}super.onDestroy();}
+
+    /** Detiene el servicio y retira la notificación. */
+    public static void stop(Context context) {
+        sendIfRunning(context, ACTION_STOP);
+    }
+
+    private static void sendIfRunning(Context context, String action) {
+        if (!running) return;
+        // Se marca ya: si justo después hay que volver a mostrar (p. ej. pasa de la
+        // radio a un podcast), show() relanzará el servicio en lugar de suponerlo activo.
+        running = false;
+        try {
+            // startService (no startForegroundService): si el servicio no está en
+            // marcha no hay nada que pausar, y así no se exige llamar a startForeground.
+            context.startService(new Intent(context, MediaPlaybackService.class).setAction(action));
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? null : intent.getAction();
+        if (ACTION_SHOW.equals(action)) {
+            Notification n = pendingNotification;
+            if (n == null) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(pendingId, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+                } else {
+                    startForeground(pendingId, n);
+                }
+                running = true;
+                acquireLocks();
+            } catch (Exception e) {
+                stopSelf();
+            }
+            return START_NOT_STICKY;
+        }
+        // stopSelf(startId): si mientras tanto llegó otra orden de mostrar, el servicio
+        // no se detiene.
+        if (ACTION_PAUSE.equals(action)) {
+            releaseLocks();
+            leaveForeground(false);
+            if (stopSelfResult(startId)) running = false;
+            return START_NOT_STICKY;
+        }
+        if (ACTION_STOP.equals(action)) {
+            releaseLocks();
+            leaveForeground(true);
+            if (stopSelfResult(startId)) running = false;
+            return START_NOT_STICKY;
+        }
+        // Reinicio del sistema sin intención explícita: no hay nada que mostrar.
+        stopSelf(startId);
+        return START_NOT_STICKY;
+    }
+
+    private void leaveForeground(boolean removeNotification) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(removeNotification ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
+            } else {
+                stopForeground(removeNotification);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RadiosViferor:playback");
+                    wakeLock.setReferenceCounted(false);
+                }
+            }
+            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    @SuppressWarnings("deprecation")
+                    int mode = WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                    wifiLock = wm.createWifiLock(mode, "RadiosViferor:playback");
+                    wifiLock.setReferenceCounted(false);
+                }
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) wifiLock.acquire();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        running = false;
+        releaseLocks();
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
 }
