@@ -282,7 +282,17 @@ export default async function handler(req, res) {
         } else byId.set(it.id, { ...it, stores: 1 });
       }
       items = [...byId.values()]
-        .map(it => ({ it, s: relevance(it, term) + Math.max(0, 20 - it.pos / 5) + (it.stores - 1) * 5 }))
+        // Relevancia del texto + orden de Apple (refleja popularidad) + trayectoria
+        // (número de episodios), para que un programa consolidado no quede por
+        // debajo de uno pequeño que solo se llama igual que lo buscado.
+        .map(it => ({
+          it,
+          s:
+            Math.min(relevance(it, term), 90) * 0.6 +
+            Math.max(0, 40 - it.pos * 0.4) +
+            Math.min(20, Math.log2((it.episodeCount || 0) + 1) * 2.2) +
+            (it.stores - 1) * 5
+        }))
         .sort((a, b) => b.s - a.s)
         .map(o => o.it);
     }
