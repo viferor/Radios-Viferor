@@ -344,6 +344,16 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.updateRadio(station, track, playing); });
         }
 
+        /** Lo que suena en la radio, por partes (APK 1.8+). */
+        @JavascriptInterface
+        public void updateRadioNowPlaying(String station, String artist, String title, String program, String artwork, boolean playing) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (podcastMediaController != null)
+                    podcastMediaController.updateRadioNowPlaying(station, artist, title, program, artwork, playing);
+            });
+        }
+
         @JavascriptInterface
         public void stopRadioMedia() {
             if (!bridgeTrusted) return;

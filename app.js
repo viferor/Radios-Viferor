@@ -726,6 +726,7 @@ async function reproducirRadio(s, opciones = {}) {
       podcastAudio.pause();
     } catch {}
   }
+  if (radioNow.station !== s) resetRadioNow(s);
   currentStation = s;
   updatePlayingCards();
   currentNameEl.textContent = s.name;
@@ -733,7 +734,6 @@ async function reproducirRadio(s, opciones = {}) {
     ? `Reconectando (${reconnectAttempts}/${RADIO_MAX_RECONNECTS})… ⏳`
     : 'Conectando... ⏳';
   actualizarCancion('🎵 Buscando información…');
-  actualizarPrograma(null, null);
   currentStreamUrl = '';
   try {
     let fuentes = Array.isArray(s.options) ? fuentesLocales(s) : [];
@@ -813,14 +813,168 @@ function prepararRadio(s) {
 }
 window.prepararRadio = prepararRadio;
 window.reproducirRadio = reproducirRadio;
+// --- Ahora suena ------------------------------------------------------------
+// Estado de lo que suena en la radio: canción (artista, título, carátula),
+// programa actual y siguientes, y las últimas canciones de la emisora.
+const radioNow = { station: null, song: null, program: null, upcoming: [], bitrate: '', history: [], line: '' };
+const RADIO_HISTORY_MAX = 15;
+
+function horaCorta(ms) {
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+function resetRadioNow(s) {
+  radioNow.station = s;
+  radioNow.song = null;
+  radioNow.program = null;
+  radioNow.upcoming = [];
+  radioNow.bitrate = '';
+  radioNow.history = [];
+  renderRadioNow();
+}
+// Texto de respaldo de la línea principal (estados: conectando, en pausa…).
+function actualizarCancion(t) {
+  radioNow.line = t;
+  renderRadioNow();
+}
+function actualizarPrograma(current, next, upcoming) {
+  radioNow.program = current || null;
+  radioNow.upcoming = Array.isArray(upcoming) && upcoming.length ? upcoming : next ? [next] : [];
+  renderRadioNow();
+}
+function setRadioSong(d) {
+  const song = d && d.song ? { artist: d.artist || '', title: d.track || d.song, cover: d.cover || '', text: d.song } : null;
+  const prev = radioNow.song;
+  if (d?.bitrate) radioNow.bitrate = String(d.bitrate).split(',')[0].trim();
+  if (song && (!prev || prev.text !== song.text)) {
+    if (!radioNow.history.length || radioNow.history[0].text !== song.text) {
+      radioNow.history.unshift({ ...song, at: Date.now() });
+      radioNow.history.length = Math.min(radioNow.history.length, RADIO_HISTORY_MAX);
+    }
+  }
+  radioNow.song = song;
+  renderRadioNow();
+}
+function radioImagen() {
+  return radioNow.song?.cover || currentStation?.logo || '';
+}
+// Texto para la notificación y la pantalla de bloqueo.
+function radioTextoNotificacion() {
+  const s = radioNow.song;
+  if (s) return s.artist ? `${s.title} — ${s.artist}` : s.title;
+  if (radioNow.program?.title) return '📻 ' + radioNow.program.title;
+  return radioNow.line || '🎵 En directo';
+}
+function renderRadioNow() {
+  const s = radioNow.song,
+    p = radioNow.program,
+    next = radioNow.upcoming[0];
+  // Línea principal: canción, o programa (emisoras habladas), o estado.
+  const main = s ? `🎵 ${s.artist ? s.artist + ' — ' : ''}${s.title}` : p?.title && radioNow.line.match(/En directo/) ? `📻 ${p.title}` : radioNow.line || '🎵 En directo';
+  if (nowPlayingEl) {
+    nowPlayingEl.textContent = main;
+    nowPlayingEl.classList.remove('scrolling');
+    requestAnimationFrame(() => {
+      if (nowPlayingEl.scrollWidth > nowPlayingEl.parentElement.clientWidth) nowPlayingEl.classList.add('scrolling');
+    });
+  }
+  if (programNowEl) {
+    const horario = p ? `${horaCorta(p.start)}–${horaCorta(p.end)}` : '';
+    // Si la línea principal ya muestra el programa (emisora hablada), aquí van
+    // los presentadores y el horario; si suena una canción, el programa completo.
+    programNowEl.textContent = !p?.title
+      ? '📻 Programa: sin información'
+      : main.startsWith('📻')
+        ? [p.description, horario].filter(Boolean).join(' · ')
+        : `📻 ${p.title}${p.description ? ' · ' + p.description : ''} · ${horario}`;
+    programNowEl.title = p?.description || '';
+  }
+  if (programNextEl) {
+    programNextEl.textContent = next?.title ? `Después: ${next.title} · ${horaCorta(next.start)}` : 'Después: —';
+  }
+  const thumb = document.getElementById('playerThumb');
+  if (thumb) {
+    const img = radioImagen();
+    if (img) {
+      if (thumb.dataset.src !== img) {
+        thumb.dataset.src = img;
+        thumb.innerHTML = `<img src="${escapeHtml(img)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`;
+      }
+    } else if (thumb.dataset.src !== '') {
+      thumb.dataset.src = '';
+      thumb.textContent = '📻';
+    }
+  }
+  if (!document.getElementById('radioNowPanel')?.hidden) renderRadioNowPanel();
+  syncRadioAndroidMedia();
+}
+function renderRadioNowPanel() {
+  const panel = document.getElementById('radioNowPanel');
+  if (!panel) return;
+  const st = currentStation;
+  const s = radioNow.song,
+    p = radioNow.program;
+  const img = radioImagen();
+  const lugar = st ? [st.city, st.state].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ') : '';
+  const cadena = st?.network || '';
+  const playing = !audio.paused;
+  let progreso = 0;
+  if (p && Number.isFinite(p.start) && Number.isFinite(p.end) && p.end > p.start)
+    progreso = Math.max(0, Math.min(100, ((Date.now() - p.start) / (p.end - p.start)) * 100));
+  const busca = s ? encodeURIComponent(`${s.artist} ${s.title}`.trim()) : '';
+  panel.querySelector('.rn-body').innerHTML = `
+    <div class="rn-art">${img ? `<img src="${escapeHtml(img)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : '<span>📻</span>'}</div>
+    <div class="rn-station"><strong>${escapeHtml(st?.name || 'Sin emisora')}</strong><small>${escapeHtml([cadena, lugar].filter(Boolean).join(' · '))}</small></div>
+    <div class="rn-status">${escapeHtml(statusEl?.textContent || '')}${radioNow.bitrate ? ` · ${escapeHtml(radioNow.bitrate)} kbps` : ''}</div>
+    ${
+      s
+        ? `<section class="rn-song"><h3>${escapeHtml(s.title)}</h3>${s.artist ? `<p>${escapeHtml(s.artist)}</p>` : ''}
+           <div class="rn-links"><a href="https://www.youtube.com/results?search_query=${busca}" target="_blank" rel="noopener">▶ YouTube</a><a href="https://open.spotify.com/search/${busca}" target="_blank" rel="noopener">🎧 Spotify</a></div></section>`
+        : `<section class="rn-song rn-song-empty"><p>${escapeHtml(p?.title ? 'Emisión hablada: no hay información de canción.' : radioNow.line || 'Sin información de canción.')}</p></section>`
+    }
+    <section class="rn-program"><h4>📻 Programa</h4>${
+      p
+        ? `<strong>${escapeHtml(p.title)}</strong>${p.description ? `<p>${escapeHtml(p.description)}</p>` : ''}
+           <div class="rn-time"><span>${horaCorta(p.start)}</span><div class="rn-bar"><i style="width:${progreso.toFixed(1)}%"></i></div><span>${horaCorta(p.end)}</span></div>`
+        : '<p class="rn-muted">Sin información de programación para esta emisora.</p>'
+    }</section>
+    ${
+      radioNow.upcoming.length
+        ? `<section class="rn-next"><h4>⏭ A continuación</h4><ul>${radioNow.upcoming
+            .map(e => `<li><span>${horaCorta(e.start)}</span><div><strong>${escapeHtml(e.title)}</strong>${e.description ? `<small>${escapeHtml(e.description)}</small>` : ''}</div></li>`)
+            .join('')}</ul></section>`
+        : ''
+    }
+    ${
+      radioNow.history.length
+        ? `<section class="rn-history"><h4>🎶 Han sonado</h4><ul>${radioNow.history
+            .map(h => `<li><span>${horaCorta(h.at)}</span><div><strong>${escapeHtml(h.title)}</strong>${h.artist ? `<small>${escapeHtml(h.artist)}</small>` : ''}</div></li>`)
+            .join('')}</ul></section>`
+        : ''
+    }`;
+  const btn = panel.querySelector('.rn-play');
+  if (btn) btn.textContent = playing ? '⏸ Pausar' : '▶ Escuchar';
+}
+function abrirRadioNow() {
+  if (!currentStation) return;
+  const panel = document.getElementById('radioNowPanel');
+  if (!panel) return;
+  panel.hidden = false;
+  renderRadioNowPanel();
+}
+function cerrarRadioNow() {
+  const panel = document.getElementById('radioNowPanel');
+  if (panel) panel.hidden = true;
+}
+window.cerrarRadioNow = cerrarRadioNow;
+
 async function startMetadata(s, streamUrl) {
   clearInterval(metadataTimer);
   metadataBusy = false;
-  let interval = 20000;
   const run = async () => {
     if (metadataBusy || !currentStation || currentStation !== s || radioPollingFor !== s) return;
     metadataBusy = true;
-    let found = '';
+    let d = null;
     try {
       const q = new URLSearchParams({
         url: streamUrl,
@@ -828,27 +982,16 @@ async function startMetadata(s, streamUrl) {
         state: s.state || '',
         stationuuid: s.stationuuid || s.uuid || ''
       });
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 7000);
       // Sin no-store: el CDN cachea la respuesta unos segundos y la comparten todos los oyentes.
-      const r = await fetch('/api/metadata?' + q.toString(), { signal: controller.signal });
-      clearTimeout(timeout);
-      if (r.ok) {
-        const d = await r.json();
-        found = d.song || d.title || d.streamTitle || '';
-        if (d.station) {
-          if (d.station.logo && !s.logo) s.logo = d.station.logo;
-          if (d.station.epg_id && !s.epg_id) s.epg_id = d.station.epg_id;
-          if (d.station.stationuuid && !s.stationuuid) s.stationuuid = d.station.stationuuid;
-        }
-      }
+      const r = await fetch('/api/metadata?' + q.toString(), { signal: AbortSignal.timeout(9000) });
+      if (r.ok) d = await r.json();
     } catch {}
     metadataBusy = false;
     if (radioPollingFor !== s) return;
-    actualizarCancion(found ? '🎵 ' + found : '🎵 En directo');
-    interval = found ? 20000 : 30000;
+    setRadioSong(d);
     clearInterval(metadataTimer);
-    metadataTimer = setInterval(run, interval);
+    // Más a menudo si la emisora informa de canciones; menos si es hablada.
+    metadataTimer = setInterval(run, d?.song ? 15000 : 30000);
   };
   run();
 }
@@ -856,11 +999,15 @@ async function startProgramGuide(s) {
   const run = async () => {
     if (radioPollingFor !== s) return;
     try {
-      const q = new URLSearchParams({ name: s.name || '', epg_id: s.epg_id || '' });
+      const q = new URLSearchParams({
+        name: s.name || '',
+        epg_id: s.epg_id || '',
+        network: s.network || networkKey(s) || ''
+      });
       const r = await fetch('/api/program?' + q.toString());
       if (!r.ok || radioPollingFor !== s) return;
       const d = await r.json();
-      actualizarPrograma(d.current, d.next);
+      actualizarPrograma(d.current, d.next, d.upcoming);
     } catch {}
   };
   run();
@@ -892,21 +1039,42 @@ function scheduleRadioReconnect() {
     reproducirRadio(currentStation, { reconnect: true }).catch(() => {});
   }, delay);
 }
+// Envía a Android (notificación, pantalla de bloqueo, widget) lo que suena.
+// Con el APK 1.8+ se mandan artista, título, programa y carátula por separado;
+// con APKs anteriores, un solo texto y la carátula al cambiar.
+let radioAndroidSig = '';
 function syncRadioAndroidMedia() {
   try {
-    if (!window.Android || !currentStation || !audio) return;
+    const A = window.Android;
+    if (!A || !currentStation || !audio) return;
     const podcastAudio = document.getElementById('podcastAudio');
     if (podcastAudio && !podcastAudio.paused && !podcastAudio.ended) return;
     const playing = radioActiva();
     const station = currentStation.name || 'Radio';
-    const track = nowPlayingEl?.textContent || '🎵 En directo';
-    const art = currentStation.logo || '';
-    if (typeof window.Android.startRadioMedia === 'function' && !window.__radioMediaStarted && playing) {
+    const s = radioNow.song;
+    const program = radioNow.program?.title || '';
+    const art = radioImagen();
+    const track = radioTextoNotificacion();
+    const sig = [station, s?.artist, s?.title, program, art, track, playing].join('|');
+    if (sig === radioAndroidSig && window.__radioMediaStarted) return;
+    radioAndroidSig = sig;
+    if (typeof A.updateRadioNowPlaying === 'function') {
+      if (!window.__radioMediaStarted && playing) {
+        window.__radioMediaStarted = true;
+        window.__podMediaStarted = false;
+        A.startRadioMedia?.(station, track, art, true);
+      }
+      A.updateRadioNowPlaying(station, s?.artist || '', s?.title || '', program, art, playing);
+      return;
+    }
+    const artChanged = window.__radioArtSent !== art;
+    if (typeof A.startRadioMedia === 'function' && playing && (!window.__radioMediaStarted || artChanged)) {
       window.__radioMediaStarted = true;
       window.__podMediaStarted = false;
-      window.Android.startRadioMedia(station, track, art, true);
-    } else if (typeof window.Android.updateRadioMedia === 'function') {
-      window.Android.updateRadioMedia(station, track, playing);
+      window.__radioArtSent = art;
+      A.startRadioMedia(station, track, art, true);
+    } else if (typeof A.updateRadioMedia === 'function') {
+      A.updateRadioMedia(station, track, playing);
     }
   } catch {}
 }
@@ -939,25 +1107,6 @@ window.viferorNativeRadioPause = () => {
     if (audio) audio.pause();
   } catch {}
 };
-function actualizarCancion(t) {
-  nowPlayingEl.textContent = t;
-  nowPlayingEl.classList.remove('scrolling');
-  requestAnimationFrame(() => {
-    if (nowPlayingEl.scrollWidth > nowPlayingEl.parentElement.clientWidth)
-      nowPlayingEl.classList.add('scrolling');
-  });
-  syncRadioAndroidMedia();
-}
-function actualizarPrograma(current, next) {
-  if (programNowEl) {
-    programNowEl.textContent = current?.title ? `📻 ${current.title}` : '📻 Programa actual: sin información';
-    programNowEl.title = current?.description || '';
-  }
-  if (programNextEl) {
-    programNextEl.textContent = next?.title ? `Siguiente: ${next.title}` : 'Siguiente: —';
-    programNextEl.title = next?.description || '';
-  }
-}
 // Reordenar favoritas arrastrando el asa ⋮⋮. Durante el gesto solo se mueven
 // los nodos del DOM (antes se redibujaba la cuadrícula en cada intercambio, la
 // tarjeta arrastrada desaparecía y el gesto se cortaba). Al soltar se guarda.
@@ -1329,12 +1478,38 @@ function init() {
   actualizarChips();
   cambiarVista('fav');
   cargarCatalogoNacional();
-  // Tocar el nombre o el estado de la emisora la reanuda si está parada.
-  [currentNameEl, statusEl].forEach(el =>
-    el?.addEventListener('click', () => {
-      if (currentStation && audio.paused) reanudarRadio();
-    })
-  );
+  // Tocar el estado la reanuda si está parada; tocar la emisora o lo que suena
+  // abre el panel «Ahora suena» (artista, título, programa, historial…).
+  statusEl?.addEventListener('click', e => {
+    if (currentStation && audio.paused) {
+      e.stopPropagation();
+      reanudarRadio();
+    }
+  });
+  const info = document.getElementById('playerInfo');
+  const abrir = () => (currentStation ? abrirRadioNow() : null);
+  info?.addEventListener('click', abrir);
+  info?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      abrir();
+    }
+  });
+  document.getElementById('playerThumb')?.addEventListener('click', abrir);
+  document.getElementById('radioNowClose')?.addEventListener('click', cerrarRadioNow);
+  document.getElementById('radioNowPanel')?.addEventListener('click', e => {
+    if (e.target.id === 'radioNowPanel') cerrarRadioNow();
+  });
+  document.getElementById('radioNowPlay')?.addEventListener('click', () => {
+    if (!currentStation) return;
+    if (audio.paused) reanudarRadio();
+    else window.viferorNativeRadioPause();
+    setTimeout(renderRadioNowPanel, 300);
+  });
+  // El panel se refresca solo (barra de progreso del programa).
+  setInterval(() => {
+    if (!document.getElementById('radioNowPanel')?.hidden) renderRadioNowPanel();
+  }, 30000);
 }
 audio.addEventListener('error', () => {
   if (currentStation && audio.paused && !radioConnecting && !radioUserPaused) scheduleRadioReconnect();

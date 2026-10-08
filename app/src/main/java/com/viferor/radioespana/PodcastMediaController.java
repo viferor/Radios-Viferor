@@ -60,6 +60,8 @@ public final class PodcastMediaController {
     // notificación (antes desaparecía con la siguiente actualización).
     private Bitmap artworkBitmap;
     private String artworkBitmapUrl = "";
+    // Emisora de radio actual (se muestra como «álbum» en la pantalla de bloqueo).
+    private String radioStation = "";
     private static String widgetTitle = "Radios Viferor";
     private static String widgetSubtitle = "Sin reproducción";
     private static boolean widgetPlaying = false;
@@ -152,6 +154,7 @@ public final class PodcastMediaController {
         // call is authoritative, so do not discard it because an older preference
         // value still says "podcast". The web player remains the owner of audio.
         this.title = TextUtils.isEmpty(station) ? "Radio" : station;
+        this.radioStation = this.title;
         this.subtitle = TextUtils.isEmpty(track) ? "🎵 En directo" : track;
         this.artworkUrl = artworkUrl == null ? "" : artworkUrl;
         this.durationMs = 0;
@@ -178,6 +181,37 @@ public final class PodcastMediaController {
         updateState();
         postNotification(null);
         WidgetProvider.updateAll(activity);
+    }
+
+    /**
+     * Canción o programa de la radio. Notificación: título de la canción (o el
+     * programa, o la emisora) y debajo «artista · emisora». Pantalla de bloqueo y
+     * Android Auto reciben título, artista y emisora en campos separados.
+     */
+    public void updateRadioNowPlaying(String station, String artist, String song, String program, String artwork, boolean playing) {
+        if (!isPlaybackSection("radio")) return;
+        String st = TextUtils.isEmpty(station) ? (TextUtils.isEmpty(radioStation) ? "Radio" : radioStation) : station;
+        radioStation = st;
+        if (!TextUtils.isEmpty(song)) {
+            this.title = song;
+            this.subtitle = TextUtils.isEmpty(artist) ? st : artist + " · " + st;
+        } else if (!TextUtils.isEmpty(program)) {
+            this.title = program;
+            this.subtitle = st;
+        } else {
+            this.title = st;
+            this.subtitle = "🎵 En directo";
+        }
+        this.playing = playing;
+        String art = artwork == null ? "" : artwork;
+        boolean artChanged = !art.equals(this.artworkUrl);
+        this.artworkUrl = art;
+        persistWidgetState();
+        if (!session.isActive()) session.setActive(true);
+        updateState();
+        postNotification(null);
+        WidgetProvider.updateAll(activity);
+        if (artChanged) loadArtworkIfNeeded();
     }
 
     public void stopRadio() {
@@ -248,6 +282,8 @@ public final class PodcastMediaController {
                 .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, subtitle)
                 .putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, subtitle);
         if (durationMs > 0) m.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+        if (!TextUtils.isEmpty(radioStation) && isPlaybackSection("radio")) m.putString(MediaMetadata.METADATA_KEY_ALBUM, radioStation);
+        if (artworkBitmap != null && artworkBitmapUrl.equals(artworkUrl)) m.putBitmap(MediaMetadata.METADATA_KEY_ART, artworkBitmap);
         session.setMetadata(m.build());
     }
 
@@ -338,7 +374,7 @@ public final class PodcastMediaController {
                 }
                 if (bmp != null && u.equals(artworkUrl)) {
                     final Bitmap readyBitmap = bmp;
-                    activity.runOnUiThread(() -> { postNotification(readyBitmap); WidgetProvider.updateAll(activity, readyBitmap); });
+                    activity.runOnUiThread(() -> { postNotification(readyBitmap); updateState(); WidgetProvider.updateAll(activity, readyBitmap); });
                 }
             } catch (Exception ignored) {}
         });

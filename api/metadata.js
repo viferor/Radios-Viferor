@@ -22,8 +22,67 @@ function decodeLatin1(u8) {
 }
 function parseIcy(buf) {
   const text = decodeLatin1(buf);
-  const m = text.match(/StreamTitle='([^']*)';/i) || text.match(/StreamTitle="([^"]*)";/i);
+  // Admite apóstrofos dentro del título (p. ej. «Guns N' Roses - Sweet Child O' Mine»).
+  const m =
+    text.match(/StreamTitle='([\s\S]*?)';(?=\s*(?:Stream\w+=|$|\0))/i) ||
+    text.match(/StreamTitle='([^']*)';/i) ||
+    text.match(/StreamTitle="([^"]*)";/i);
   return clean(m?.[1] || '');
+}
+
+function normText(v) {
+  return String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+// Textos que las emisoras envían en lugar de una canción.
+const JUNK = /\b(publicidad|anuncio|anuncios|advert|commercial|cuña|cunas|jingle|promo|separador|indicativo|en directo|live|unknown|desconocido)\b/i;
+// Separa «Artista - Título». Devuelve null si el texto no parece una canción
+// (vacío, el nombre de la emisora, publicidad…).
+export function parseSong(raw, ...stationNames) {
+  let s = clean(raw).replace(/^["'«]+|["'»]+$/g, '');
+  if (!s || s.length < 3 || /^[-\s.]+$/.test(s) || JUNK.test(s)) return null;
+  const n = normText(s);
+  for (const st of stationNames) {
+    const sn = normText(st);
+    if (sn && (n === sn || n.replace(/\s/g, '') === sn.replace(/\s/g, ''))) return null;
+  }
+  const parts = s.split(/\s+[-–—]\s+/);
+  if (parts.length >= 2) {
+    const artist = clean(parts[0]),
+      title = clean(parts.slice(1).join(' - '));
+    if (artist && title && !stationNames.some(st => normText(st) && normText(artist) === normText(st)))
+      return { artist, title, text: `${artist} - ${title}` };
+    if (title) return { artist: '', title, text: title };
+  }
+  return { artist: '', title: s, text: s };
+}
+
+// Carátula de la canción (iTunes). Caché en memoria para no repetir búsquedas.
+const covers = globalThis.__rvCovers || (globalThis.__rvCovers = new Map());
+async function coverFor(artist, title) {
+  if (!artist || !title) return '';
+  const k = normText(artist + ' ' + title);
+  const hit = covers.get(k);
+  if (hit && Date.now() - hit.t < 86400000) return hit.url;
+  let url = '';
+  try {
+    const q = new URLSearchParams({ term: `${artist} ${title}`, media: 'music', entity: 'song', limit: '5', country: 'ES' });
+    const r = await fetch('https://itunes.apple.com/search?' + q, { signal: AbortSignal.timeout(2500) });
+    if (r.ok) {
+      const d = await r.json();
+      const na = normText(artist);
+      const best =
+        (d.results || []).find(x => normText(x.artistName).includes(na.split(' ')[0] || na)) || (d.results || [])[0];
+      if (best?.artworkUrl100) url = best.artworkUrl100.replace(/\/\d+x\d+bb\./, '/600x600bb.');
+    }
+  } catch {}
+  covers.set(k, { t: Date.now(), url });
+  if (covers.size > 800) covers.delete(covers.keys().next().value);
+  return url;
 }
 async function radioBrowserSong(name, state, stationuuid, url) {
   for (const base of RB_MIRRORS) {
@@ -129,6 +188,16 @@ export default async function handler(req, res) {
         out.stationuuid = rb.stationuuid;
         out.source = 'radio-browser';
       }
+    }
+    // Artista, título y carátula por separado (la web y la notificación los muestran aparte).
+    const song = parseSong(out.song, name, out.title);
+    if (song) {
+      out.song = song.text;
+      out.artist = song.artist;
+      out.track = song.title;
+      out.cover = await coverFor(song.artist, song.title);
+    } else {
+      out.song = '';
     }
     return res.status(200).json(out);
   } catch (e) {

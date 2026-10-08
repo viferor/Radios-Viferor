@@ -1420,7 +1420,12 @@ function previousPodcast() {
 }
 window.handleAndroidBack = function () {
   try {
-    // Ajustes o menús abiertos: Atrás los cierra.
+    // Panel «Ahora suena», ajustes o menús abiertos: Atrás los cierra.
+    const radioNowPanel = document.getElementById('radioNowPanel');
+    if (radioNowPanel && !radioNowPanel.hidden) {
+      radioNowPanel.hidden = true;
+      return true;
+    }
     const settings = document.getElementById('settingsMenu');
     if (settings && !settings.hidden) {
       settings.hidden = true;
