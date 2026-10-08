@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=1800" />
+<link rel="stylesheet" href="styles.css?v=1900" />
 </head>
 <body>
 <header class="app-header">
@@ -57,40 +57,21 @@
 </main>
 <div class="compact-filters">
 <div class="filters-row">
-<select id="selectNetwork" title="Cadena">
-<option value="">📻 Todas</option>
-<option>Cadena SER</option>
-<option>COPE</option>
-<option>Onda Cero</option>
-<option>RNE</option>
-<option>LOS40</option>
-<option>Cadena Dial</option>
-<option>Rock FM</option>
-<option>Kiss FM</option>
-<option>Europa FM</option>
-<option>Canal Sur</option>
-<option>Radio Marca</option>
+<select id="selectNetwork" title="Cadena" aria-label="Cadena">
+<option value="">📻 Cadena</option>
 </select>
-<select id="selectLocation" title="Provincia">
+<select id="selectLocation" title="Provincia o comunidad" aria-label="Provincia o comunidad">
 <option value="">📍 España</option>
-<option>Madrid</option><option>Barcelona</option><option>Valencia</option>
-<option>Sevilla</option><option>Málaga</option><option>Córdoba</option>
-<option>Granada</option><option>Zaragoza</option><option>Vizcaya</option>
-<option>Alicante</option><option>Murcia</option><option>Valladolid</option>
-<option>A Coruña</option><option>Pontevedra</option><option>Asturias</option>
-<option>Cantabria</option><option>Baleares</option><option>Las Palmas</option>
-<option>S.C. Tenerife</option><option>Navarra</option><option>Cádiz</option>
-<option>Huelva</option><option>Jaén</option><option>Almería</option>
 </select>
 <select id="selectType" title="Tipo">
-<option value="">🏷️ Todo</option>
+<option value="">🏷️ Tipo</option>
 <option value="musical">🎵 Musical</option>
 <option value="informativa">📰 Informativa</option>
 <option value="deportiva">⚽ Deportiva</option>
 <option value="autonomica">🏛️ Autonómica</option>
 <option value="tematica">🎭 Temática</option>
 </select>
-<input type="text" id="textSearch" placeholder="🔍..." autocomplete="off" />
+<input type="search" id="textSearch" placeholder="🔍 Nombre, ciudad, frecuencia…" autocomplete="off" enterkeyhint="search" />
 <button class="btn-search" id="btnAplicar" type="button">Buscar</button>
 </div>
 <div class="active-filters" id="activeFilters" hidden></div>
@@ -186,11 +167,12 @@
   </div>
 </div>
 
-<script src="version.js?v=1800"></script>
+<script src="version.js?v=1900"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=1800"></script>
-<script src="app.js?v=1800"></script>
-<script src="podcasts.js?v=1800"></script>
-<script src="diagnostics.js?v=1800"></script>
+<script src="stations-data.js?v=1900"></script>
+<script src="buscador-radios.js?v=1900"></script>
+<script src="app.js?v=1900"></script>
+<script src="podcasts.js?v=1900"></script>
+<script src="diagnostics.js?v=1900"></script>
 </body>
 </html>

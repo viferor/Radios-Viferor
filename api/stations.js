@@ -71,6 +71,10 @@ function fromTdt(data) {
           tags: '',
           logo: ch.logo || '',
           web: ch.web || '',
+          // Ámbito original de TDTChannels («Populares», «Musicales», «Andalucía»…) e
+          // identificador de guía: el buscador y la programación los usan.
+          ambit: ambit?.name || '',
+          epg_id: ch.epg_id || '',
           options
         });
       }
@@ -134,19 +138,19 @@ export default async (req, res) => {
   if (Date.now() - cache.at < TTL && cache.stations.length)
     return res
       .status(200)
-      .json({ version: '1.1.1', source: 'tdtchannels+radio-browser', stations: cache.stations });
+      .json({ version: '1.2.0', source: 'tdtchannels+radio-browser', stations: cache.stations });
   try {
     const tdt = fromTdt(await fetchJson(TDT_URL));
     if (tdt.length < 300) throw new Error('TDT catálogo incompleto: ' + tdt.length);
     cache = { at: Date.now(), stations: tdt };
-    return res.status(200).json({ version: '1.1.1', source: 'tdtchannels', stations: tdt });
+    return res.status(200).json({ version: '1.2.0', source: 'tdtchannels', stations: tdt });
   } catch (e) {
     try {
       for (const u of RB_URLS) {
         const rb = fromRadioBrowser(await fetchJson(u));
         if (rb.length >= 300) {
           cache = { at: Date.now(), stations: rb };
-          return res.status(200).json({ version: '1.1.1', source: 'radio-browser', stations: rb });
+          return res.status(200).json({ version: '1.2.0', source: 'radio-browser', stations: rb });
         }
       }
     } catch {}

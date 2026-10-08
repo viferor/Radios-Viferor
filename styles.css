@@ -1070,3 +1070,23 @@ html.dark-mode .rn-song{background:#1a1f25}
 html.dark-mode .rn-bar{background:#2a3138}
 .player-bar{flex:0 0 auto!important;min-height:var(--player-h)}
 .now-playing-wrapper{height:auto!important}.now-playing-wrapper .now-playing{display:block;max-width:none}
+
+/* 1.9.0 — Buscador de emisoras */
+.active-filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.active-filters .chip{border:1px solid #f0c36d;background:#fff3cd;color:#6d4c00;border-radius:999px;padding:4px 10px;font-size:.74rem;font-weight:700;cursor:pointer}
+.active-filters .chip .chip-label{font-weight:800;margin-right:2px}
+.search-count{grid-column:1/-1;font-size:.76rem;font-weight:700;color:var(--subtext);padding:2px 2px 0}
+.search-remote-head{margin-top:10px;border-top:1px solid #e1e5e8;padding-top:10px}
+.search-more{grid-column:1/-1;justify-self:center;border:1px solid #d7dce0;background:#fff;border-radius:10px;padding:10px 18px;font-weight:800;cursor:pointer;margin:6px 0}
+html.dark-mode .active-filters .chip{background:#3a2f12;border-color:#6d5a24;color:#ffe08a}
+html.dark-mode .search-more{background:#1a1f25;border-color:#353c44;color:#f5f7f9}
+html.dark-mode .search-remote-head{border-color:#353c44}
+@media (max-width:650px){
+  .compact-filters .filters-row{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:6px;align-items:center}
+  .compact-filters .filters-row #textSearch{grid-column:1/4;grid-row:1;width:100%!important;min-width:0;height:40px;font-size:.95rem}
+  .compact-filters .filters-row .btn-search{grid-column:4;grid-row:1;height:40px}
+  .compact-filters .filters-row select{grid-row:2;width:100%!important;min-width:0;height:38px;font-size:.8rem;text-overflow:ellipsis}
+  .compact-filters .filters-row #selectNetwork{grid-column:1}
+  .compact-filters .filters-row #selectLocation{grid-column:2}
+  .compact-filters .filters-row #selectType{grid-column:3/5}
+}

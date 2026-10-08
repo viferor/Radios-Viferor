@@ -202,6 +202,7 @@ const NETWORK_PATTERNS = {
 let stations = [];
 let loadedStations = [];
 let catalogPromise = null;
+let catalogReady = false;
 let favorites = [];
 let currentStation = null;
 let currentView = 'fav';
@@ -301,53 +302,122 @@ function obtenerFiltros() {
     text: document.getElementById('textSearch').value.trim()
   };
 }
+function etiquetaSelect(id) {
+  const sel = document.getElementById(id);
+  return sel?.selectedOptions?.[0]?.textContent?.replace(/^[^\p{L}\p{N}]+/u, '').trim() || '';
+}
+// Chips de filtros activos; cada uno se puede quitar tocándolo.
 function actualizarChips() {
   const f = obtenerFiltros(),
     chips = [];
-  if (f.type)
-    chips.push(`<span class="chip-label">Tipo:</span><span class="chip">${escapeHtml(f.type)}</span>`);
-  if (f.network)
-    chips.push(`<span class="chip-label">Cadena:</span><span class="chip">${escapeHtml(f.network)}</span>`);
-  if (f.location)
-    chips.push(`<span class="chip-label">Prov:</span><span class="chip">${escapeHtml(f.location)}</span>`);
-  if (f.text)
-    chips.push(`<span class="chip-label">Nom:</span><span class="chip">${escapeHtml(f.text)}</span>`);
+  const chip = (id, label, value) =>
+    `<button type="button" class="chip" data-clear="${id}" aria-label="Quitar filtro ${escapeHtml(label)}"><span class="chip-label">${escapeHtml(label)}:</span> ${escapeHtml(value)} ✕</button>`;
+  if (f.text) chips.push(chip('textSearch', 'Texto', f.text));
+  if (f.network) chips.push(chip('selectNetwork', 'Cadena', etiquetaSelect('selectNetwork')));
+  if (f.location) chips.push(chip('selectLocation', 'Lugar', etiquetaSelect('selectLocation')));
+  if (f.type) chips.push(chip('selectType', 'Tipo', etiquetaSelect('selectType')));
   activeFiltersEl.hidden = !chips.length;
   activeFiltersEl.innerHTML = chips.join('');
 }
-function filtrarLocal(f) {
-  return stations.filter(s => {
-    const tc = (s.name || '') + ' ' + (s.network || '') + ' ' + (s.tags || '');
-    if (f.type && !coincide(tc, TYPE_PATTERNS[f.type] || [])) return false;
-    if (f.network && !coincide(tc, NETWORK_PATTERNS[normalizar(f.network)] || [])) return false;
-    if (f.location && !normalizar(s.state || '').includes(normalizar(f.location))) return false;
-    if (
-      f.text &&
-      !normalizar((s.name || '') + ' ' + (s.city || '') + ' ' + (s.network || '')).includes(
-        normalizar(f.text)
-      )
-    )
-      return false;
-    return true;
-  });
+// Cadenas y lugares salen del buscador, así el desplegable y la búsqueda coinciden.
+function rellenarSelectoresRadio() {
+  if (!window.RVBuscador) return;
+  const net = document.getElementById('selectNetwork');
+  if (net && net.options.length <= 1)
+    net.insertAdjacentHTML('beforeend', RVBuscador.networks.map(([k, label]) => `<option value="${escapeHtml(k)}">${escapeHtml(label)}</option>`).join(''));
+  const loc = document.getElementById('selectLocation');
+  if (loc && loc.options.length <= 1) {
+    const groups = RVBuscador.communities.map(c => {
+      const provs = RVBuscador.provinces.filter(([, cc]) => cc === c).map(([p]) => p).sort((a, b) => a.localeCompare(b, 'es'));
+      const opts = [`<option value="c:${escapeHtml(c)}">${escapeHtml(c)} (toda)</option>`];
+      if (!(provs.length === 1 && provs[0] === c))
+        provs.forEach(p => opts.push(`<option value="p:${escapeHtml(p)}">${escapeHtml(p)}</option>`));
+      return `<optgroup label="${escapeHtml(c)}">${opts.join('')}</optgroup>`;
+    });
+    loc.insertAdjacentHTML('beforeend', groups.join(''));
+  }
+}
+function favoriteIdSet() {
+  return new Set(favorites.map(stationId).filter(Boolean));
 }
 function setStatus(t) {
   stationsGrid.innerHTML = `<div class="status-msg">${t}</div>`;
 }
+// Búsqueda: catálogo principal al instante y, si hay texto, también radio-browser
+// (emisoras pequeñas o locales que no están en el catálogo principal).
+const RADIO_PAGE = 60;
+let radioShown = RADIO_PAGE;
+let radioRemote = [];
+const radioRemoteCache = new Map();
 async function aplicarFiltros() {
   const seq = ++requestSeq;
   const f = obtenerFiltros();
   actualizarChips();
-  setStatus('Buscando... ⏳');
-  await Promise.resolve();
+  radioShown = RADIO_PAGE;
+  radioRemote = [];
+  loadedStations = window.RVBuscador ? RVBuscador.search(stations, f, favoriteIdSet()) : stations.slice();
+  renderSearch();
+  const q = f.text;
+  if (q.length < 3 || !window.RVBuscador) return;
+  // radio-browser, sin bloquear los resultados que ya se ven.
+  const key = RVBuscador.norm(q);
+  let remote = radioRemoteCache.get(key);
+  if (!remote) {
+    try {
+      const r = await fetch('/api/radio-search?q=' + encodeURIComponent(q));
+      remote = r.ok ? (await r.json()).stations || [] : [];
+      radioRemoteCache.set(key, remote);
+    } catch {
+      remote = [];
+    }
+  }
   if (seq !== requestSeq) return;
-  loadedStations = filtrarLocal(f);
-  if (seq !== requestSeq) return;
-  if (!loadedStations.length) {
-    setStatus('⚠️ No se encontraron emisoras.<br><small>Prueba a quitar algún filtro.</small>');
+  const known = new Set(loadedStations.map(x => RVBuscador.prepare(x).compact));
+  radioRemote = RVBuscador.search(remote, f, null).filter(x => !known.has(RVBuscador.prepare(x).compact));
+  if (radioRemote.length) renderSearch();
+}
+let aplicarFiltrosTimer = null;
+function aplicarFiltrosPronto() {
+  clearTimeout(aplicarFiltrosTimer);
+  aplicarFiltrosTimer = setTimeout(aplicarFiltros, 250);
+}
+function renderSearch() {
+  const frag = document.createDocumentFragment();
+  const f = obtenerFiltros();
+  const total = loadedStations.length;
+  if (!total && !radioRemote.length) {
+    const hayFiltros = f.network || f.location || f.type;
+    stationsGrid.innerHTML = `<div class="status-msg">⚠️ No se encontraron emisoras${f.text ? ` para «${escapeHtml(f.text)}»` : ''}.<br><small>${
+      hayFiltros ? 'Prueba a quitar algún filtro (toca un filtro amarillo para quitarlo).' : 'Prueba con otra palabra o revisa cómo está escrita.'
+    }${!catalogReady ? '<br>El catálogo nacional aún se está cargando…' : ''}</small></div>`;
     return;
   }
-  renderSearch();
+  const head = document.createElement('div');
+  head.className = 'search-count';
+  head.textContent = `${total} emisora${total === 1 ? '' : 's'}${!catalogReady ? ' · cargando catálogo nacional…' : ''}`;
+  frag.appendChild(head);
+  loadedStations.slice(0, radioShown).forEach((s, i) => frag.appendChild(cardFor(s, i, false)));
+  if (total > radioShown) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'search-more';
+    more.textContent = `Ver más (${total - radioShown})`;
+    more.onclick = () => {
+      radioShown += RADIO_PAGE * 2;
+      const sc = stationsGrid.scrollTop;
+      renderSearch();
+      stationsGrid.scrollTop = sc;
+    };
+    frag.appendChild(more);
+  }
+  if (radioRemote.length) {
+    const h = document.createElement('div');
+    h.className = 'search-count search-remote-head';
+    h.textContent = `Más emisoras (radio-browser): ${radioRemote.length}`;
+    frag.appendChild(h);
+    radioRemote.slice(0, 40).forEach((s, i) => frag.appendChild(cardFor(s, total + i, false)));
+  }
+  stationsGrid.replaceChildren(frag);
 }
 function stationId(s) {
   return String(s?.uuid || s?.stationuuid || '').trim();
@@ -366,7 +436,7 @@ function cardFor(s, i, favMode = false) {
   card.className = 'station-card' + (isCur ? ' playing' : '');
   card.dataset.uuid = s.uuid || s.stationuuid;
   card.dataset.index = i;
-  card.innerHTML = `${favMode ? `<div class="drag-handle">⋮⋮</div>` : ''}<button class="fav-btn ${isFav ? 'is-fav' : ''}" aria-label="${isFav ? 'Quitar de favoritas' : 'Añadir a favoritas'}">★</button>${construirLogo(s)}<div class="station-name">${escapeHtml(s.name)}</div><div class="station-tag">${escapeHtml(s.city || s.state || 'España')}</div>`;
+  card.innerHTML = `${favMode ? `<div class="drag-handle">⋮⋮</div>` : ''}<button class="fav-btn ${isFav ? 'is-fav' : ''}" aria-label="${isFav ? 'Quitar de favoritas' : 'Añadir a favoritas'}">★</button>${construirLogo(s)}<div class="station-name">${escapeHtml(s.name)}</div><div class="station-tag">${escapeHtml(window.RVBuscador ? RVBuscador.placeLabel(s) : s.city || s.state || 'España')}</div>`;
   card.addEventListener('click', () => reproducirRadio(s));
   card.querySelector('.fav-btn').addEventListener('click', e => {
     e.stopPropagation();
@@ -379,11 +449,6 @@ function cardFor(s, i, favMode = false) {
     h.ontouchend = handleTouchEnd;
   }
   return card;
-}
-function renderSearch() {
-  const frag = document.createDocumentFragment();
-  loadedStations.forEach((s, i) => frag.appendChild(cardFor(s, i, false)));
-  stationsGrid.replaceChildren(frag);
 }
 function renderFavoritas() {
   const frag = document.createDocumentFragment();
@@ -413,7 +478,10 @@ function toggleFav(id, card) {
   if (idx >= 0) {
     favorites.splice(idx, 1);
   } else {
-    const s = stations.find(x => stationId(x) === id) || loadedStations.find(x => stationId(x) === id);
+    const s =
+      stations.find(x => stationId(x) === id) ||
+      loadedStations.find(x => stationId(x) === id) ||
+      radioRemote.find(x => stationId(x) === id);
     if (s) favorites.push({ ...s });
   }
   saveFavorites();
@@ -1315,6 +1383,7 @@ function parseTdtDirect(data) {
         const epg_id = ch.epg_id || '';
         const tdtSlug = ch.slug || ch.id || ch.channel_id || ch.channelId || epg_id.replace(/\.Radio$/i, '');
         out.push({
+          ambit: ambit?.name || '',
           uuid: id,
           stationuuid: id,
           name: ch.name,
@@ -1357,11 +1426,9 @@ async function cargarCatalogoNacional() {
         console.warn('Catálogo nacional no disponible', apiError, e2);
       }
     }
-    if (nacional.length) {
-      stations = mergeCatalogs(stations, nacional);
-      if (currentView === 'search') aplicarFiltros();
-      setStatus('');
-    }
+    catalogReady = true;
+    if (nacional.length) stations = mergeCatalogs(stations, nacional);
+    if (currentView === 'search') aplicarFiltros();
   })();
   return catalogPromise;
 }
@@ -1451,6 +1518,7 @@ function init() {
         vb.textContent = v < 40 ? '🔉' : '🔊';
       }
     });
+  rellenarSelectoresRadio();
   stations = (window.RADIO_STATIONS || []).map(s => ({ ...s, stationuuid: s.stationuuid || s.uuid }));
   loadFavorites();
   document.getElementById('btnViewRadios').addEventListener('click', () => cambiarVista('fav'));
@@ -1474,7 +1542,18 @@ function init() {
   document.getElementById('textSearch').addEventListener('keydown', e => {
     if (e.key === 'Enter') aplicarFiltros();
   });
-  document.getElementById('textSearch').addEventListener('input', actualizarChips);
+  // Busca mientras escribes; los chips de arriba quitan cada filtro.
+  document.getElementById('textSearch').addEventListener('input', () => {
+    actualizarChips();
+    if (currentView === 'search') aplicarFiltrosPronto();
+  });
+  activeFiltersEl.addEventListener('click', e => {
+    const id = e.target.closest('[data-clear]')?.dataset.clear;
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+    aplicarFiltros();
+  });
   actualizarChips();
   cambiarVista('fav');
   cargarCatalogoNacional();
