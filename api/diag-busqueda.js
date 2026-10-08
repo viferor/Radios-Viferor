@@ -1,4 +1,5 @@
 // TEMPORAL (rama diag-buscadores): resume datos reales para rehacer los buscadores.
+import meta from './metadata.js';
 async function j(url, ms = 9000) {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
   try { const r = await fetch(url, { signal: c.signal, headers: { accept: 'application/json', 'user-agent': 'RadiosViferor/diag' } }); const txt = await r.text(); let d = null; try { d = JSON.parse(txt); } catch {} return { status: r.status, d, len: txt.length, head: txt.slice(0, 300) }; }
@@ -43,6 +44,37 @@ export default async function handler(req, res) {
     out.searchGenreParam = { count: s2.d?.resultCount, rows: s2.d?.results?.slice(0, 3).map(x => [x.collectionName, x.primaryGenreName]) };
     out.artistTerm = s3.d?.results?.map(x => [x.collectionName, x.artistName]);
     out.lookupMulti = s4.d?.results?.map(x => [x.collectionName, !!x.feedUrl]) || s4.head;
+  }
+  if (part === 'epg') {
+    const r = await j('https://www.tdtchannels.com/epg/RADIO.json', 12000);
+    out.status = r.status || r.error; out.len = r.len;
+    const d = r.d; out.type = Array.isArray(d) ? 'array' : typeof d;
+    const arr = Array.isArray(d) ? d : (d && typeof d === 'object' ? Object.values(d) : []);
+    out.topKeys = d && !Array.isArray(d) ? Object.keys(d).slice(0, 10) : null;
+    out.count = arr.length;
+    const first = arr[0]; out.firstKeys = first ? Object.keys(first) : null;
+    out.firstSample = first ? JSON.stringify(first).slice(0, 700) : r.head;
+    const names = arr.slice(0, 400).map(c => c.name || c.channel || c.id || c.title).filter(Boolean);
+    out.names = names.filter(n => /ser|cope|onda|nacional|rne|los40|dial|marca|canal sur|kiss|europa|rock|cadena 100|radio 3/i.test(n)).slice(0, 60);
+    const x = await j('https://www.ondachannels.com/epg/RADIO.xml.gz', 8000);
+    out.xmlgz = { status: x.status || x.error, len: x.len };
+  } else if (part === 'np') {
+    const streams = {
+      SER: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CADENASER.mp3',
+      LOS40: 'https://playerservices.streamtheworld.com/api/livestream-redirect/Los40.mp3',
+      DIAL: 'https://playerservices.streamtheworld.com/api/livestream-redirect/CADENADIAL.mp3',
+      MARCA: 'https://playerservices.streamtheworld.com/api/livestream-redirect/RADIOMARCA_NACIONAL.mp3',
+      COPE: 'https://flucast09-h-cloud.flumotion.com/cope/net1.mp3',
+      KISS: 'https://kissfm.kissfmradio.cires21.com/kissfm.mp3',
+      EUROPA: 'https://radio-atres-live.ondacero.es/api/livestream-redirect/EFMAAC.aac',
+      ONDACERO: 'https://radio-atres-live.ondacero.es/api/livestream-redirect/OCAAC.aac',
+      CANALSUR: 'https://rtva-live-radio.flumotion.com/rtva/csr.mp3'
+    };
+    const fake = () => ({ code: 200, body: null, h: {}, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; }, setHeader(k, v) { this.h[k] = v; } });
+    await Promise.all(Object.entries(streams).map(async ([k, u]) => {
+      const res = fake();
+      try { await meta({ query: { url: u, name: k }, headers: { 'x-forwarded-for': 'diag' + k }, url: '/x' }, res); out[k] = res.body; } catch (e) { out[k] = 'crash ' + e.message; }
+    }));
   }
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).send('<pre>' + JSON.stringify(out, null, 1).replace(/</g, '&lt;') + '</pre>');
