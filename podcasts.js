@@ -737,7 +737,14 @@ function isSubscribed(p) {
   const k = podcastKey(p);
   return podcastState.subs.some(s => podcastKey(s) === k);
 }
+// Solo se toca el diseño de la pantalla si Podcasts está a la vista. Los
+// refrescos en segundo plano (feeds, portadas) redibujan la portada aunque
+// estés en Radios, y antes ocultaban la barra del reproductor de radio.
+function podcastsViewActive() {
+  return !!document.getElementById('viewPodcasts')?.classList.contains('active');
+}
 function setPodcastLayout(detail) {
+  if (!podcastsViewActive()) return;
   document.body.classList.add('podcasts-active');
   document.body.classList.toggle('podcast-detail-active', !!detail);
   document.body.classList.remove('podcast-subs-fullscreen');
@@ -791,7 +798,7 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     podcastState.screen = 'subs';
     setPodcastLayout(true);
     document.body.classList.remove('podcast-results-active');
-    document.body.classList.add('podcast-subs-fullscreen');
+    if (podcastsViewActive()) document.body.classList.add('podcast-subs-fullscreen');
   }
   const root = $p('podcastContent');
   root.replaceChildren();
@@ -1136,7 +1143,7 @@ async function searchPodcasts() {
   const popular = mode === 'popular' || !q;
   const root = $p('podcastContent');
   document.body.classList.remove('podcast-subs-fullscreen');
-  document.body.classList.add('podcast-results-active');
+  if (podcastsViewActive()) document.body.classList.add('podcast-results-active');
   root.scrollTop = 0;
   root.innerHTML = `<div class="pod-loading">${popular ? 'Cargando los más populares…' : 'Buscando podcasts…'}${language ? '<br><small>Comprobando el idioma de cada podcast…</small>' : ''}</div>`;
   try {
@@ -1179,7 +1186,7 @@ function renderPodcastResults(items, title, fromHistory = false) {
   if (!fromHistory) pushPodcastState('search');
   podcastState.screen = 'search';
   setPodcastLayout(true);
-  document.body.classList.add('podcast-results-active');
+  if (podcastsViewActive()) document.body.classList.add('podcast-results-active');
   const root = $p('podcastContent');
   root.replaceChildren();
   root.scrollTop = 0;
