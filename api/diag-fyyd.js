@@ -1,17 +1,21 @@
-// TEMPORAL (rama diag-fyyd): comprueba fyyd desde Vercel.
-import search from './podcast-search.js';
+// TEMPORAL: qué devuelve fyyd con cada parámetro.
 export default async function handler(req, res) {
+  const q = String(req.query?.q || 'ciclismo');
+  const urls = {
+    title: `https://api.fyyd.de/0.2/search/podcast?title=${encodeURIComponent(q)}&count=8`,
+    term: `https://api.fyyd.de/0.2/search/podcast?term=${encodeURIComponent(q)}&count=8`,
+    both: `https://api.fyyd.de/0.2/search/podcast?title=${encodeURIComponent(q)}&term=${encodeURIComponent(q)}&count=8`,
+    titleEs: `https://api.fyyd.de/0.2/search/podcast?title=${encodeURIComponent(q)}&langauge=es&count=8`,
+    episodes: `https://api.fyyd.de/0.2/search/episode?title=${encodeURIComponent(q)}&count=5`
+  };
   const out = {};
-  try {
-    const r = await fetch('https://api.fyyd.de/0.2/search/podcast?title=ciclismo&term=ciclismo&count=5', { headers: { 'User-Agent': 'RadiosViferor/podcasts' }, signal: AbortSignal.timeout(6000) });
-    const t = await r.text();
-    out.fyydStatus = r.status;
-    try { const d = JSON.parse(t); const x = d.data?.[0] || {}; out.keys = Object.keys(x); out.sample = Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 80) : v])); } catch (e) { out.parseError = e.message; out.head = t.slice(0, 300); }
-  } catch (e) { out.fyydError = String(e.message || e) + ' ' + (e.cause?.code || e.cause?.message || ''); }
-  const fake = () => ({ code: 200, b: null, status(c) { this.code = c; return this; }, json(b) { this.b = b; return this; }, setHeader() {} });
-  const r2 = fake();
-  await search({ url: '/api/podcast-search?q=ciclismo&mode=search&source=fyyd&limit=5', headers: { 'x-forwarded-for': 'diag' } }, r2);
-  out.handler = { code: r2.code, source: r2.b?.source, n: r2.b?.items?.length, first: r2.b?.items?.slice(0, 3).map(i => i.title + ' ' + JSON.stringify(i.sources)) };
+  await Promise.all(Object.entries(urls).map(async ([k, u]) => {
+    try {
+      const r = await fetch(u, { headers: { 'User-Agent': 'RadiosViferor/podcasts' }, signal: AbortSignal.timeout(7000) });
+      const d = await r.json();
+      out[k] = { status: r.status, msg: d.msg, n: (d.data || []).length, titles: (d.data || []).slice(0, 8).map(x => `${x.title} [${x.language || ''}]`) };
+    } catch (e) { out[k] = 'error ' + e.message; }
+  }));
   res.setHeader('Cache-Control', 'no-store');
-  res.status(200).send('<pre>' + JSON.stringify(out, null, 1).replace(/</g, '&lt;') + '</pre>');
+  res.status(200).json(out);
 }
