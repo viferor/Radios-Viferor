@@ -1245,3 +1245,12 @@ html.dark-mode .pod-suggest-head button{color:#8ab4f8}
 .pod-cat-head small{flex:0 0 auto;font-size:.68rem;font-weight:800;background:#e7ebef;color:#55606a;border-radius:10px;padding:2px 8px}
 html.dark-mode .pod-cat-head{color:#e3e8ed}
 html.dark-mode .pod-cat-head small{background:#2b333b;color:#c3ccd4}
+
+/* 1.15.0 · Tiempos en h:mm:ss y tiempo restante */
+.pod-progress{grid-template-columns:auto 1fr auto!important}
+.pod-progress span{min-width:42px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pod-progress #podCurrentTime{text-align:left}
+.pod-progress #podDuration{text-align:right;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.pod-date{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+.pod-ep-time{font-weight:700;color:#55606a;font-variant-numeric:tabular-nums}
+html.dark-mode .pod-ep-time{color:#c3ccd4}

@@ -989,7 +989,7 @@ function podcastCard(p, episode = false) {
     Array.isArray(p.sources) && p.sources.length && !episode && !isSubscribed(p)
       ? `<div class="pod-sources-line">${p.sources.map(x => pEsc(SOURCE_LABEL[x] || x)).join(' · ')}</div>`
       : ''
-  }${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(p)}<button class="pod-open" type="button">Episodios</button>${subscribed || isPodcastFav(p) ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
+  }${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}${(t => (t ? `<span class="pod-ep-time">${pEsc(t)}</span>` : ''))(episodeTimeText(p))}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(p)}<button class="pod-open" type="button">Episodios</button>${subscribed || isPodcastFav(p) ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
   if (episode) d.querySelector('.pod-play').onclick = () => playPodcastEpisode(p);
   else {
     d.querySelector('.pod-sub').onclick = () => togglePodcast(p);
@@ -1671,11 +1671,41 @@ function restorePodcastHistory(st) {
     );
   else renderPodcastLanding(true);
 }
+// Tiempo: h:mm:ss a partir de una hora; m:ss si es menos.
 function fmtPodTime(v) {
   if (!Number.isFinite(v) || v < 0) return '0:00';
-  const m = Math.floor(v / 60),
-    sec = Math.floor(v % 60);
-  return m + ':' + String(sec).padStart(2, '0');
+  v = Math.floor(v);
+  const h = Math.floor(v / 3600),
+    m = Math.floor((v % 3600) / 60),
+    sec = v % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(sec).padStart(2, '0');
+}
+// <itunes:duration> puede venir en segundos («3725») o como «1:02:05» / «62:05».
+function parsePodDuration(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return 0;
+  if (/^\d+(\.\d+)?$/.test(s)) return Math.floor(Number(s));
+  const parts = s.split(':').map(Number);
+  if (parts.some(n => !Number.isFinite(n))) return 0;
+  return parts.reduce((acc, n) => acc * 60 + n, 0);
+}
+// Texto de duración y de lo que queda para la ficha de un episodio.
+function episodeTimeText(e) {
+  const saved = podcastProgress()[String(e?.id)];
+  const dur = parsePodDuration(e?.duration) || Number(saved?.dur || 0);
+  const pos = Number(saved?.pos || 0);
+  if (isEpisodeDone(e?.id)) return dur ? `⏱ ${fmtPodTime(dur)} · ✓ Escuchado` : '✓ Escuchado';
+  if (dur && pos > 5 && pos < dur) return `⏱ ${fmtPodTime(dur)} · quedan ${fmtPodTime(dur - pos)}`;
+  if (pos > 5) return `▶ Vas por ${fmtPodTime(pos)}`;
+  return dur ? `⏱ ${fmtPodTime(dur)}` : '';
+}
+const POD_TIME_MODE_KEY = 'radios_viferor_podcast_time_mode';
+function podShowRemaining() {
+  try {
+    return localStorage.getItem(POD_TIME_MODE_KEY) !== 'total';
+  } catch {
+    return true;
+  }
 }
 // Datos del episodio en el mini-reproductor y en el ampliado (portada, títulos).
 function setPodcastNowUI(e) {
@@ -1702,7 +1732,13 @@ function updatePodcastPlayerUI() {
     pr.value = Math.min(cur, dur || 100);
   }
   if ($p('podCurrentTime')) $p('podCurrentTime').textContent = fmtPodTime(cur);
-  if ($p('podDuration')) $p('podDuration').textContent = fmtPodTime(dur);
+  // A la derecha, lo que queda (−h:mm:ss); al tocarlo cambia a la duración total.
+  const durEl = $p('podDuration');
+  if (durEl) {
+    const rem = podShowRemaining() && dur;
+    durEl.textContent = rem ? '−' + fmtPodTime(Math.max(0, dur - cur)) : fmtPodTime(dur);
+    durEl.title = rem ? 'Tiempo que queda (toca para ver la duración total)' : 'Duración total (toca para ver lo que queda)';
+  }
   const playing = !a.paused;
   if ($p('podMiniBar')) $p('podMiniBar').style.width = dur ? Math.min(100, (cur / dur) * 100).toFixed(2) + '%' : '0%';
   if ($p('podPlayPause')) $p('podPlayPause').textContent = playing ? '⏸' : '▶';
@@ -2190,6 +2226,12 @@ function initPodcasts() {
   });
   ['podVolumeRange', 'podExpVolume'].forEach(id => {
     if ($p(id)) $p(id).addEventListener('input', e => setPodcastVolume(e.target.value));
+  });
+  $p('podDuration')?.addEventListener('click', () => {
+    try {
+      localStorage.setItem(POD_TIME_MODE_KEY, podShowRemaining() ? 'total' : 'remaining');
+    } catch {}
+    updatePodcastPlayerUI();
   });
   if ($p('podProgressRange'))
     $p('podProgressRange').addEventListener('input', e => {
