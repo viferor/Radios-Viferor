@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     const r = await fetch('https://api.fyyd.de/0.2/search/podcast?title=ciclismo&term=ciclismo&count=5', { headers: { 'User-Agent': 'RadiosViferor/podcasts' }, signal: AbortSignal.timeout(6000) });
     const t = await r.text();
     out.fyydStatus = r.status;
-    out.fyydHead = t.slice(0, 400);
+    try { const d = JSON.parse(t); const x = d.data?.[0] || {}; out.keys = Object.keys(x); out.sample = Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === 'string' ? v.slice(0, 80) : v])); } catch (e) { out.parseError = e.message; out.head = t.slice(0, 300); }
   } catch (e) { out.fyydError = String(e.message || e) + ' ' + (e.cause?.code || e.cause?.message || ''); }
   const fake = () => ({ code: 200, b: null, status(c) { this.code = c; return this; }, json(b) { this.b = b; return this; }, setHeader() {} });
   const r2 = fake();
