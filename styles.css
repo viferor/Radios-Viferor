@@ -1221,3 +1221,19 @@ html.dark-mode .pod-suggest-head button{color:#8ab4f8}
 .pod-show-author{margin:2px 0 3px;font-size:.82rem;color:var(--subtext);font-weight:700}
 .pod-show-head .pod-detail-fav{display:flex;flex-wrap:wrap;gap:6px;width:100%;margin:0!important}
 .pod-show-head .pod-detail-fav button{flex:1 1 auto;padding:9px 10px}
+
+/* 1.14.3 — Las fichas de podcast nunca pasan del ancho de la pantalla */
+.pod-grid{grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr))}
+@media(max-width:650px){.pod-grid,.pod-results-grid{grid-template-columns:minmax(0,1fr)!important}}
+.pod-card{min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden}
+.pod-card .pod-body{flex:1 1 0;min-width:0;max-width:100%}
+.pod-card h3,.pod-card .pod-meta,.pod-card .pod-desc,.pod-card .pod-date,.pod-card .pod-activity,.pod-card .pod-sources-line{min-width:0;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+.pod-card .pod-actions{flex-wrap:wrap;min-width:0;max-width:100%}
+.pod-card .pod-actions button{min-width:0;max-width:100%;white-space:normal}
+.pod-episodes,.pod-queue{min-width:0;max-width:100%}
+.pod-show-top{min-width:0;max-width:100%}
+.pod-show-top .pod-detail-title{flex:1 1 0;min-width:0}
+.pod-show-top .pod-detail-title h2,.pod-show-author,.pod-detail-head h2{overflow-wrap:anywhere;word-break:break-word}
+.pod-queue-row>div{min-width:0}
+.pod-queue-row strong,.pod-queue-row small{overflow-wrap:anywhere}
+.podcast-content{overflow-x:hidden}
