@@ -225,7 +225,9 @@ function shortLang(l) {
   return norm(l).split(' ')[0];
 }
 async function searchFyyd(term, language) {
-  const p = new URLSearchParams({ title: term, term, count: '50' });
+  // Solo por título: con «term» (que se combina con OR) fyyd devuelve resultados sin
+  // relación con lo buscado.
+  const p = new URLSearchParams({ title: term, count: '50' });
   if (language) p.set('langauge', language); // así, con la errata de su API
   const d = await getJson('https://api.fyyd.de/0.2/search/podcast?' + p, 5000);
   return (Array.isArray(d?.data) ? d.data : [])
