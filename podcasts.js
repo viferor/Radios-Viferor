@@ -350,7 +350,7 @@ function fetchPodcastMeta(p) {
       const d = await r.json();
       const latest = podcastDateValue(d.latest?.date) || 0;
       podcastActivityCache.set(key, { t: Date.now(), latest });
-      return { latest, feed: d.feed || {} };
+      return { latest, feed: d.feed || {}, recent: Array.isArray(d.recent) ? d.recent : null };
     } catch {
       podcastActivityCache.set(key, { t: Date.now(), latest: 0 });
       return null;
@@ -382,6 +382,21 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
       for (const cur of targets) {
         cur.latestEpisodeCheckedAt = Date.now();
         if (!x) continue;
+        // Episodios nuevos: publicados después de la última vez que abriste el podcast
+        // (o desde que te suscribiste). En suscripciones importadas se empieza en 0.
+        if (x.recent && isSubscribed(cur)) {
+          let base = Number(cur.lastOpenedAt || 0) || podcastDateValue(cur.subscribedAt) || Number(cur.newBaseline || 0);
+          if (!base) {
+            base = Date.now();
+            cur.newBaseline = base;
+            changed = true;
+          }
+          const n = x.recent.filter(t => t > base).length;
+          if (n !== Number(cur.newCount || 0)) {
+            cur.newCount = n;
+            changed = true;
+          }
+        }
         if (x.latest) {
           const iso = new Date(x.latest).toISOString();
           if (cur.latestEpisodeAt !== iso) {
@@ -703,11 +718,11 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     sec.innerHTML = `<h2 class="pod-home-h">⭐ Favoritos <span>${favs.length}</span></h2>`;
     if (favs.length) {
       const g = document.createElement('div');
-      g.className = 'pod-grid pod-subs-grid pod-favs-grid';
-      favs.forEach(f => g.appendChild(podcastCard(f)));
+      g.className = 'pod-tiles pod-favs-grid';
+      favs.forEach(f => g.appendChild(podcastTile(subscriptionFor(f) || f)));
       sec.append(g);
     } else {
-      sec.insertAdjacentHTML('beforeend', '<p class="pod-home-hint">Pulsa «☆ Favorito» en cualquier podcast para tenerlo aquí, estés suscrito o no.</p>');
+      sec.insertAdjacentHTML('beforeend', '<p class="pod-home-hint">Pulsa «☆ Favorito» dentro de cualquier podcast para tenerlo aquí, estés suscrito o no.</p>');
     }
     root.append(sec);
     root.insertAdjacentHTML('beforeend', `<h2 class="pod-home-h">📚 Mis suscripciones <span>${podcastState.subs.length}</span></h2>`);
@@ -728,7 +743,7 @@ function renderPodcastHome(fromHistory = false, inline = false) {
   if (!podcastState.subs.length) {
     root.insertAdjacentHTML(
       'beforeend',
-      '<div class="pod-empty"><div>📚</div><h3>Aún no tienes suscripciones</h3><p>Busca podcasts y pulsa «Suscribirse», o importa tu OPML.</p><div class="pod-empty-actions"><button type="button" id="podEmptyImport">📥 Importar OPML</button><button type="button" id="podEmptySearch">🔎 Buscar podcasts</button></div></div>'
+      '<div class="pod-empty"><div>📚</div><h3>Aún no tienes suscripciones</h3><p>Pulsa ＋ para buscar podcasts o añadirlos por RSS, o importa tu OPML.</p><div class="pod-empty-actions"><button type="button" id="podEmptyImport">📥 Importar OPML</button><button type="button" id="podEmptySearch">＋ Añadir podcast</button></div></div>'
     );
     $p('podEmptyImport')?.addEventListener('click', () => $p('podcastFile')?.click());
     $p('podEmptySearch')?.addEventListener('click', () => {
@@ -738,18 +753,65 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     return;
   }
   const grid = document.createElement('div');
-  grid.className = 'pod-grid pod-subs-grid';
-  getSortedPodcastSubs().forEach(p => grid.appendChild(podcastCard(p)));
+  grid.className = 'pod-tiles pod-subs-tiles';
+  getSortedPodcastSubs().forEach(p => grid.appendChild(podcastTile(p)));
   root.append(grid);
-  const keepScroll = root.scrollTop;
-  const byDate = sort && (sort.value === 'recent' || sort.value === 'oldest');
+  // Se actualiza cada hora como mucho: fecha del último episodio, portada y el
+  // número de episodios nuevos de cada suscripción.
   refreshPodcastActivity(podcastState.subs, {
-    maxAge: byDate ? 600000 : 86400000,
+    maxAge: 3600000,
     rerender: () => {
       if (podcastState.screen === 'subs' || podcastState.screen === 'landing') rerenderPodcastHome();
     }
   });
 }
+// --- Cuadrícula de portadas (portada de Podcasts y sugerencias) -------------------
+function subscriptionFor(p) {
+  const k = podcastKey(p);
+  return podcastState.subs.find(s => podcastKey(s) === k) || null;
+}
+function podcastInitials(t) {
+  return (
+    String(t || '?')
+      .replace(/[^\p{L}\p{N} ]/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(w => w[0])
+      .join('')
+      .toUpperCase() || '🎙️'
+  );
+}
+function podcastTile(p, { onOpen } = {}) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'pod-tile';
+  b.dataset.podcastKey = podcastKey(p);
+  const img = p.artwork || p.image || '';
+  const n = Number(p.newCount || 0);
+  const act = podcastActivityInfo(getPodcastLatestDate(p));
+  const old = act && act.cls !== 'pod-active';
+  const hue = [...String(p.title || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  b.innerHTML = `<span class="pod-tile-art" style="--ph:${hue}">${
+    img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''
+  }<span class="pod-tile-ph">${pEsc(podcastInitials(p.title))}</span>${n > 0 ? `<span class="pod-tile-badge" aria-label="${n} episodios nuevos">${n > 99 ? '99+' : n}</span>` : ''}${
+    isPodcastFav(p) ? '<span class="pod-tile-fav" aria-label="Favorito">⭐</span>' : ''
+  }</span><span class="pod-tile-title">${old ? `<i class="pod-activity-dot ${act.cls}" title="${pEsc(act.label + (act.date ? ' · ' + act.date : ''))}"></i>` : ''}${pEsc(p.title || 'Sin título')}</span>`;
+  b.setAttribute('aria-label', `${podcastText(p.title || 'Podcast')}${n ? `, ${n} episodios nuevos` : ''}`);
+  b.onclick = () => (onOpen ? onOpen(p) : loadPodcastEpisodes(p));
+  return b;
+}
+// Al abrir un podcast suscrito se pone a cero su contador de nuevos.
+function markPodcastOpened(p) {
+  const sub = subscriptionFor(p);
+  if (!sub) return;
+  sub.lastOpenedAt = Date.now();
+  if (sub.newCount) {
+    sub.newCount = 0;
+    savePodcastSubs();
+  } else savePodcastSubs();
+}
+
 function refreshPodcastSubscriptionUI() {
   updatePodcastMineCount();
   document.querySelectorAll('.pod-sub[data-podcast-key]').forEach(btn => {
@@ -817,7 +879,11 @@ function podcastCard(p, episode = false) {
   const img = p.artwork || p.image || '';
   const activity = !episode ? podcastActivityStatus(p) : null;
   const subscribed = !episode && isSubscribed(p);
-  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(p)}<button class="pod-open" type="button">Episodios</button>${subscribed || isPodcastFav(p) ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
+  d.innerHTML = `<div class="pod-art">${img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async" onerror="this.replaceWith('🎙️')">` : '🎙️'}</div><div class="pod-body"><h3>${!episode && activity ? `<span class="pod-activity-dot ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}" aria-label="${pEsc(activity.label)}"></span>` : ''}${pEsc(p.title || 'Sin título')}</h3><div class="pod-meta">${pEsc(p.author || p.artist || '')} ${p.genre ? `· ${pEsc(p.genre)}` : ''}</div>${
+    Array.isArray(p.sources) && p.sources.length && !episode && !isSubscribed(p)
+      ? `<div class="pod-sources-line">${p.sources.map(x => pEsc(SOURCE_LABEL[x] || x)).join(' · ')}</div>`
+      : ''
+  }${activity ? `<div class="pod-activity ${activity.cls}" title="${pEsc(activity.date ? `Último episodio: ${activity.date}` : activity.label)}">${activity.label}${activity.date ? ` · Último episodio: ${pEsc(activity.date)}` : ''}</div>` : ''}${episode ? `<div class="pod-desc">${pEsc((p.description || '').slice(0, 180))}</div><div class="pod-date">${pEsc(p.date || '')}</div>` : `<div class="pod-desc">${pEsc((p.description || '').slice(0, 150))}</div>`}<div class="pod-actions">${episode ? `<button class="pod-play" type="button">▶ Escuchar</button>` : `<button class="pod-sub ${subscribed ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(p))}" type="button">${subscribed ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(p)}<button class="pod-open" type="button">Episodios</button>${subscribed || isPodcastFav(p) ? `<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button>` : ''}`}</div></div>`;
   if (episode) d.querySelector('.pod-play').onclick = () => playPodcastEpisode(p);
   else {
     d.querySelector('.pod-sub').onclick = () => togglePodcast(p);
@@ -838,7 +904,8 @@ function savePodcastFilters() {
         genre: $p('podGenre')?.value || 'Todas',
         country: $p('podCountry')?.value || 'ES',
         language: $p('podLanguage')?.value || '',
-        sort: $p('podSort')?.value || 'search'
+        sort: $p('podSort')?.value || 'search',
+        source: podcastSource
       })
     );
   } catch {}
@@ -858,6 +925,96 @@ function restorePodcastFilters() {
   set('podCountry', f.country || 'ES');
   set('podLanguage', f.language);
   set('podSort', f.sort);
+  if (['all', 'apple', 'fyyd', 'podcastindex'].includes(f.source)) podcastSource = f.source;
+  renderPodcastSources();
+}
+// --- Dónde buscar (catálogos) ----------------------------------------------------
+let podcastSource = 'all';
+let podcastSourcesAvailable = null; // se pregunta al servidor una vez
+const SOURCE_LABEL = { all: 'Todos', apple: 'Apple Podcasts', fyyd: 'fyyd', podcastindex: 'Podcast Index' };
+function renderPodcastSources() {
+  const box = $p('podSources');
+  if (!box) return;
+  const avail = podcastSourcesAvailable;
+  box.querySelectorAll('[data-source]').forEach(b => {
+    const src = b.dataset.source;
+    const off = avail && src !== 'all' && !avail.includes(src);
+    b.classList.toggle('on', src === podcastSource);
+    b.classList.toggle('off', !!off);
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(src === podcastSource));
+  });
+  const note = $p('podSourcesNote');
+  if (note) {
+    const piOff = avail && !avail.includes('podcastindex');
+    note.hidden = !(piOff && podcastSource === 'podcastindex');
+    note.textContent = 'Podcast Index necesita una clave gratuita (api.podcastindex.org). Mientras tanto se busca en Apple y fyyd.';
+  }
+  updatePodcastFiltersSummary();
+}
+async function loadPodcastSources() {
+  if (podcastSourcesAvailable) return;
+  try {
+    const r = await fetch('/api/podcast-search?info=1');
+    const d = await r.json();
+    podcastSourcesAvailable = Array.isArray(d.sources) ? d.sources : ['apple', 'fyyd'];
+  } catch {
+    podcastSourcesAvailable = ['apple', 'fyyd'];
+  }
+  renderPodcastSources();
+}
+function updatePodcastFiltersSummary() {
+  const el = $p('podFiltersSummary');
+  if (!el) return;
+  const parts = [];
+  const g = $p('podGenre')?.value;
+  if (g && g !== 'Todas') parts.push(g);
+  parts.push(podcastSelectLabel('podCountry'));
+  if ($p('podLanguage')?.value) parts.push(podcastSelectLabel('podLanguage'));
+  if ($p('podSort')?.value === 'popular') parts.push('Más populares');
+  el.textContent = parts.filter(Boolean).length ? '· ' + parts.filter(Boolean).join(' · ') : '';
+}
+// --- Sugerencias (populares de Apple) en portadas --------------------------------
+let podcastSuggestKey = '';
+async function loadPodcastSuggestions(force = false) {
+  const box = $p('podSuggest');
+  if (!box) return;
+  const country = $p('podCountry')?.value || 'ES';
+  const genre = $p('podGenre')?.value || 'Todas';
+  const key = country + '|' + genre;
+  if (!force && key === podcastSuggestKey && box.querySelector('.pod-tile')) return;
+  podcastSuggestKey = key;
+  if ($p('podSuggestTitle'))
+    $p('podSuggestTitle').textContent = `Sugerencias de Apple Podcasts${genre !== 'Todas' ? ' · ' + genre : ''}`;
+  box.innerHTML = '<div class="pod-loading">Cargando sugerencias…</div>';
+  try {
+    const u = new URL('/api/podcast-search', location.origin);
+    Object.entries({ mode: 'popular', q: '', genre, country, language: '', limit: '24' }).forEach(([k, v]) =>
+      u.searchParams.set(k, v)
+    );
+    const r = await fetch(u);
+    const d = await r.json();
+    if (key !== podcastSuggestKey) return;
+    const items = (d.items || []).map(normalizePodcastObject);
+    box.replaceChildren(
+      ...items.map(p =>
+        podcastTile(p, {
+          onOpen: x => {
+            closeAddPodcast();
+            loadPodcastEpisodes(x);
+          }
+        })
+      )
+    );
+    if (!items.length) box.innerHTML = '<p class="pod-home-hint">No hay sugerencias ahora mismo.</p>';
+  } catch {
+    box.innerHTML = '<p class="pod-home-hint">No se pudieron cargar las sugerencias.</p>';
+  }
+}
+function closeAddPodcast() {
+  const d = $p('podSearchDrawer');
+  if (d) d.hidden = true;
+  document.body.classList.remove('pod-adding');
 }
 function podcastSelectLabel(id) {
   return $p(id)?.selectedOptions?.[0]?.textContent?.trim() || '';
@@ -884,6 +1041,7 @@ async function searchPodcasts() {
     u.searchParams.set('country', country);
     u.searchParams.set('language', language);
     u.searchParams.set('limit', '60');
+    u.searchParams.set('source', podcastSource);
     const r = await fetch(u);
     const d = await r.json();
     if (!r.ok) throw Error(d.error || 'Error');
@@ -894,7 +1052,13 @@ async function searchPodcasts() {
       ? `🔥 Populares${genreTxt ? ' · ' + genreTxt : ''}${q ? ` · «${q}»` : ''}`
       : `🔎 «${q}»${genreTxt ? ' · ' + genreTxt : ''}`;
     podcastState.searchInfo = {
-      filters: [podcastSelectLabel('podCountry'), language ? podcastSelectLabel('podLanguage') : ''].filter(Boolean).join(' · '),
+      filters: [
+        popular ? 'Apple Podcasts' : SOURCE_LABEL[podcastSource] === 'Todos' ? 'Todos los catálogos' : SOURCE_LABEL[podcastSource],
+        podcastSelectLabel('podCountry'),
+        language ? podcastSelectLabel('podLanguage') : ''
+      ]
+        .filter(Boolean)
+        .join(' · '),
       partial: !!d.partial
     };
     pushPodcastState('search');
@@ -982,8 +1146,6 @@ async function loadPodcastEpisodes(p) {
         savePodcastSubs();
       } catch {}
     }
-    const h = document.createElement('div');
-    h.className = 'pod-section-title pod-detail-head';
     // Datos completos del podcast para poder suscribirse o marcarlo como favorito desde aquí
     // (si se llegó desde una notificación puede venir solo con la URL del feed).
     const favItem = {
@@ -994,28 +1156,44 @@ async function loadPodcastEpisodes(p) {
       description: p.description || feed.description || '',
       feedUrl
     };
-    const sub = isSubscribed(favItem);
-    h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-detail-title"><h2>${pEsc(favItem.title)}</h2><span>${eps.length} episodios</span></div><div class="pod-actions pod-detail-fav"><button class="pod-sub ${sub ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(favItem))}" type="button">${sub ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(favItem)}</div>`;
-    root.replaceChildren(h);
-    $p('podBack').onclick = backFromPodcast;
-    h.querySelector('.pod-detail-fav .pod-sub').onclick = () => togglePodcast(favItem);
-    h.querySelector('.pod-detail-fav .pod-fav').onclick = () => togglePodcastFav(favItem);
-    if (!eps.length) {
-      const empty = document.createElement('div');
-      empty.className = 'pod-empty';
-      empty.innerHTML =
-        '<div>🎙️</div><h3>No hay episodios disponibles</h3><p>El feed se ha leído correctamente, pero no contiene episodios con audio reproducible.</p>';
-      root.append(empty);
-      return;
-    }
-    const grid = document.createElement('div');
-    grid.className = 'pod-episodes';
-    eps.forEach(e => grid.appendChild(podcastCard(e, true)));
-    root.append(grid);
+    podcastState.episodesPodcast = favItem;
+    renderEpisodesView(favItem, eps);
+    markPodcastOpened(favItem);
   } catch (e) {
     root.innerHTML = `<div class="pod-empty"><div>⚠️</div><h3>No se pudieron cargar los episodios</h3><p>${pEsc(e.message)}</p><button id="podBack" class="pod-back-btn" type="button">← Volver</button></div>`;
     $p('podBack').onclick = backFromPodcast;
   }
+}
+// Vista de un podcast: cabecera con portada y acciones, y la lista de episodios.
+// Se usa al abrirlo y al volver a él (antes, al volver, faltaban los botones).
+function renderEpisodesView(favItem, eps) {
+  const root = $p('podcastContent');
+  const h = document.createElement('div');
+  h.className = 'pod-section-title pod-detail-head pod-show-head';
+  const sub = isSubscribed(favItem);
+  const art = favItem.artwork || favItem.image || '';
+  h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-show-top"><div class="pod-show-art">${
+    art ? `<img src="${pEsc(art)}" alt="" onerror="this.remove()">` : ''
+  }<span>${pEsc(podcastInitials(favItem.title))}</span></div><div class="pod-detail-title"><h2>${pEsc(favItem.title)}</h2>${
+    favItem.author ? `<p class="pod-show-author">${pEsc(favItem.author)}</p>` : ''
+  }<span>${eps.length} episodios</span></div></div><div class="pod-actions pod-detail-fav"><button class="pod-sub ${sub ? 'on' : ''}" data-podcast-key="${pEsc(podcastKey(favItem))}" type="button">${sub ? '✓ Suscrito · Quitar' : '＋ Suscribirse'}</button>${podcastFavButtonHtml(favItem)}<button class="pod-share" type="button" aria-label="Compartir podcast">↗ Compartir</button></div>`;
+  root.replaceChildren(h);
+  $p('podBack').onclick = backFromPodcast;
+  h.querySelector('.pod-detail-fav .pod-sub').onclick = () => togglePodcast(favItem);
+  h.querySelector('.pod-detail-fav .pod-fav').onclick = () => togglePodcastFav(favItem);
+  h.querySelector('.pod-detail-fav .pod-share').onclick = () => sharePodcast(favItem);
+  if (!eps.length) {
+    const empty = document.createElement('div');
+    empty.className = 'pod-empty';
+    empty.innerHTML =
+      '<div>🎙️</div><h3>No hay episodios disponibles</h3><p>El feed se ha leído correctamente, pero no contiene episodios con audio reproducible.</p>';
+    root.append(empty);
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'pod-episodes';
+  eps.forEach(e => grid.appendChild(podcastCard(e, true)));
+  root.append(grid);
 }
 async function fetchSubEpisodes(limitEach = 8) {
   const all = [];
@@ -1207,12 +1385,7 @@ async function playPodcastQueue() {
       window.logError?.('PODCAST_AUDIO', 'PLAY_ERROR ' + (err?.message || err));
     } catch {}
   }
-  $p('podcastNow').textContent = e.title;
-  $p('podcastNowSub').textContent = e.podcastTitle || e.author || '';
-  const art = $p('podExpandedArt');
-  if (art) art.innerHTML = e.podcastArt ? `<img src="${pEsc(e.podcastArt)}" alt="">` : '🎙️';
-  $p('podExpandedTitle').textContent = e.title;
-  $p('podExpandedSub').textContent = e.podcastTitle || e.author || '';
+  setPodcastNowUI(e);
   updatePodcastPlayerUI();
 }
 function nextPodcast() {
@@ -1381,35 +1554,10 @@ function restorePodcastHistory(st) {
   if (s === 'landing') renderPodcastLanding(true);
   else if (s === 'subs') renderPodcastHome(true);
   else if (s === 'search') renderPodcastResults(podcastState.search, '🔎 Resultados de búsqueda', true);
-  else if (s === 'episodes' && podcastState.episodes.length) {
-    const e = podcastState.episodes;
+  else if (s === 'episodes' && podcastState.episodesPodcast) {
+    podcastState.screen = 'episodes';
     setPodcastLayout(true);
-    const root = $p('podcastContent');
-    root.replaceChildren();
-    const h = document.createElement('div');
-    h.className = 'pod-section-title pod-detail-head';
-    h.innerHTML = `<button class="pod-back-btn" id="podBack" type="button">← Volver</button><div class="pod-detail-title"><h2>${pEsc(e[0]?.podcastTitle || 'Podcast')}</h2><span>${e.length} episodios</span></div>`;
-    root.append(h);
-    $p('podBack').onclick = backFromPodcast;
-    const grid = document.createElement('div');
-    grid.className = 'pod-episodes';
-    e.forEach(x =>
-      grid.appendChild(
-        podcastCard(
-          {
-            title: x.title,
-            author: x.author,
-            image: x.image || x.podcastArt,
-            date: x.date,
-            description: x.description,
-            audioUrl: x.audioUrl,
-            id: x.id
-          },
-          true
-        )
-      )
-    );
-    root.append(grid);
+    renderEpisodesView(podcastState.episodesPodcast, podcastState.episodes || []);
   } else if (s.startsWith('queue'))
     renderPodcastQueue(
       s === 'queue-random' ? 'random' : s === 'queue-continue' ? 'continue' : 'latest',
@@ -1422,6 +1570,20 @@ function fmtPodTime(v) {
   const m = Math.floor(v / 60),
     sec = Math.floor(v % 60);
   return m + ':' + String(sec).padStart(2, '0');
+}
+// Datos del episodio en el mini-reproductor y en el ampliado (portada, títulos).
+function setPodcastNowUI(e) {
+  const mini = $p('podcastPlayerMini');
+  if (mini) mini.classList.toggle('is-empty', !e);
+  if (!e) return;
+  const art = e.image || e.podcastArt || '';
+  const imgHtml = art ? `<img src="${pEsc(art)}" alt="" onerror="this.remove()">` : '';
+  $p('podcastNow').textContent = e.title || 'Episodio';
+  $p('podcastNowSub').textContent = e.podcastTitle || e.author || '';
+  if ($p('podMiniArt')) $p('podMiniArt').innerHTML = imgHtml || '🎙️';
+  if ($p('podExpandedArt')) $p('podExpandedArt').innerHTML = imgHtml || '🎙️';
+  if ($p('podExpandedTitle')) $p('podExpandedTitle').textContent = e.title || 'Episodio';
+  if ($p('podExpandedSub')) $p('podExpandedSub').textContent = e.podcastTitle || e.author || '';
 }
 function updatePodcastPlayerUI() {
   const a = $p('podcastAudio');
@@ -1436,6 +1598,7 @@ function updatePodcastPlayerUI() {
   if ($p('podCurrentTime')) $p('podCurrentTime').textContent = fmtPodTime(cur);
   if ($p('podDuration')) $p('podDuration').textContent = fmtPodTime(dur);
   const playing = !a.paused;
+  if ($p('podMiniBar')) $p('podMiniBar').style.width = dur ? Math.min(100, (cur / dur) * 100).toFixed(2) + '%' : '0%';
   if ($p('podPlayPause')) $p('podPlayPause').textContent = playing ? '⏸' : '▶';
   if ($p('podExpPlay')) $p('podExpPlay').textContent = playing ? '⏸' : '▶';
 }
@@ -1558,6 +1721,11 @@ function previousPodcast() {
 }
 window.handleAndroidBack = function () {
   try {
+    // Pantalla «Añadir podcast» abierta: Atrás la cierra.
+    if (document.body.classList.contains('pod-adding')) {
+      closeAddPodcast();
+      return true;
+    }
     // Panel «Ahora suena», ajustes o menús abiertos: Atrás los cierra.
     const radioNowPanel = document.getElementById('radioNowPanel');
     if (radioNowPanel && !radioNowPanel.hidden) {
@@ -1676,8 +1844,7 @@ function restoreLastPlayback() {
         updatePodcastPlayerUI();
         if (autoplay) retryPodcastAutoplay(a);
       };
-      $p('podcastNow').textContent = chosen.episode.title || 'Sin episodio';
-      $p('podcastNowSub').textContent = chosen.episode.podcastTitle || chosen.episode.author || '';
+      setPodcastNowUI(chosen.episode);
     } else if (chosen.type === 'radio' && chosen.station) {
       if (autoplay && typeof window.reproducirRadio === 'function')
         setTimeout(() => window.reproducirRadio(chosen.station), 900);
@@ -1706,16 +1873,64 @@ function initPodcasts() {
       if (podcastState.screen === 'search') searchPodcasts();
     })
   );
+  // Pantalla «Añadir podcast»: buscador en varios catálogos, filtros, RSS, OPML y
+  // sugerencias en portadas (ocupa la vista de Podcasts mientras está abierta).
   const openPodcastSearchDrawer = () => {
     const d = $p('podSearchDrawer');
-    if (d) d.hidden = false;
-    $p('podSearchText')?.focus();
+    if (!d) return;
+    window.closePodcastMineMenu?.();
+    d.hidden = false;
+    document.body.classList.add('pod-adding');
+    d.scrollTop = 0;
+    loadPodcastSources();
+    loadPodcastSuggestions();
   };
   window.openPodcastSearchDrawer = openPodcastSearchDrawer;
-  const closePodcastSearchDrawer = () => {
-    const d = $p('podSearchDrawer');
-    if (d) d.hidden = true;
+  const closePodcastSearchDrawer = closeAddPodcast;
+  $p('podSources')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-source]');
+    if (!b) return;
+    podcastSource = b.dataset.source;
+    savePodcastFilters();
+    renderPodcastSources();
+    if ($p('podSearchText')?.value.trim()) $p('podSearchBtn').click();
+  });
+  $p('podAddRssToggle')?.addEventListener('click', () => {
+    const f = $p('podAddRssForm');
+    f.hidden = !f.hidden;
+    if (!f.hidden) $p('podRssUrl')?.focus();
+  });
+  const openRss = () => {
+    let url = String($p('podRssUrl')?.value || '').trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url.replace(/^\/+/, '');
+    try {
+      new URL(url);
+    } catch {
+      alert('Esa dirección no es válida.');
+      return;
+    }
+    closeAddPodcast();
+    // Se abre el podcast: desde ahí se puede suscribir o marcar como favorito.
+    loadPodcastEpisodes({ feedUrl: url, title: 'Podcast' });
   };
+  $p('podRssGo')?.addEventListener('click', openRss);
+  $p('podRssUrl')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') openRss();
+  });
+  $p('podAddOpml')?.addEventListener('click', () => $p('podcastFile')?.click());
+  $p('podSuggestMore')?.addEventListener('click', () => {
+    $p('podSort').value = 'popular';
+    $p('podSearchText').value = '';
+    closeAddPodcast();
+    searchPodcasts();
+  });
+  ['podGenre', 'podCountry', 'podLanguage', 'podSort'].forEach(id =>
+    $p(id)?.addEventListener('change', () => {
+      updatePodcastFiltersSummary();
+      if (!$p('podSearchDrawer')?.hidden && (id === 'podGenre' || id === 'podCountry')) loadPodcastSuggestions();
+    })
+  );
   $p('podSearchBtn').onclick = () => {
     closePodcastSearchDrawer();
     searchPodcasts();
@@ -1878,6 +2093,7 @@ function initPodcasts() {
   if ($p('podcastMiniOpen')) {
     const open = () => openPodcastExpanded();
     $p('podcastMiniOpen').onclick = open;
+    if ($p('podMiniArt')) $p('podMiniArt').onclick = open;
     $p('podcastMiniOpen').onkeydown = e => {
       if (e.key === 'Enter' || e.key === ' ') open();
     };

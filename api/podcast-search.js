@@ -8,6 +8,7 @@
 // - Con texto: búsqueda de Apple, filtro estricto por categoría (Apple ignora el
 //   parámetro de categoría en las búsquedas) y orden por relevancia.
 // - Idioma: Apple no lo da; se lee la etiqueta <language> del principio del feed.
+import crypto from 'node:crypto';
 import { safeFetch, rateLimited } from './_lib/net.js';
 
 const cache = globalThis.__podcastSearchCache || (globalThis.__podcastSearchCache = new Map());
@@ -173,7 +174,7 @@ async function filterLanguage(items, wanted, limit, deadline) {
   const CONC = 12;
   for (let i = 0; i < items.length && out.length < limit && Date.now() < deadline; i += CONC) {
     const batch = items.slice(i, i + CONC);
-    const langs = await Promise.all(batch.map(it => feedLanguage(it.feedUrl, deadline)));
+    const langs = await Promise.all(batch.map(it => (it.language ? it.language : feedLanguage(it.feedUrl, deadline))));
     batch.forEach((it, k) => {
       const l = langs[k];
       // Idioma desconocido: se acepta solo si el país de la tienda habla ese idioma.
@@ -182,6 +183,110 @@ async function filterLanguage(items, wanted, limit, deadline) {
     });
   }
   return out.slice(0, limit);
+}
+
+// --- Otros catálogos (búsqueda con texto) -------------------------------------
+// fyyd: abierto, sin clave. Podcast Index: clave gratuita (api.podcastindex.org) en
+// las variables de entorno de Vercel PODCASTINDEX_KEY y PODCASTINDEX_SECRET.
+const PI_KEY = process.env.PODCASTINDEX_KEY || '';
+const PI_SECRET = process.env.PODCASTINDEX_SECRET || '';
+export function availableSources() {
+  return ['apple', 'fyyd', ...(PI_KEY && PI_SECRET ? ['podcastindex'] : [])];
+}
+// Nombres de categoría en inglés (Podcast Index usa los de Apple en inglés).
+const GENRE_EN = {
+  Arte: ['arts', 'books', 'design', 'fashion', 'food', 'performing', 'visual'],
+  Negocios: ['business', 'careers', 'entrepreneurship', 'investing', 'management', 'marketing'],
+  Comedia: ['comedy', 'improv', 'stand-up'],
+  'Crímenes reales': ['true crime'],
+  Educación: ['education', 'courses', 'how to', 'language', 'learning', 'self-improvement'],
+  Ficción: ['fiction', 'drama', 'science fiction', 'comedy fiction'],
+  Gobierno: ['government'],
+  Salud: ['health', 'fitness', 'alternative', 'medicine', 'mental', 'nutrition', 'sexuality'],
+  Historia: ['history'],
+  'Niños y familia': ['kids', 'family', 'parenting', 'pets', 'stories for kids'],
+  Música: ['music'],
+  Noticias: ['news', 'politics', 'daily news', 'business news', 'tech news', 'sports news', 'entertainment news'],
+  'Religión y espiritualidad': ['religion', 'spirituality', 'christianity', 'buddhism', 'islam', 'judaism', 'hinduism'],
+  Ciencia: ['science', 'astronomy', 'chemistry', 'earth', 'life', 'mathematics', 'natural', 'nature', 'physics', 'social sciences'],
+  'Sociedad y cultura': ['society', 'culture', 'documentary', 'personal journals', 'philosophy', 'places', 'travel', 'relationships'],
+  Deportes: ['sports', 'football', 'soccer', 'basketball', 'baseball', 'cricket', 'golf', 'hockey', 'rugby', 'running', 'tennis', 'wrestling', 'fantasy', 'swimming', 'wilderness', 'volleyball'],
+  Tecnología: ['technology'],
+  'TV y cine': ['tv', 'film', 'after shows', 'reviews'],
+  Ocio: ['leisure', 'animation', 'manga', 'automotive', 'aviation', 'crafts', 'games', 'hobbies', 'home', 'garden', 'video games']
+};
+function genreOkByNames(names, genre) {
+  if (!GENRES[genre]) return true;
+  const want = GENRE_EN[genre] || [];
+  const ns = names.map(n => String(n).toLowerCase());
+  return ns.some(n => want.some(w => n.includes(w)));
+}
+function shortLang(l) {
+  return norm(l).split(' ')[0];
+}
+async function searchFyyd(term, language) {
+  const p = new URLSearchParams({ title: term, term, count: '50' });
+  if (language) p.set('langauge', language); // así, con la errata de su API
+  const d = await getJson('https://api.fyyd.de/0.2/search/podcast?' + p, 5000);
+  return (Array.isArray(d?.data) ? d.data : [])
+    .filter(x => x?.title && x?.xmlURL)
+    .map((x, i) => ({
+      id: 'fyyd:' + x.id,
+      title: clean(x.title),
+      author: clean(x.author || x.subtitle || ''),
+      artwork: x.imgURL || x.layoutImageURL || x.thumbImageURL || '',
+      feedUrl: clean(x.xmlURL),
+      webUrl: clean(x.htmlURL || x.url_fyyd),
+      description: clean(x.description).slice(0, 600),
+      genre: '',
+      genres: [],
+      genreIds: [],
+      episodeCount: Number(x.episode_count || 0),
+      latestEpisodeAt: x.lastpub || '',
+      language: shortLang(x.language),
+      pos: i,
+      source: 'fyyd'
+    }));
+}
+async function searchPodcastIndex(term) {
+  if (!PI_KEY || !PI_SECRET) return [];
+  const now = String(Math.floor(Date.now() / 1000));
+  const auth = crypto.createHash('sha1').update(PI_KEY + PI_SECRET + now).digest('hex');
+  const r = await fetch('https://api.podcastindex.org/api/1.0/search/byterm?' + new URLSearchParams({ q: term, max: '60' }), {
+    headers: { 'User-Agent': 'RadiosViferor/1.14', 'X-Auth-Key': PI_KEY, 'X-Auth-Date': now, Authorization: auth },
+    signal: AbortSignal.timeout(5000)
+  });
+  if (!r.ok) throw new Error('Podcast Index HTTP ' + r.status);
+  const d = await r.json();
+  return (Array.isArray(d?.feeds) ? d.feeds : [])
+    .filter(x => x?.title && x?.url && !x.dead)
+    .map((x, i) => {
+      const cats = x.categories && typeof x.categories === 'object' ? Object.values(x.categories) : [];
+      return {
+        id: 'pi:' + x.id,
+        title: clean(x.title),
+        author: clean(x.author || x.ownerName || ''),
+        artwork: x.artwork || x.image || '',
+        feedUrl: clean(x.url),
+        webUrl: clean(x.link),
+        description: clean(x.description).slice(0, 600),
+        genre: cats[0] || '',
+        genres: cats,
+        genreIds: [],
+        episodeCount: Number(x.episodeCount || 0),
+        latestEpisodeAt: x.newestItemPubdate ? new Date(x.newestItemPubdate * 1000).toISOString() : '',
+        language: shortLang(x.language),
+        pos: i,
+        source: 'podcastindex'
+      };
+    });
+}
+function feedKey(u) {
+  return String(u || '')
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
 }
 
 // --- Rankings (populares) --------------------------------------------------
@@ -217,13 +322,20 @@ export default async function handler(req, res) {
     let genre = clean(u.searchParams.get('genre'));
     if (!(genre in GENRES)) genre = 'Todas';
     const limit = Math.min(100, Math.max(1, Number(u.searchParams.get('limit') || 60)));
+    if (u.searchParams.get('info') === '1') return res.status(200).json({ sources: availableSources() });
+    let source = clean(u.searchParams.get('source') || 'all').toLowerCase();
+    if (!['all', 'apple', 'fyyd', 'podcastindex'].includes(source)) source = 'all';
+    if (source === 'podcastindex' && !availableSources().includes('podcastindex'))
+      return res.status(200).json({ items: [], error: 'Podcast Index no está configurado', sources: availableSources() });
     let stores = country === 'ALL' ? ALL_STORES : ALL_STORES.includes(country) ? [country] : ['ES'];
     // Con idioma y «todos los países», solo las tiendas de ese idioma (si las hay).
     if (country === 'ALL' && language) {
       const same = stores.filter(s => STORE_LANG[s] === language);
       if (same.length) stores = same;
     }
-    const key = [mode, norm(term), genre, stores.join(','), language, limit].join('|');
+    // Las populares solo existen en Apple.
+    if (mode === 'popular') source = 'apple';
+    const key = [mode, source, norm(term), genre, stores.join(','), language, limit].join('|');
     const cached = cache.get(key);
     if (cached && Date.now() - cached.t < 1800000) {
       res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
@@ -261,40 +373,63 @@ export default async function handler(req, res) {
           .map(o => o.x);
       }
     } else {
-      const lists = await Promise.all(
-        stores.map(async s => {
-          try {
-            const p = new URLSearchParams({ term, country: s, media: 'podcast', entity: 'podcast', limit: '200' });
-            const d = await getJson('https://itunes.apple.com/search?' + p);
-            return (d.results || []).map((x, i) => ({ ...mapItem(x, s), pos: i }));
-          } catch {
-            return [];
-          }
-        })
-      );
-      const byId = new Map();
-      for (const it of lists.flat()) {
-        if (!it.title || !it.feedUrl || !genreOk(it, genre)) continue;
-        const prev = byId.get(it.id);
+      const useApple = source === 'all' || source === 'apple';
+      const useFyyd = source === 'all' || source === 'fyyd';
+      const usePI = (source === 'all' || source === 'podcastindex') && availableSources().includes('podcastindex');
+      const appleLists = useApple
+        ? Promise.all(
+            stores.map(async s => {
+              try {
+                const p = new URLSearchParams({ term, country: s, media: 'podcast', entity: 'podcast', limit: '200' });
+                const d = await getJson('https://itunes.apple.com/search?' + p);
+                return (d.results || []).map((x, i) => ({ ...mapItem(x, s), pos: i, source: 'apple' }));
+              } catch {
+                return [];
+              }
+            })
+          )
+        : Promise.resolve([]);
+      const [apple, fyyd, pi] = await Promise.all([
+        appleLists,
+        useFyyd ? searchFyyd(term, language).catch(() => []) : [],
+        usePI ? searchPodcastIndex(term).catch(() => []) : []
+      ]);
+      // Fusión: el mismo podcast (mismo feed, o mismo título y autor) en varios
+      // catálogos cuenta una vez, con los datos combinados (Apple primero).
+      const merged = new Map();
+      const keyOf = it => feedKey(it.feedUrl) || 't:' + norm(it.title) + '|' + norm(it.author);
+      for (const it of [...apple.flat(), ...pi, ...fyyd]) {
+        if (!it.title || !it.feedUrl) continue;
+        const okGenre = it.source === 'apple' ? genreOk(it, genre) : it.source === 'podcastindex' ? genreOkByNames(it.genres, genre) : !GENRES[genre];
+        const k = keyOf(it);
+        const prev = merged.get(k);
         if (prev) {
-          prev.stores++;
+          prev.sources.add(it.source);
           prev.pos = Math.min(prev.pos, it.pos);
-        } else byId.set(it.id, { ...it, stores: 1 });
+          for (const f of ['artwork', 'author', 'description', 'language', 'latestEpisodeAt', 'webUrl'])
+            if (!prev[f] && it[f]) prev[f] = it[f];
+          prev.episodeCount = Math.max(prev.episodeCount || 0, it.episodeCount || 0);
+          prev.okGenre = prev.okGenre || okGenre;
+        } else merged.set(k, { ...it, sources: new Set([it.source]), okGenre });
       }
-      items = [...byId.values()]
-        // Relevancia del texto + orden de Apple (refleja popularidad) + trayectoria
-        // (número de episodios), para que un programa consolidado no quede por
-        // debajo de uno pequeño que solo se llama igual que lo buscado.
+      items = [...merged.values()]
+        .filter(it => it.okGenre)
+        // Relevancia del texto + posición en su catálogo (refleja popularidad) +
+        // trayectoria (número de episodios) + aparecer en varios catálogos.
         .map(it => ({
           it,
           s:
             Math.min(relevance(it, term), 90) * 0.6 +
             Math.max(0, 40 - it.pos * 0.4) +
             Math.min(20, Math.log2((it.episodeCount || 0) + 1) * 2.2) +
-            (it.stores - 1) * 5
+            (it.sources.size - 1) * 6
         }))
+        .filter(o => relevance(o.it, term) > 0 || o.it.source === 'apple')
         .sort((a, b) => b.s - a.s)
-        .map(o => o.it);
+        .map(o => {
+          const { sources, okGenre, ...rest } = o.it;
+          return { ...rest, sources: [...sources] };
+        });
     }
     // Apple a veces tiene el mismo podcast con dos identificadores (o dos URLs de
     // feed): se deja solo el primero (el mejor situado) por título + autor y por feed.
@@ -312,7 +447,9 @@ export default async function handler(req, res) {
     }
     items = await filterLanguage(items, language, limit, deadline);
     const data = {
-      items: items.map(({ pos, stores: _s, ...rest }) => rest),
+      items: items.map(({ pos, stores: _s, ...rest }) => ({ ...rest, sources: rest.sources || ['apple'] })),
+      sources: availableSources(),
+      source,
       mode,
       query: term,
       genre,

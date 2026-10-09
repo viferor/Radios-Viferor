@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11300" />
+<link rel="stylesheet" href="styles.css?v=11400" />
 </head>
 <body>
 <header class="app-header">
@@ -87,23 +87,48 @@
     <label class="pod-mine-sort"><span>Ordenar suscripciones</span><select id="podMineSort" aria-label="Ordenar suscripciones"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option></select></label>
     <div class="pod-mine-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div>
   </div>
-  <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Abrir búsqueda de podcasts" title="Buscar podcasts">🔎</button>
+  <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Añadir o buscar podcasts" title="Añadir podcast">＋</button>
   <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
 </div>
-<div class="pod-search-drawer" id="podSearchDrawer" hidden>
-  <div class="pod-search-drawer-head"><strong>🔎 Buscar podcasts</strong><button id="podSearchClose" type="button" aria-label="Cerrar búsqueda">✕</button></div>
-  <div class="pod-search">
-    <div class="pod-search-text"><span class="pod-filter-label">Buscar</span><input id="podSearchText" type="text" placeholder="🔎 Nombre, tema o podcast..." autocomplete="off"></div>
-    <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
-    <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ES" selected>🇪🇸 España</option><option value="ALL">🌐 Todos</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
-    <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
-    <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Relevancia</option><option value="popular">Más populares</option></select></label>
-    <button id="podSearchBtn" type="button">Buscar</button>
+<div class="pod-search-drawer pod-add" id="podSearchDrawer" hidden>
+  <div class="pod-search-drawer-head"><strong>➕ Añadir podcast</strong><button id="podSearchClose" type="button" aria-label="Cerrar">✕</button></div>
+  <div class="pod-add-body">
+    <form class="pod-add-search" id="podSearchForm" onsubmit="return false">
+      <input id="podSearchText" type="search" placeholder="🔎 Nombre, tema, autor…" autocomplete="off" enterkeyhint="search" aria-label="Buscar podcasts">
+      <button id="podSearchBtn" type="button">Buscar</button>
+    </form>
+    <div class="pod-sources" id="podSources" role="radiogroup" aria-label="Dónde buscar">
+      <button type="button" data-source="all" class="on">Todos</button>
+      <button type="button" data-source="apple">Apple Podcasts</button>
+      <button type="button" data-source="fyyd">fyyd</button>
+      <button type="button" data-source="podcastindex">Podcast Index</button>
+    </div>
+    <p class="pod-sources-note" id="podSourcesNote" hidden></p>
+    <details class="pod-filters-more" id="podFiltersMore">
+      <summary>Filtros: categoría, país, idioma y orden <span id="podFiltersSummary"></span></summary>
+      <div class="pod-search">
+        <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ES" selected>🇪🇸 España</option><option value="ALL">🌐 Todos</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Relevancia</option><option value="popular">Más populares</option></select></label>
+      </div>
+    </details>
+    <div class="pod-add-actions">
+      <button type="button" id="podAddRssToggle">📡 Añadir pódcast por dirección RSS</button>
+      <form class="pod-add-rss" id="podAddRssForm" onsubmit="return false" hidden>
+        <input id="podRssUrl" type="url" inputmode="url" placeholder="https://… (dirección del feed)" autocomplete="off" aria-label="Dirección RSS">
+        <button id="podRssGo" type="button">Abrir</button>
+      </form>
+      <button type="button" id="podAddOpml">📥 Importar lista de podcasts (OPML)</button>
+    </div>
+    <div class="pod-suggest-head"><h3 id="podSuggestTitle">Sugerencias de Apple Podcasts</h3><button type="button" id="podSuggestMore">Descubrir más →</button></div>
+    <div class="pod-tiles pod-suggest" id="podSuggest"><div class="pod-loading">Cargando sugerencias…</div></div>
   </div>
 </div>
 <main id="podcastContent" class="podcast-content"></main>
 
-<div class="pod-player" id="podcastPlayerMini">
+<div class="pod-player is-empty" id="podcastPlayerMini">
+    <div class="pod-mini-art" id="podMiniArt" aria-hidden="true">🎙️</div>
     <div class="pod-mini-info" id="podcastMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de podcast">
       <strong id="podcastNow">Sin episodio</strong><span id="podcastNowSub"></span>
     </div>
@@ -113,6 +138,7 @@
     <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 30 segundos">30↷</button>
     <button id="podNext" class="pod-mini-btn" type="button" aria-label="Siguiente episodio">⏭</button>
     <div class="pod-mini-volume volume-control" aria-label="Volumen del podcast"><button id="podMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podVolumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podVolumeValue">80%</output></div>
+    <div class="pod-mini-progress" aria-hidden="true"><i id="podMiniBar"></i></div>
     <audio id="podcastAudio" preload="none"></audio>
   </div>
   <div class="pod-expanded" id="podExpanded" hidden>
@@ -171,12 +197,12 @@
   </div>
 </div>
 
-<script src="version.js?v=11300"></script>
+<script src="version.js?v=11400"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11300"></script>
-<script src="buscador-radios.js?v=11300"></script>
-<script src="app.js?v=11300"></script>
-<script src="podcasts.js?v=11300"></script>
-<script src="diagnostics.js?v=11300"></script>
+<script src="stations-data.js?v=11400"></script>
+<script src="buscador-radios.js?v=11400"></script>
+<script src="app.js?v=11400"></script>
+<script src="podcasts.js?v=11400"></script>
+<script src="diagnostics.js?v=11400"></script>
 </body>
 </html>

@@ -124,7 +124,19 @@ function shape(data, { meta, limit }) {
     const ep = latest
       ? { id: latest.id, title: latest.title, date: latest.date, audioUrl: latest.audioUrl, pageUrl: latest.pageUrl }
       : null;
-    return { feed: { ...data.feed, description: String(data.feed.description || '').slice(0, 600) }, latest: ep, count: data.episodes.length };
+    // Fechas (ms) de los 100 episodios más recientes: la web cuenta cuántos son
+    // nuevos desde la última vez que abriste el podcast (el número de la portada).
+    const recent = data.episodes
+      .map(e => dateValue(e.date))
+      .filter(Boolean)
+      .sort((a, b) => b - a)
+      .slice(0, 100);
+    return {
+      feed: { ...data.feed, description: String(data.feed.description || '').slice(0, 600) },
+      latest: ep,
+      count: data.episodes.length,
+      recent
+    };
   }
   if (limit > 0 && data.episodes.length > limit) {
     const eps = [...data.episodes].sort((a, b) => dateValue(b.date) - dateValue(a.date)).slice(0, limit);
