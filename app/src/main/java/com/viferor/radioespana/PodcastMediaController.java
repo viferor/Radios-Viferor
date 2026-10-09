@@ -324,16 +324,15 @@ public final class PodcastMediaController {
         }
         Notification n = b.build();
         if (playing) {
-            // Si el servicio ya está en primer plano basta con actualizar su notificación;
-            // solo se (re)arranca cuando no está en marcha.
-            if (MediaPlaybackService.isRunning()) {
-                if (canShow) notifications.notify(NOTIFICATION_ID, n);
-            } else if (!MediaPlaybackService.show(activity, NOTIFICATION_ID, n) && canShow) {
+            // show() actualiza la notificación si el servicio ya está en primer plano
+            // (también durante el margen de pausa) o lo arranca si no lo está.
+            if (!MediaPlaybackService.show(activity, NOTIFICATION_ID, n) && canShow) {
                 notifications.notify(NOTIFICATION_ID, n);
             }
-        } else {
-            if (canShow) notifications.notify(NOTIFICATION_ID, n);
-            MediaPlaybackService.pause(activity);
+        } else if (MediaPlaybackService.isRunning()) {
+            MediaPlaybackService.pause(activity, NOTIFICATION_ID, n);
+        } else if (canShow) {
+            notifications.notify(NOTIFICATION_ID, n);
         }
     }
 

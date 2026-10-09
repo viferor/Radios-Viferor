@@ -1122,3 +1122,20 @@ html.dark-mode .pod-actions .pod-fav.on{background:#3a2f12;color:#ffe08a}
 .pod-mine-panel .pod-mine-modes button{display:block;width:100%;min-height:44px;text-align:center!important;border:1px solid #ddd!important;background:#fff!important;border-radius:10px!important;padding:8px 6px!important;font-weight:800!important;font-size:.8rem!important;color:var(--text);cursor:pointer}
 html.dark-mode .pod-mine-panel{background:#15191e;border-color:#353c44}
 html.dark-mode .pod-mine-panel select,html.dark-mode .pod-mine-panel .pod-mine-modes button{background:#1a1f25!important;border-color:#353c44!important;color:#f5f7f9}
+
+/* 1.13.0 — Botón ▶/⏸ propio de la radio (sin los controles nativos del reproductor) */
+.player-controls{display:flex;align-items:center;gap:10px}
+.radio-play-btn{flex:0 0 48px;width:48px;height:48px;border-radius:50%;border:0;background:var(--primary);color:#fff;font-size:1.25rem;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(211,47,47,.35);cursor:pointer}
+.radio-play-btn:disabled{background:#c9ced3;box-shadow:none}
+.radio-play-btn:active{transform:scale(.95)}
+.radio-live{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;font-size:.78rem;font-weight:800;color:var(--subtext);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.radio-live-dot{flex:0 0 9px;width:9px;height:9px;border-radius:50%;background:#b8bec4}
+.radio-live-dot[data-state=live]{background:#e53935;animation:rvpulse 1.4s ease-in-out infinite}
+.radio-live-dot[data-state=wait]{background:#f2a900}
+@keyframes rvpulse{0%,100%{opacity:1}50%{opacity:.35}}
+.player-controls audio{display:none!important}
+html.dark-mode .radio-play-btn:disabled{background:#3a4148}
+.player-controls .radio-play-btn{flex:0 0 46px!important;width:46px!important;height:46px!important;min-width:46px!important;min-height:46px!important;padding:0!important;border:0!important;border-radius:50%!important;background:var(--primary)!important;color:#fff!important;font-size:1.15rem!important;line-height:1!important}
+.player-controls .radio-play-btn:disabled{background:#c9ced3!important}
+html.dark-mode .player-controls .radio-play-btn{background:var(--primary)!important;color:#fff!important;border:0!important}
+html.dark-mode .player-controls .radio-play-btn:disabled{background:#3a4148!important}

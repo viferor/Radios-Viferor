@@ -645,14 +645,115 @@ let radioPollingFor = null;
 // false es interna (cambio de fuente, corte detectado) y no del usuario.
 let radioWasPlaying = false;
 let radioReconnectPending = false;
+// --- Interrupciones del sistema ------------------------------------------------
+// Una notificación con sonido, una llamada o el asistente de voz hacen que el
+// WebView pause el audio. Antes eso se trataba como si lo hubiera pausado el
+// usuario: se avisaba a Android, el servicio en primer plano se soltaba y, ya en
+// segundo plano, Android no dejaba recuperarlo (la radio acababa cortándose).
+// Ahora se distingue: pausa del usuario → en pausa; pausa del sistema → se mantiene
+// «sonando» y se reanuda sola cuando termina la interrupción.
+window.__rvLastGesture = 0;
+['pointerdown', 'keydown'].forEach(t =>
+  document.addEventListener(t, () => (window.__rvLastGesture = Date.now()), { capture: true, passive: true })
+);
+window.rvPausaDelUsuario = function () {
+  return !document.hidden && Date.now() - window.__rvLastGesture < 1500;
+};
+// ¿Se puede volver a sonar? No durante una llamada ni mientras otra app suena.
+window.rvPuedeReanudar = function (elapsed) {
+  try {
+    if (typeof window.Android?.canResumeAudio === 'function') return !!window.Android.canResumeAudio();
+  } catch {}
+  return elapsed > 5000; // APK antiguo: se espera un poco más
+};
+const RV_INTERRUPCION_MAX = 15 * 60 * 1000;
+let radioInterrupted = 0;
+let radioInterruptTimer = null;
+function finInterrupcionRadio() {
+  radioInterrupted = 0;
+  clearInterval(radioInterruptTimer);
+  radioInterruptTimer = null;
+}
+function iniciarInterrupcionRadio() {
+  radioInterrupted = Date.now();
+  clearRadioWatchdog();
+  clearTimeout(reconnectTimer);
+  radioReconnectPending = false;
+  statusEl.textContent = '⏸ Interrumpida · se reanudará sola';
+  clearInterval(radioInterruptTimer);
+  radioInterruptTimer = setInterval(() => {
+    if (!radioInterrupted || !currentStation) return finInterrupcionRadio();
+    if (!audio.paused) return finInterrupcionRadio();
+    const t = Date.now() - radioInterrupted;
+    if (t > RV_INTERRUPCION_MAX) {
+      // Demasiado tiempo: queda en pausa normal.
+      finInterrupcionRadio();
+      radioUserPaused = true;
+      stopRadioPolling();
+      statusEl.textContent = '⏸ En pausa';
+      saveRadioResume(false);
+      window.__radioMediaStarted = false;
+      syncRadioAndroidMedia();
+      return;
+    }
+    // Se deja un momento para que el propio WebView reanude; si no lo hace, se
+    // reconecta desde cero (en directo, mejor que seguir con un búfer antiguo).
+    if (t >= 2500 && window.rvPuedeReanudar(t)) {
+      finInterrupcionRadio();
+      reproducirRadio(currentStation).catch(() => {});
+    }
+  }, 1500);
+}
 // «Activa» = suena, está conectando o espera para reconectar. Mientras lo esté,
 // Android mantiene el servicio en primer plano; si se avisara de «pausa» durante
 // un corte, en segundo plano ya no se podría volver a arrancar.
+// Botón ▶/⏸ propio (sustituye a los controles nativos, inútiles en directo y en
+// los que no se puede saber si la pausa la hizo el usuario).
+function actualizarBotonRadio() {
+  const btn = document.getElementById('btnRadioPlay');
+  const live = document.getElementById('radioLiveText');
+  const dot = document.querySelector('.radio-live-dot');
+  if (!btn) return;
+  let icon = '▶',
+    label = 'Reproducir',
+    txt = currentStation ? 'En pausa' : 'Elige una emisora',
+    state = 'off';
+  if (currentStation && (radioConnecting || radioReconnectPending)) {
+    icon = '⏳';
+    label = 'Conectando… (pulsa para parar)';
+    txt = 'Conectando…';
+    state = 'wait';
+  } else if (currentStation && radioInterrupted) {
+    icon = '⏸';
+    label = 'Pausar';
+    txt = 'Interrumpida';
+    state = 'wait';
+  } else if (currentStation && !audio.paused) {
+    icon = '⏸';
+    label = 'Pausar';
+    txt = 'En directo';
+    state = 'live';
+  }
+  btn.textContent = icon;
+  btn.setAttribute('aria-label', label);
+  btn.disabled = !currentStation;
+  if (live) live.textContent = txt;
+  if (dot) dot.dataset.state = state;
+}
+function pulsarBotonRadio() {
+  if (!currentStation) return;
+  if (!audio.paused || radioConnecting || radioReconnectPending || radioInterrupted) {
+    window.viferorNativeRadioPause();
+  } else {
+    reanudarRadio();
+  }
+  actualizarBotonRadio();
+}
 function radioActiva() {
   return (
     !!currentStation &&
     !radioUserPaused &&
-    (!audio.paused || radioConnecting || radioReconnectPending)
+    (!audio.paused || radioConnecting || radioReconnectPending || !!radioInterrupted)
   );
 }
 
@@ -776,6 +877,7 @@ function startRadioPolling(s, streamUrl) {
 async function reproducirRadio(s, opciones = {}) {
   if (!s) return;
   const token = ++radioToken;
+  finInterrupcionRadio();
   radioWasPlaying = false;
   radioConnecting = true;
   clearTimeout(reconnectTimer);
@@ -929,6 +1031,7 @@ function radioTextoNotificacion() {
   return radioNow.line || '🎵 En directo';
 }
 function renderRadioNow() {
+  actualizarBotonRadio();
   const s = radioNow.song,
     p = radioNow.program,
     next = radioNow.upcoming[0];
@@ -1155,6 +1258,7 @@ window.viferorNativeRadioPlay = () => {
 };
 window.viferorNativeRadioPause = () => {
   try {
+    finInterrupcionRadio();
     radioUserPaused = true;
     clearTimeout(reconnectTimer);
     radioReconnectPending = false;
@@ -1579,6 +1683,7 @@ function init() {
   // sondeo de canción/programa y la vigilancia de cortes.
   audio.addEventListener('playing', () => {
     if (!currentStation || radioConnecting || !audio.currentSrc) return;
+    finInterrupcionRadio();
     radioWasPlaying = true;
     radioUserPaused = false;
     clearTimeout(reconnectTimer);
@@ -1592,6 +1697,11 @@ function init() {
     // como pausa del usuario: esas sí deben reconectar.
     const internal = radioConnecting || !radioWasPlaying;
     radioWasPlaying = false;
+    // Pausa del sistema (notificación, llamada…): no se trata como pausa del usuario.
+    if (currentStation && !internal && !radioUserPaused && !window.rvPausaDelUsuario()) {
+      iniciarInterrupcionRadio();
+      return;
+    }
     if (currentStation && !internal) {
       radioUserPaused = true;
       clearTimeout(reconnectTimer);
@@ -1690,6 +1800,12 @@ function init() {
   cargarCatalogoNacional();
   // Tocar el estado la reanuda si está parada; tocar la emisora o lo que suena
   // abre el panel «Ahora suena» (artista, título, programa, historial…).
+  document.getElementById('btnRadioPlay')?.addEventListener('click', e => {
+    e.stopPropagation();
+    pulsarBotonRadio();
+  });
+  ['play', 'playing', 'pause', 'waiting', 'emptied'].forEach(t => audio.addEventListener(t, actualizarBotonRadio));
+  setInterval(actualizarBotonRadio, 2000);
   statusEl?.addEventListener('click', e => {
     if (currentStation && audio.paused) {
       e.stopPropagation();
@@ -1722,11 +1838,11 @@ function init() {
   }, 30000);
 }
 audio.addEventListener('error', () => {
-  if (currentStation && audio.paused && !radioConnecting && !radioUserPaused) scheduleRadioReconnect();
+  if (currentStation && audio.paused && !radioConnecting && !radioUserPaused && !radioInterrupted) scheduleRadioReconnect();
 });
 window.addEventListener('online', () => {
   // Al recuperar la red se reintenta desde cero, aunque se hubieran agotado los intentos.
-  if (currentStation && audio.paused && !radioUserPaused && !radioConnecting) {
+  if (currentStation && audio.paused && !radioUserPaused && !radioConnecting && !radioInterrupted) {
     reconnectAttempts = 0;
     scheduleRadioReconnect();
   }

@@ -41,7 +41,10 @@ public class PodcastCheckJobService extends JobService {
     private static final String PREF_PODCAST_SUBS = "podcast_subscriptions_json";
     private static final String PREF_INITIALIZED = "podcast_notifications_initialized";
     private static final String PREF_LAST_PREFIX = "podcast_last_";
-    private static final String CHANNEL_ID = "podcast_new_episodes";
+    // Canal silencioso: un aviso de episodio nuevo no debe cortar la radio que suena.
+    // (El canal antiguo tenía sonido y Android no deja cambiarlo: se usa uno nuevo.)
+    private static final String CHANNEL_ID = "podcast_new_episodes_silent";
+    private static final String OLD_CHANNEL_ID = "podcast_new_episodes";
     private static final int MAX_NOTIFICATIONS = 5;
 
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -121,6 +124,7 @@ public class PodcastCheckJobService extends JobService {
                 .setContentTitle("Nuevo episodio · " + (TextUtils.isEmpty(sub.title) ? "Podcast" : sub.title))
                 .setContentText(TextUtils.isEmpty(episode) ? "Hay un episodio nuevo" : episode)
                 .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
                 .setContentIntent(pi);
         nm.notify(id, b.build());
     }
@@ -129,8 +133,13 @@ public class PodcastCheckJobService extends JobService {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) {
-            nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID, "Nuevos episodios",
-                    NotificationManager.IMPORTANCE_DEFAULT));
+            try { nm.deleteNotificationChannel(OLD_CHANNEL_ID); } catch (Exception ignored) {}
+            NotificationChannel c = new NotificationChannel(CHANNEL_ID, "Nuevos episodios",
+                    NotificationManager.IMPORTANCE_DEFAULT);
+            c.setSound(null, null);
+            c.enableVibration(false);
+            c.setDescription("Aviso silencioso cuando un podcast al que estás suscrito publica un episodio");
+            nm.createNotificationChannel(c);
         }
     }
 

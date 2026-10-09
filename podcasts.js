@@ -4,6 +4,37 @@ const PODCAST_RESUME_KEY = 'radios_viferor_podcast_resume_v3';
 const PLAYBACK_RESUME_KEY = 'radios_viferor_playback_resume_v1';
 const PODCAST_PLAY_COUNTS_KEY = 'radios_viferor_podcast_play_counts_v1';
 let podcastClosing = false;
+// Interrupciones del sistema (notificación, llamada…): igual que en la radio, la
+// pausa no se trata como del usuario y el episodio se reanuda solo donde estaba.
+let podcastUserPaused = false;
+let podcastInterrupted = 0;
+let podcastInterruptTimer = null;
+function finInterrupcionPodcast() {
+  podcastInterrupted = 0;
+  clearInterval(podcastInterruptTimer);
+  podcastInterruptTimer = null;
+}
+function iniciarInterrupcionPodcast(a) {
+  podcastInterrupted = Date.now();
+  clearInterval(podcastInterruptTimer);
+  podcastInterruptTimer = setInterval(() => {
+    if (!podcastInterrupted || !podcastState.current) return finInterrupcionPodcast();
+    if (!a.paused) return finInterrupcionPodcast();
+    const t = Date.now() - podcastInterrupted;
+    if (t > 15 * 60 * 1000) {
+      finInterrupcionPodcast();
+      podcastUserPaused = true;
+      savePodcastResume(false);
+      syncPodcastAndroidMedia(true);
+      updatePodcastPlayerUI();
+      return;
+    }
+    if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
+      finInterrupcionPodcast();
+      a.play().catch(() => {});
+    }
+  }, 1500);
+}
 let podcastPauseTimer = null;
 const podcastState = {
   subs: [],
@@ -1417,7 +1448,7 @@ function syncPodcastAndroidMedia(force = false) {
     if ((radioAudio && !radioAudio.paused && !radioAudio.ended) || window.__radioMediaStarted) return;
     const d = Number.isFinite(a.duration) ? a.duration : 0;
     const pos = Number.isFinite(a.currentTime) ? a.currentTime : 0;
-    const playing = !a.paused && !a.ended;
+    const playing = (!a.paused && !a.ended) || !!podcastInterrupted;
     if (force || !window.__podMediaStarted) {
       if (typeof window.Android.startPodcastMedia === 'function') {
         window.__podMediaStarted = true;
@@ -1436,10 +1467,13 @@ function syncPodcastAndroidMedia(force = false) {
   } catch {}
 }
 window.viferorNativePodcastPlay = () => {
+  podcastUserPaused = false;
   const a = $p('podcastAudio');
   if (a) a.play().catch(() => {});
 };
 window.viferorNativePodcastPause = () => {
+  finInterrupcionPodcast();
+  podcastUserPaused = true;
   const a = $p('podcastAudio');
   if (a) a.pause();
 };
@@ -1489,8 +1523,14 @@ function togglePodcastMute() {
 function togglePodcastPlay() {
   const a = $p('podcastAudio');
   if (!a || !podcastState.current) return;
-  if (a.paused) a.play().catch(() => {});
-  else a.pause();
+  if (a.paused || podcastInterrupted) {
+    finInterrupcionPodcast();
+    podcastUserPaused = false;
+    a.play().catch(() => {});
+  } else {
+    podcastUserPaused = true; // pausa explícita del usuario
+    a.pause();
+  }
   savePodcastResume();
   updatePodcastPlayerUI();
 }
@@ -1614,6 +1654,15 @@ function restoreLastPlayback() {
     try {
       autoplay = localStorage.getItem('radios_viferor_autoresume') === '1';
     } catch {}
+    // ?autoresume=1: Android ha recreado el WebView (el sistema lo cerró) y debe seguir sonando.
+    const qs = new URLSearchParams(location.search);
+    if (qs.has('autoresume')) {
+      autoplay = true;
+      qs.delete('autoresume');
+      try {
+        history.replaceState(history.state, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash);
+      } catch {}
+    }
     if (chosen.type === 'podcast' && chosen.episode) {
       podcastState.current = chosen.episode;
       podcastState.queue = [chosen.episode, ...podcastState.queue.filter(x => x.id !== chosen.episode.id)];
@@ -1776,8 +1825,18 @@ function initPodcasts() {
   });
   pa.addEventListener('pause', () => {
     flushPodcastProgress(true);
+    if (podcastState.current && !pa.ended && !podcastUserPaused && !podcastClosing && !(window.rvPausaDelUsuario?.() ?? true)) {
+      // Pausa del sistema: Android sigue viéndolo como «sonando» y se reanuda sola.
+      iniciarInterrupcionPodcast(pa);
+      updatePodcastPlayerUI();
+      return;
+    }
     syncPodcastAndroidMedia(true);
     updatePodcastPlayerUI();
+  });
+  pa.addEventListener('playing', () => {
+    finInterrupcionPodcast();
+    podcastUserPaused = false;
   });
   pa.addEventListener('ended', () => {
     try {
@@ -1848,6 +1907,7 @@ function initPodcasts() {
     savePodcastResume(true);
   });
   pa.addEventListener('pause', () => {
+    if (podcastInterrupted) return; // interrupción: se mantiene como «sonando» para reanudar
     savePodcastResume();
     clearTimeout(podcastPauseTimer);
     if (!podcastClosing)

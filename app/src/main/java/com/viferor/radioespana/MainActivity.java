@@ -52,7 +52,17 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         activeInstance = this;
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        createNotificationChannel();
+        PodcastNotificationScheduler.schedule(this);
+        podcastMediaController = PodcastMediaController.get(this);
+        setupWebView(START_URL);
+        String initialAction = getIntent() == null ? null : getIntent().getAction();
+        if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
+        handleNotificationIntent(getIntent());
+        handleWidgetOpenIntent(getIntent());
+    }
 
+    private void setupWebView(String url) {
         webView = new WebView(this);
         setContentView(webView);
 
@@ -69,16 +79,14 @@ public class MainActivity extends Activity {
         settings.setUserAgentString(settings.getUserAgentString() + " RadiosViferor/" + appVersionName());
 
         webView.setWebViewClient(new AppWebViewClient());
-        createNotificationChannel();
-        PodcastNotificationScheduler.schedule(this);
-        podcastMediaController = PodcastMediaController.get(this);
+        // El proceso del WebView (que es el que reproduce) mantiene prioridad alta
+        // aunque la app no se vea, para que Android no lo mate antes que al resto.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try { webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); } catch (Exception ignored) {}
+        }
         webView.addJavascriptInterface(new AndroidBridge(), "Android");
         webView.setWebChromeClient(new RadioChromeClient());
-        webView.loadUrl(START_URL);
-        String initialAction = getIntent() == null ? null : getIntent().getAction();
-        if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
-        handleNotificationIntent(getIntent());
-        handleWidgetOpenIntent(getIntent());
+        webView.loadUrl(url);
     }
 
     @Override
@@ -142,6 +150,17 @@ public class MainActivity extends Activity {
             return handleNavigation(url);
         }
 
+        /**
+         * Si Android mata el proceso del WebView (falta de memoria), por defecto se
+         * cerraba la app entera. Ahora se crea un WebView nuevo y se reanuda lo que
+         * estaba sonando.
+         */
+        @Override
+        public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            recreateWebView(true);
+            return true;
+        }
+
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             bridgeTrusted = isAppUrl(url);
@@ -153,6 +172,21 @@ public class MainActivity extends Activity {
             bridgeTrusted = isAppUrl(url);
             super.doUpdateVisitedHistory(view, url, isReload);
         }
+    }
+
+    private void recreateWebView(boolean autoResume) {
+        runOnUiThread(() -> {
+            try {
+                if (webView != null) {
+                    android.view.ViewGroup parent = (android.view.ViewGroup) webView.getParent();
+                    if (parent != null) parent.removeView(webView);
+                    try { webView.destroy(); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+            webView = null;
+            bridgeTrusted = false;
+            setupWebView(autoResume ? START_URL + "?autoresume=1" : START_URL);
+        });
     }
 
     private boolean handleNavigation(String url) {
@@ -429,6 +463,25 @@ public class MainActivity extends Activity {
                         .edit().putString(PREF_PODCAST_SUBS, subscriptionsJson == null ? "[]" : subscriptionsJson).apply();
                 PodcastNotificationScheduler.schedule(MainActivity.this);
             } catch (Exception ignored) {}
+        }
+
+        /**
+         * ¿Se puede reanudar el audio tras una interrupción? No durante una llamada ni
+         * mientras otra app esté sonando (navegador GPS, asistente de voz, música…).
+         */
+        @JavascriptInterface
+        public boolean canResumeAudio() {
+            if (!bridgeTrusted) return false;
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am == null) return true;
+                int mode = am.getMode();
+                if (mode == android.media.AudioManager.MODE_IN_CALL || mode == android.media.AudioManager.MODE_IN_COMMUNICATION
+                        || mode == android.media.AudioManager.MODE_RINGTONE) return false;
+                return !am.isMusicActive();
+            } catch (Exception e) {
+                return true;
+            }
         }
 
         @JavascriptInterface
