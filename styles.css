@@ -1254,3 +1254,17 @@ html.dark-mode .pod-cat-head small{background:#2b333b;color:#c3ccd4}
 .pod-date{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
 .pod-ep-time{font-weight:700;color:#55606a;font-variant-numeric:tabular-nums}
 html.dark-mode .pod-ep-time{color:#c3ccd4}
+
+/* 1.15.2 · La barra de radio siempre visible y favoritas sin estirarse en tableta */
+/* Si el WebView no entiende 100dvh, el body crecía con la lista de favoritas y la
+   barra del reproductor quedaba fuera de la pantalla. 100% es la base segura. */
+html{height:100%}
+body{height:100%;height:100dvh;min-height:0}
+.app-header,.app-version-footer,.player-bar{flex-shrink:0!important}
+.view{min-height:0}
+.view-fav .fav-grid{min-height:0}
+/* Las filas ya no ocupan el hueco libre: con pocas favoritas cada tarjeta
+   mantiene su altura natural en lugar de alargarse hasta la barra. */
+.fav-grid{grid-auto-rows:minmax(110px,auto)!important;align-content:start}
+.error-modal-card,.update-modal-card{max-height:85vh;max-height:85dvh}
+.pod-expanded-card{max-height:94vh;max-height:94dvh}
