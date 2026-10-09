@@ -325,7 +325,8 @@ export default async function handler(req, res) {
     if (!(genre in GENRES)) genre = 'Todas';
     const limit = Math.min(100, Math.max(1, Number(u.searchParams.get('limit') || 60)));
     if (u.searchParams.get('info') === '1') return res.status(200).json({ sources: availableSources() });
-    let source = clean(u.searchParams.get('source') || 'all').toLowerCase();
+    // «catalog» (no «source»: algunos intermediarios quitan ese parámetro de la URL).
+    let source = clean(u.searchParams.get('catalog') || u.searchParams.get('source') || 'all').toLowerCase();
     if (!['all', 'apple', 'fyyd', 'podcastindex'].includes(source)) source = 'all';
     if (source === 'podcastindex' && !availableSources().includes('podcastindex'))
       return res.status(200).json({ items: [], error: 'Podcast Index no está configurado', sources: availableSources() });

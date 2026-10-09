@@ -1041,7 +1041,7 @@ async function searchPodcasts() {
     u.searchParams.set('country', country);
     u.searchParams.set('language', language);
     u.searchParams.set('limit', '60');
-    u.searchParams.set('source', podcastSource);
+    u.searchParams.set('catalog', podcastSource);
     const r = await fetch(u);
     const d = await r.json();
     if (!r.ok) throw Error(d.error || 'Error');
