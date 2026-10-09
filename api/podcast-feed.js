@@ -154,6 +154,10 @@ function parse(xml, feedUrl) {
       ? tag((channel.match(/<image\b[^>]*>[\s\S]*?<\/image>/i) || [])[0], 'url')
       : '');
   const author = tag(channel, 'itunes:author') || tag(channel, 'author');
+  // Categoría (iTunes): la primera <itunes:category text="…"> de la cabecera del canal.
+  const head = channel.split(/<(?:item|entry)\b/i)[0];
+  const catM = head.match(/<itunes:category\b[^>]*\btext=["']([^"']+)["']/i);
+  const category = catM ? decodeEntities(catM[1]).trim() : tag(head, 'category');
   let blocks = [...(channel.match(/<item\b[\s\S]*?<\/item>/gi) || [])];
   if (!blocks.length) blocks = [...(xml.match(/<entry\b[\s\S]*?<\/entry>/gi) || [])];
   const episodes = blocks
@@ -180,7 +184,7 @@ function parse(xml, feedUrl) {
       explicit: tag(b, 'itunes:explicit')
     }))
     .filter(e => e.audioUrl);
-  return { feed: { title, description: desc, author, image, feedUrl }, episodes };
+  return { feed: { title, description: desc, author, image, category, feedUrl }, episodes };
 }
 export default async function handler(req, res) {
   if (rateLimited(req, res, 'feed', 600)) return;

@@ -365,6 +365,8 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
   const now = Date.now();
   const pending = items.filter(p => {
     if (!podcastFeedUrl(p)) return false;
+    // Suscripciones sin categoría (p. ej. importadas por OPML): se lee la del feed una vez.
+    if (!p.genre && !p.categoryChecked && isSubscribed(p)) return true;
     const cached = podcastActivityCache.get(podcastActivityKey(p));
     if (cached && Number.isFinite(cached.t) && now - cached.t <= maxAge) return false;
     // Lo comprobado hace poco y guardado en la suscripción también vale.
@@ -382,6 +384,17 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
       for (const cur of targets) {
         cur.latestEpisodeCheckedAt = Date.now();
         if (!x) continue;
+        if (!cur.categoryChecked) {
+          cur.categoryChecked = 1;
+          changed = true;
+        }
+        if (!cur.genre && x.feed.category) {
+          const cat = podcastCategoryEs(x.feed.category);
+          if (cat) {
+            cur.genre = cat;
+            changed = true;
+          }
+        }
         // Episodios nuevos: publicados después de la última vez que abriste el podcast
         // (o desde que te suscribiste). En suscripciones importadas se empieza en 0.
         if (x.recent && isSubscribed(cur)) {
@@ -444,10 +457,82 @@ function getPodcastLatestDate(p) {
   const cached = podcastActivityCache.get(podcastActivityKey(p));
   return podcastDateValue(cached?.latest) || 0;
 }
+// Categorías: Apple ya las da en español; las de los feeds (itunes:category), fyyd y
+// Podcast Index vienen en inglés y se traducen para agruparlas juntas.
+const PODCAST_CATEGORY_ES = {
+  arts: 'Arte',
+  business: 'Negocios',
+  comedy: 'Comedia',
+  education: 'Educación',
+  fiction: 'Ficción',
+  government: 'Gobierno',
+  'health & fitness': 'Salud y forma física',
+  history: 'Historia',
+  'kids & family': 'Niños y familia',
+  leisure: 'Ocio',
+  music: 'Música',
+  news: 'Noticias',
+  'religion & spirituality': 'Religión y espiritualidad',
+  science: 'Ciencia',
+  'society & culture': 'Sociedad y cultura',
+  sports: 'Deportes',
+  technology: 'Tecnología',
+  'true crime': 'Crímenes reales',
+  'tv & film': 'TV y cine',
+  'games & hobbies': 'Ocio',
+  'science & medicine': 'Ciencia',
+  'news & politics': 'Noticias',
+  'personal journals': 'Sociedad y cultura',
+  'tv and film': 'TV y cine',
+  'sports & recreation': 'Deportes',
+  religion: 'Religión y espiritualidad',
+  spirituality: 'Religión y espiritualidad',
+  christianity: 'Religión y espiritualidad',
+  // Variantes en español de Apple
+  'salud y forma fisica': 'Salud y forma física',
+  'salud y bienestar': 'Salud y forma física',
+  'religion y espiritualidad': 'Religión y espiritualidad',
+  'crimenes reales': 'Crímenes reales',
+  'tv y cine': 'TV y cine',
+  'ninos y familia': 'Niños y familia',
+  'sociedad y cultura': 'Sociedad y cultura',
+  'educacion': 'Educación',
+  'tecnologia': 'Tecnología',
+  'musica': 'Música',
+  'ficcion': 'Ficción'
+};
+const PODCAST_NO_CATEGORY = 'Sin categoría';
+function podcastCategoryEs(v) {
+  const raw = podcastText(String(v || '')).trim();
+  if (!raw || /^podcasts?$/i.test(raw)) return '';
+  const k = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+and\s+/g, ' & ')
+    .replace(/\s+/g, ' ');
+  return PODCAST_CATEGORY_ES[k] || PODCAST_CATEGORY_ES[raw.toLowerCase()] || raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+function podcastCategoryOf(p) {
+  return podcastCategoryEs(p?.genre || (Array.isArray(p?.genres) ? p.genres[0] : '')) || PODCAST_NO_CATEGORY;
+}
+function comparePodcastCategory(a, b) {
+  const ca = podcastCategoryOf(a),
+    cb = podcastCategoryOf(b);
+  if (ca === cb) return 0;
+  if (ca === PODCAST_NO_CATEGORY) return 1;
+  if (cb === PODCAST_NO_CATEGORY) return -1;
+  return ca.localeCompare(cb, 'es', { sensitivity: 'base' });
+}
 function getSortedPodcastSubs() {
   const arr = [...podcastState.subs],
     mode = $p('podMineSort')?.value || 'name';
   return arr.sort((a, b) => {
+    if (mode === 'category') {
+      const d = comparePodcastCategory(a, b);
+      if (d) return d;
+      return String(a.title || '').localeCompare(String(b.title || ''), 'es', { sensitivity: 'base' });
+    }
     if (mode === 'favs') {
       const d = Number(isPodcastFav(b)) - Number(isPodcastFav(a));
       if (d) return d;
@@ -752,10 +837,31 @@ function renderPodcastHome(fromHistory = false, inline = false) {
     });
     return;
   }
-  const grid = document.createElement('div');
-  grid.className = 'pod-tiles pod-subs-tiles';
-  getSortedPodcastSubs().forEach(p => grid.appendChild(podcastTile(p)));
-  root.append(grid);
+  const sorted = getSortedPodcastSubs();
+  if ((sort?.value || 'name') === 'category') {
+    // Agrupadas: un encabezado por categoría y su cuadrícula debajo.
+    let grid = null,
+      current = null;
+    sorted.forEach(p => {
+      const cat = podcastCategoryOf(p);
+      if (cat !== current) {
+        current = cat;
+        const n = sorted.filter(x => podcastCategoryOf(x) === cat).length;
+        const h = document.createElement('h3');
+        h.className = 'pod-cat-head';
+        h.innerHTML = `<span>${pEsc(cat)}</span><small>${n}</small>`;
+        grid = document.createElement('div');
+        grid.className = 'pod-tiles pod-subs-tiles';
+        root.append(h, grid);
+      }
+      grid.appendChild(podcastTile(p));
+    });
+  } else {
+    const grid = document.createElement('div');
+    grid.className = 'pod-tiles pod-subs-tiles';
+    sorted.forEach(p => grid.appendChild(podcastTile(p)));
+    root.append(grid);
+  }
   // Se actualiza cada hora como mucho: fecha del último episodio, portada y el
   // número de episodios nuevos de cada suscripción.
   refreshPodcastActivity(podcastState.subs, {
