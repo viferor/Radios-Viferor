@@ -296,6 +296,20 @@ export default async function handler(req, res) {
         .sort((a, b) => b.s - a.s)
         .map(o => o.it);
     }
+    // Apple a veces tiene el mismo podcast con dos identificadores (o dos URLs de
+    // feed): se deja solo el primero (el mejor situado) por título + autor y por feed.
+    {
+      const seenTA = new Set(),
+        seenFeed = new Set();
+      items = items.filter(it => {
+        const ta = norm(it.title) + '|' + norm(it.author);
+        const fd = String(it.feedUrl || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+        if (seenTA.has(ta) || (fd && seenFeed.has(fd))) return false;
+        seenTA.add(ta);
+        if (fd) seenFeed.add(fd);
+        return true;
+      });
+    }
     items = await filterLanguage(items, language, limit, deadline);
     const data = {
       items: items.map(({ pos, stores: _s, ...rest }) => rest),
