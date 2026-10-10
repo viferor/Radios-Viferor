@@ -20,6 +20,10 @@ y presets propios. **Auriculares**: correcciones de [AutoEq](https://github.com/
 (medición de Regan Cipher); el resto, unos 9.000 modelos, con `/api/autoeq` (índice y
 ParametricEQ.txt de GitHub). Ajustes en `radios_viferor_music_audio_v1`.
 
+**API.** El plan gratuito de Vercel admite 12 funciones: letras, traducción, significado, publicar
+y AutoEq van en una sola, `api/music.js`, que reparte según `vercel.json` (las rutas
+`/api/lyrics`, `/api/translate`… no cambian). Los manejadores están en `api/_*.js`.
+
 ## 1.19.0 — Favoritos y carpetas incluidas/excluidas en Mi música
 
 **Favoritos** (`radios_viferor_music_favs_v1`): canciones (menú ⋯ o «☆ Favorita» en el

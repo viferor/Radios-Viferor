@@ -29,11 +29,14 @@
     }
   ],
   "functions": {
-    "api/song-meaning.js": {
+    "api/music.js": {
       "maxDuration": 60
-    },
-    "api/lyrics-publish.js": {
-      "maxDuration": 30
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:fn(lyrics|translate|song-meaning|lyrics-publish|autoeq)",
+      "destination": "/api/music?fn=:fn"
+    }
+  ]
 }
