@@ -21,13 +21,25 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.graphics.Bitmap;
+import org.json.JSONObject;
 import android.view.Window;
+import android.view.View;
+import android.content.Context;
 
 public class MainActivity extends Activity {
     private static final String START_URL = "https://radiosviferor.vercel.app/";
+    private static final String APP_HOST = "radiosviferor.vercel.app";
+    public static final String EXTRA_PODCAST_FEED_URL = "podcastFeedUrl";
+    static final String ACTION_OPEN_AUDIO = "com.viferor.radioespana.OPEN_AUDIO";
+    private volatile String pendingOpenAudio;
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int FILE_SAVE_REQUEST = 1002;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1003;
+    private static final int MUSIC_PERMISSION_REQUEST = 1004;
+    private static final String PREF_MUSIC_PERMISSION_ASKED = "music_permission_asked";
     private static final String NOTIFICATION_CHANNEL_ID = "general";
     private static final String PREFS_NAME = "radio_viferor_prefs";
     private static final String PREF_PODCAST_SUBS = "podcast_subscriptions_json";
@@ -36,17 +48,36 @@ public class MainActivity extends Activity {
     private static MainActivity activeInstance;
 
     private WebView webView;
+    // El puente «Android» solo responde mientras el WebView muestra la app.
+    private volatile boolean bridgeTrusted = false;
     private ValueCallback<Uri[]> filePathCallback;
     private String pendingSaveContent;
     private String pendingSaveMime;
+    private MusicDeleter musicDeleter;
+    private AudioOutputWatcher audioOutput;
+    private MusicEditor musicEditor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         activeInstance = this;
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        createNotificationChannel();
+        PodcastNotificationScheduler.schedule(this);
+        podcastMediaController = PodcastMediaController.get(this);
+        musicDeleter = new MusicDeleter(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        audioOutput = new AudioOutputWatcher(this, js -> { if (webView != null && bridgeTrusted) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        audioOutput.start();
+        musicEditor = new MusicEditor(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        setupWebView(START_URL);
+        String initialAction = getIntent() == null ? null : getIntent().getAction();
+        if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
+        handleNotificationIntent(getIntent());
+        if (!handleOpenAudioIntent(getIntent())) handleWidgetOpenIntent(getIntent());
+    }
 
-        webView = new WebView(this);
+    private void setupWebView(String url) {
+        webView = new AudioWebView(this);
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
@@ -59,24 +90,23 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " RadioEspana/1.4.38");
+        settings.setUserAgentString(settings.getUserAgentString() + " RadiosViferor/" + appVersionName());
 
-        webView.setWebViewClient(new WebViewClient());
-        createNotificationChannel();
-        PodcastNotificationScheduler.schedule(this);
-        podcastMediaController = PodcastMediaController.get(this);
+        webView.setWebViewClient(new AppWebViewClient());
+        // El proceso del WebView (que es el que reproduce) mantiene prioridad alta
+        // aunque la app no se vea, para que Android no lo mate antes que al resto.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try { webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); } catch (Exception ignored) {}
+        }
         webView.addJavascriptInterface(new AndroidBridge(), "Android");
         webView.setWebChromeClient(new RadioChromeClient());
-        webView.loadUrl(START_URL);
-        String initialAction = getIntent() == null ? null : getIntent().getAction();
-        if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
-        handleNotificationIntent(getIntent());
-        handleWidgetOpenIntent(getIntent());
+        webView.loadUrl(url);
     }
 
     @Override
     protected void onDestroy() {
         if (activeInstance == this) activeInstance = null;
+        if (audioOutput != null) audioOutput.stop();
         if (filePathCallback != null) {
             filePathCallback.onReceiveValue(null);
             filePathCallback = null;
@@ -98,6 +128,119 @@ public class MainActivity extends Activity {
         MainActivity a = activeInstance;
         if (a == null || a.webView == null) return false;
         a.runOnUiThread(() -> a.handleMediaControlAction(action));
+        return true;
+    }
+
+    private String appVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "0";
+        }
+    }
+
+    static boolean isAppUrl(String url) {
+        try {
+            Uri u = Uri.parse(url);
+            return "https".equalsIgnoreCase(u.getScheme()) && APP_HOST.equalsIgnoreCase(u.getHost());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Solo se navega dentro de la app. Cualquier otro enlace se abre fuera (navegador,
+     * app correspondiente), para que una página ajena nunca tenga acceso al puente.
+     */
+    /**
+     * WebView que no se da por "oculto" mientras suena algo. Al pasar la app a segundo
+     * plano Android manda GONE a la ventana; Chromium marca la pagina como oculta,
+     * baja la prioridad del renderer y rehace el audio, lo que provoca un corte breve.
+     * Mientras el servicio de reproduccion esta activo ignoramos ese cambio.
+     */
+    static class AudioWebView extends WebView {
+        AudioWebView(Context context) { super(context); }
+
+        @Override
+        protected void onWindowVisibilityChanged(int visibility) {
+            if (visibility != View.VISIBLE && MediaPlaybackService.isRunning()) return;
+            super.onWindowVisibilityChanged(visibility);
+        }
+    }
+
+    private class AppWebViewClient extends WebViewClient {
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (!request.isForMainFrame()) return false;
+            return handleNavigation(request.getUrl() == null ? "" : request.getUrl().toString());
+        }
+
+        @SuppressWarnings("deprecation")
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            return handleNavigation(url);
+        }
+
+        /**
+         * Si Android mata el proceso del WebView (falta de memoria), por defecto se
+         * cerraba la app entera. Ahora se crea un WebView nuevo y se reanuda lo que
+         * estaba sonando.
+         */
+        @Override
+        public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            recreateWebView(true);
+            return true;
+        }
+
+        /** «Mi música»: biblioteca, audio y carátulas del móvil (ver LocalMusic). */
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            Uri u = request == null ? null : request.getUrl();
+            if (u != null && "https".equalsIgnoreCase(u.getScheme()) && APP_HOST.equalsIgnoreCase(u.getHost())
+                    && u.getPath() != null && u.getPath().startsWith(LocalMusic.PREFIX)) {
+                return LocalMusic.handle(MainActivity.this, u, request.getRequestHeaders());
+            }
+            return super.shouldInterceptRequest(view, request);
+        }
+
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            bridgeTrusted = isAppUrl(url);
+            super.onPageStarted(view, url, favicon);
+        }
+
+        @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            bridgeTrusted = isAppUrl(url);
+            super.doUpdateVisitedHistory(view, url, isReload);
+        }
+    }
+
+    private void recreateWebView(boolean autoResume) {
+        runOnUiThread(() -> {
+            try {
+                if (webView != null) {
+                    android.view.ViewGroup parent = (android.view.ViewGroup) webView.getParent();
+                    if (parent != null) parent.removeView(webView);
+                    try { webView.destroy(); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+            webView = null;
+            bridgeTrusted = false;
+            setupWebView(autoResume ? START_URL + "?autoresume=1" : START_URL);
+        });
+    }
+
+    private boolean handleNavigation(String url) {
+        if (isAppUrl(url)) return false;
+        if ("about:blank".equals(url)) return false;
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            i.addCategory(Intent.CATEGORY_BROWSABLE);
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "No se pudo abrir el enlace", Toast.LENGTH_SHORT).show();
+        }
         return true;
     }
 
@@ -140,7 +283,44 @@ public class MainActivity extends Activity {
         setIntent(intent);
         if (intent != null) handleMediaControlAction(intent.getAction());
         handleNotificationIntent(intent);
-        handleWidgetOpenIntent(intent);
+        if (!handleOpenAudioIntent(intent)) handleWidgetOpenIntent(intent);
+    }
+
+    /** Audio o lista M3U abiertos desde otra app (ver OpenAudioActivity). */
+    private boolean handleOpenAudioIntent(Intent intent) {
+        if (intent == null || !ACTION_OPEN_AUDIO.equals(intent.getAction()) || intent.getData() == null) return false;
+        final Uri uri = intent.getData();
+        final String type = intent.getType();
+        intent.setAction(Intent.ACTION_MAIN); // que no se repita al girar la pantalla
+        new Thread(() -> {
+            String json;
+            try {
+                json = ExternalAudio.describe(this, uri, type).toString();
+            } catch (Exception e) {
+                json = "{\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}";
+            }
+            final String j = json;
+            runOnUiThread(() -> {
+                pendingOpenAudio = j;
+                deliverOpenAudio(0);
+            });
+        }, "open-audio").start();
+        return true;
+    }
+
+    /** Se entrega cuando la web está lista (si no, la web lo recoge con takeOpenedAudio). */
+    private void deliverOpenAudio(int attempt) {
+        final String j = pendingOpenAudio;
+        if (j == null || webView == null) return;
+        if (!bridgeTrusted) {
+            if (attempt < 40) webView.postDelayed(() -> deliverOpenAudio(attempt + 1), 500);
+            return;
+        }
+        webView.evaluateJavascript("(function(){if(!window.viferorOpenAudio)return 'no';window.viferorOpenAudio(" + j + ");return 'ok';})()", r -> {
+            if ("\"ok\"".equals(r)) {
+                if (j.equals(pendingOpenAudio)) pendingOpenAudio = null;
+            } else if (attempt < 40) webView.postDelayed(() -> deliverOpenAudio(attempt + 1), 500);
+        });
     }
 
     private void handleWidgetOpenIntent(Intent intent) {
@@ -151,6 +331,8 @@ public class MainActivity extends Activity {
         }
         final String js = "podcast".equalsIgnoreCase(section)
                 ? "window.switchToPodcasts&&window.switchToPodcasts();"
+                : "music".equalsIgnoreCase(section)
+                ? "window.switchToMusic&&window.switchToMusic();"
                 : "window.switchToRadios&&window.switchToRadios();";
         webView.postDelayed(() -> webView.evaluateJavascript(js, null), 1800);
         webView.postDelayed(() -> webView.evaluateJavascript(js, null), 3500);
@@ -159,16 +341,14 @@ public class MainActivity extends Activity {
 
     private void handleNotificationIntent(Intent intent) {
         if (intent == null) return;
-        String episodeUrl = intent.getStringExtra("podcastEpisodeUrl");
-        if (episodeUrl == null || episodeUrl.isEmpty() || webView == null) return;
-        String safe = JSONObjectEscape(episodeUrl);
-        webView.postDelayed(() -> webView.evaluateJavascript(
-                "window.openPodcastFromNotification && window.openPodcastFromNotification('" + safe + "');", null), 1200);
+        String feedUrl = intent.getStringExtra(EXTRA_PODCAST_FEED_URL);
+        // Compatibilidad con notificaciones creadas por versiones anteriores.
+        if (feedUrl == null || feedUrl.isEmpty()) feedUrl = intent.getStringExtra("podcastEpisodeUrl");
+        if (feedUrl == null || feedUrl.isEmpty() || webView == null) return;
+        final String js = "window.openPodcastFromNotification && window.openPodcastFromNotification(" + JSONObject.quote(feedUrl) + ");";
+        webView.postDelayed(() -> { if (webView != null) webView.evaluateJavascript(js, null); }, 1200);
+        intent.removeExtra(EXTRA_PODCAST_FEED_URL);
         intent.removeExtra("podcastEpisodeUrl");
-    }
-
-    private String JSONObjectEscape(String value) {
-        return value.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
     }
 
     @Override
@@ -243,28 +423,51 @@ public class MainActivity extends Activity {
 
     public void handleMediaControlAction(String action) {
         if (action == null) return;
-        boolean podcast = "podcast".equalsIgnoreCase(getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio"));
+        String section = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
+        // Podcasts y música comparten controles; cambia el nombre de las funciones web.
+        String p = "music".equalsIgnoreCase(section) ? "Music" : "podcast".equalsIgnoreCase(section) ? "Podcast" : null;
         switch (action) {
             case PodcastMediaController.ACTION_WIDGET_PLAY:
-                evalPodcastJavascript(podcast ? "window.viferorNativePodcastPlay&&window.viferorNativePodcastPlay();" : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); break;
+                evalPodcastJavascript(p != null ? fn(p, "Play", "") : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); break;
             case PodcastMediaController.ACTION_WIDGET_PAUSE:
-                evalPodcastJavascript(podcast ? "window.viferorNativePodcastPause&&window.viferorNativePodcastPause();" : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); break;
-            case PodcastMediaController.ACTION_WIDGET_BACK: if (podcast) evalPodcastJavascript("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(-15);"); break;
-            case PodcastMediaController.ACTION_WIDGET_FORWARD: if (podcast) evalPodcastJavascript("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(30);"); break;
-            case PodcastMediaController.ACTION_WIDGET_PREV: if (podcast) evalPodcastJavascript("window.viferorNativePodcastPrevious&&window.viferorNativePodcastPrevious();"); break;
-            case PodcastMediaController.ACTION_WIDGET_NEXT: if (podcast) evalPodcastJavascript("window.viferorNativePodcastNext&&window.viferorNativePodcastNext();"); break;
+                evalPodcastJavascript(p != null ? fn(p, "Pause", "") : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); break;
+            case PodcastMediaController.ACTION_WIDGET_BACK: if (p != null) evalPodcastJavascript(fn(p, "Seek", "-15")); break;
+            case PodcastMediaController.ACTION_WIDGET_FORWARD: if (p != null) evalPodcastJavascript(fn(p, "Seek", "30")); break;
+            case PodcastMediaController.ACTION_WIDGET_PREV: if (p != null) evalPodcastJavascript(fn(p, "Previous", "")); break;
+            case PodcastMediaController.ACTION_WIDGET_NEXT: if (p != null) evalPodcastJavascript(fn(p, "Next", "")); break;
         }
+    }
+
+    static String fn(String section, String name, String arg) {
+        String f = "window.viferorNative" + section + name;
+        return f + "&&" + f + "(" + arg + ");";
+    }
+
+    private void notifyWebMusicPermission(boolean granted) {
+        if (webView == null) return;
+        String js = "window.onAndroidMusicPermission && window.onAndroidMusicPermission(" + (granted ? "true" : "false") + ");";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void openAppSettingsNative() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception ignored) {}
     }
 
     private class AndroidBridge {
         @JavascriptInterface
         public void setPlaybackSection(String section) {
-            String safe = "podcast".equalsIgnoreCase(section) ? "podcast" : "radio";
+            if (!bridgeTrusted) return;
+            String safe = "podcast".equalsIgnoreCase(section) ? "podcast" : "music".equalsIgnoreCase(section) ? "music" : "radio";
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, safe).apply();
         }
 
         @JavascriptInterface
         public void startRadioMedia(String station, String track, String artwork, boolean playing) {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> {
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, "radio").apply();
                 if (podcastMediaController != null) podcastMediaController.startRadio(station, track, artwork, playing);
@@ -273,16 +476,29 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void updateRadioMedia(String station, String track, boolean playing) {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.updateRadio(station, track, playing); });
+        }
+
+        /** Lo que suena en la radio, por partes (APK 1.8+). */
+        @JavascriptInterface
+        public void updateRadioNowPlaying(String station, String artist, String title, String program, String artwork, boolean playing) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (podcastMediaController != null)
+                    podcastMediaController.updateRadioNowPlaying(station, artist, title, program, artwork, playing);
+            });
         }
 
         @JavascriptInterface
         public void stopRadioMedia() {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.stopRadio(); });
         }
 
         @JavascriptInterface
         public void startPodcastMedia(String title, String subtitle, String artwork, double durationSec, double positionSec, boolean playing) {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
@@ -291,21 +507,110 @@ public class MainActivity extends Activity {
             });
         }
 
+        // ---- «Mi música» (APK 1.10+) ----
+        @JavascriptInterface
+        public int musicApiVersion() {
+            return bridgeTrusted ? LocalMusic.API_VERSION : 0;
+        }
+
+        /** "granted", "ask" o "blocked" (denegado con «no volver a preguntar»). */
+        @JavascriptInterface
+        public String musicPermissionStatus() {
+            if (!bridgeTrusted) return "ask";
+            if (LocalMusic.hasPermission(MainActivity.this)) return "granted";
+            boolean asked = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_MUSIC_PERMISSION_ASKED, false);
+            if (asked && !shouldShowRequestPermissionRationale(LocalMusic.permissionName())) return "blocked";
+            return "ask";
+        }
+
+        @JavascriptInterface
+        public void requestMusicPermission() {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (LocalMusic.hasPermission(MainActivity.this)) {
+                    notifyWebMusicPermission(true);
+                    return;
+                }
+                if ("blocked".equals(musicPermissionStatus())) {
+                    Toast.makeText(MainActivity.this, "Activa el permiso «Música y audio» en los ajustes de la app", Toast.LENGTH_LONG).show();
+                    openAppSettingsNative();
+                    return;
+                }
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_MUSIC_PERMISSION_ASKED, true).apply();
+                requestPermissions(new String[]{LocalMusic.permissionName()}, MUSIC_PERMISSION_REQUEST);
+            });
+        }
+
+        /** Cambia el nombre del archivo y/o las etiquetas ID3: json {file, tags:{title, artist…}}. */
+        @JavascriptInterface
+        public void editMusicFile(String reqId, String id, String json) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> musicEditor.start(reqId, id, json));
+        }
+
+        /** Audio abierto desde otra app que aún no se ha entregado a la web (o ""). */
+        @JavascriptInterface
+        public String takeOpenedAudio() {
+            if (!bridgeTrusted) return "";
+            String j = pendingOpenAudio;
+            pendingOpenAudio = null;
+            return j == null ? "" : j;
+        }
+
+        /** Por dónde suena ahora: JSON {type, name} (speaker | wired | usb | bluetooth | other). */
+        @JavascriptInterface
+        public String audioOutput() {
+            return bridgeTrusted && audioOutput != null ? audioOutput.current() : "";
+        }
+
+        /** "system" si Android pide confirmación al borrar (11+), "app" si la tiene que pedir la web. */
+        @JavascriptInterface
+        public String musicDeleteMode() {
+            return bridgeTrusted ? MusicDeleter.mode() : "none";
+        }
+
+        /** Borra del móvil las canciones (ids de MediaStore separados por comas). */
+        @JavascriptInterface
+        public void deleteMusicFiles(String reqId, String idsCsv) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> musicDeleter.start(reqId, idsCsv));
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> openAppSettingsNative());
+        }
+
+        @JavascriptInterface
+        public void startMusicMedia(String title, String subtitle, String artwork, double durationSec, double positionSec, boolean playing) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+                }
+                if (podcastMediaController != null) podcastMediaController.start(title, subtitle, artwork, (long)Math.max(0,durationSec*1000), (long)Math.max(0,positionSec*1000), playing, "music");
+            });
+        }
+
         @JavascriptInterface
         public void updatePodcastMedia(double durationSec, double positionSec, boolean playing) {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.update((long)Math.max(0,durationSec*1000), (long)Math.max(0,positionSec*1000), playing); });
         }
 
         @JavascriptInterface
-        public void stopPodcastMedia() { runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.stop(); }); }
+        public void stopPodcastMedia() {
+            if (!bridgeTrusted) return; runOnUiThread(() -> { if (podcastMediaController != null) podcastMediaController.stop(); }); }
 
         @JavascriptInterface
         public void reloadApp(String url) {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> {
                 try {
                     webView.clearCache(true);
                     webView.clearHistory();
-                    String target = (url == null || url.isEmpty()) ? START_URL : url;
+                    String target = (url == null || url.isEmpty() || !isAppUrl(url)) ? START_URL : url;
                     // Force a network reload when applying a web update; otherwise
                     // Android WebView can keep the previous index/scripts cached.
                     webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -320,6 +625,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void sharePodcast(String title, String url) {
+            if (!bridgeTrusted) return;
             try {
                 String safeTitle = (title == null || title.trim().isEmpty()) ? "Podcast" : title.trim();
                 String safeUrl = (url == null) ? "" : url.trim();
@@ -339,6 +645,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void syncPodcastSubscriptions(String subscriptionsJson) {
+            if (!bridgeTrusted) return;
             try {
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                         .edit().putString(PREF_PODCAST_SUBS, subscriptionsJson == null ? "[]" : subscriptionsJson).apply();
@@ -346,23 +653,46 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
 
+        /**
+         * ¿Se puede reanudar el audio tras una interrupción? No durante una llamada ni
+         * mientras otra app esté sonando (navegador GPS, asistente de voz, música…).
+         */
+        @JavascriptInterface
+        public boolean canResumeAudio() {
+            if (!bridgeTrusted) return false;
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am == null) return true;
+                int mode = am.getMode();
+                if (mode == android.media.AudioManager.MODE_IN_CALL || mode == android.media.AudioManager.MODE_IN_COMMUNICATION
+                        || mode == android.media.AudioManager.MODE_RINGTONE) return false;
+                return !am.isMusicActive();
+            } catch (Exception e) {
+                return true;
+            }
+        }
+
         @JavascriptInterface
         public boolean areNotificationsEnabled() {
+            if (!bridgeTrusted) return false;
             return areNotificationsEnabledNative();
         }
 
         @JavascriptInterface
         public void requestNotificationPermission() {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> requestNotificationPermissionNative());
         }
 
         @JavascriptInterface
         public void openNotificationSettings() {
+            if (!bridgeTrusted) return;
             runOnUiThread(() -> openNotificationSettingsNative());
         }
 
         @JavascriptInterface
         public void saveTextFile(String filename, String content, String mimeType) {
+            if (!bridgeTrusted) return;
             pendingSaveContent = content == null ? "" : content;
             pendingSaveMime = (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType;
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
@@ -380,6 +710,12 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (musicDeleter != null && musicDeleter.onRequestPermissionsResult(requestCode, grantResults)) return;
+        if (musicEditor != null && musicEditor.onRequestPermissionsResult(requestCode, grantResults)) return;
+        if (requestCode == MUSIC_PERMISSION_REQUEST) {
+            notifyWebMusicPermission(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+            return;
+        }
         if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
             boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
@@ -391,6 +727,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (musicDeleter != null && musicDeleter.onActivityResult(requestCode, resultCode)) return;
+        if (musicEditor != null && musicEditor.onActivityResult(requestCode, resultCode)) return;
         if (requestCode == FILE_SAVE_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 try (OutputStream out = getContentResolver().openOutputStream(data.getData())) {
@@ -419,14 +757,16 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // La navegación se controla dentro de la SPA. Nunca cerramos la app
-        // accidentalmente al pulsar Atrás en la pantalla raíz.
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "(function(){return window.handleAndroidBack ? window.handleAndroidBack() : true;})()",
-                null
-            );
+        // La navegación la gestiona la web. En la pantalla principal la web responde
+        // false y la app pasa a segundo plano (sin cerrarse: la radio sigue sonando).
+        if (webView == null) {
+            moveTaskToBack(true);
+            return;
         }
+        webView.evaluateJavascript(
+                "(function(){try{return window.handleAndroidBack ? window.handleAndroidBack() : false;}catch(e){return false;}})()",
+                value -> {
+                    if (!"true".equals(value)) moveTaskToBack(true);
+                });
     }
-
 }

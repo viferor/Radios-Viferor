@@ -6,12 +6,16 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles.css?v=12730" />
 </head>
 <body>
 <header class="app-header">
 <button id="btnMenuSettings" class="menu-btn" type="button" aria-label="Abrir ajustes">☰</button>
-<h1>📻 Radios Viferor</h1>
+<div class="view-toggle">
+<button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
+<button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
+<button class="toggle-btn" id="btnViewMusic" type="button">🎵 Música</button>
+</div>
 <div class="settings-menu" id="settingsMenu" hidden>
   <div class="settings-menu-title">⚙️ Ajustes</div>
   <button id="btnErrorLog" type="button">🧾 Registro de errores</button>
@@ -23,14 +27,10 @@
   <input id="fullBackupFile" type="file" accept=".json,application/json" hidden>
   <button id="btnDarkMode" type="button">🌙 Modo oscuro</button>
   <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
+  <button id="btnAutoResume" type="button">⏸️ Reanudar al abrir: no</button>
   <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
 </div>
 </header>
-
-<div class="view-toggle">
-<button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
-<button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
-</div>
 
 <section class="view view-fav active" id="viewFav">
 <div class="radio-home-toolbar">
@@ -58,40 +58,21 @@
 </main>
 <div class="compact-filters">
 <div class="filters-row">
-<select id="selectNetwork" title="Cadena">
-<option value="">📻 Todas</option>
-<option>Cadena SER</option>
-<option>COPE</option>
-<option>Onda Cero</option>
-<option>RNE</option>
-<option>LOS40</option>
-<option>Cadena Dial</option>
-<option>Rock FM</option>
-<option>Kiss FM</option>
-<option>Europa FM</option>
-<option>Canal Sur</option>
-<option>Radio Marca</option>
+<select id="selectNetwork" title="Cadena" aria-label="Cadena">
+<option value="">📻 Cadena</option>
 </select>
-<select id="selectLocation" title="Provincia">
+<select id="selectLocation" title="Provincia o comunidad" aria-label="Provincia o comunidad">
 <option value="">📍 España</option>
-<option>Madrid</option><option>Barcelona</option><option>Valencia</option>
-<option>Sevilla</option><option>Málaga</option><option>Córdoba</option>
-<option>Granada</option><option>Zaragoza</option><option>Vizcaya</option>
-<option>Alicante</option><option>Murcia</option><option>Valladolid</option>
-<option>A Coruña</option><option>Pontevedra</option><option>Asturias</option>
-<option>Cantabria</option><option>Baleares</option><option>Las Palmas</option>
-<option>S.C. Tenerife</option><option>Navarra</option><option>Cádiz</option>
-<option>Huelva</option><option>Jaén</option><option>Almería</option>
 </select>
 <select id="selectType" title="Tipo">
-<option value="">🏷️ Todo</option>
+<option value="">🏷️ Tipo</option>
 <option value="musical">🎵 Musical</option>
 <option value="informativa">📰 Informativa</option>
 <option value="deportiva">⚽ Deportiva</option>
 <option value="autonomica">🏛️ Autonómica</option>
 <option value="tematica">🎭 Temática</option>
 </select>
-<input type="text" id="textSearch" placeholder="🔍..." autocomplete="off" />
+<input type="search" id="textSearch" placeholder="🔍 Nombre, ciudad, frecuencia…" autocomplete="off" enterkeyhint="search" />
 <button class="btn-search" id="btnAplicar" type="button">Buscar</button>
 </div>
 <div class="active-filters" id="activeFilters" hidden></div>
@@ -100,34 +81,66 @@
 
 <section class="view view-podcasts" id="viewPodcasts">
   <div class="pod-toolbar">
-    <button id="podMine" class="pod-my-subs" type="button"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 suscripciones</small></span><span class="pod-my-subs-arrow">›</span></button>
-    <div class="pod-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div>
-    <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
+  <div class="pod-mine-wrap">
+    <button id="podMine" class="pod-my-subs" type="button" aria-label="Mis podcasts: ver tus suscripciones"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 favoritos</small></span><span class="pod-my-subs-arrow" aria-hidden="true">›</span></button>
+    <button id="podListsMenu" class="pod-my-subs pod-my-lists" type="button" aria-label="Mis listas: orden, modos de escucha, cola y listas" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">📃</span><span><strong>Mis listas</strong><small id="podListsCount">Cola y listas</small></span><span class="pod-my-subs-arrow" aria-hidden="true">▾</span></button>
   </div>
-  <main id="podcastContent" class="podcast-content"></main>
-  <div class="pod-bottom-tools">
-    <details class="pod-filters">
-      <summary>🔎 Buscar y filtrar podcasts <span>▾</span></summary>
+  <div class="pod-mine-menu pod-mine-panel" id="podMineMenu" hidden>
+    <label class="pod-mine-sort"><span>Ordenar suscripciones</span><select id="podMineSort" aria-label="Ordenar suscripciones"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option><option value="category">Por categoría</option></select></label>
+    <div class="pod-mine-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button><button id="podQueueOpen" type="button">☰ Cola</button><button id="podListsOpen" type="button">📃 Listas</button></div>
+  </div>
+  <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Añadir o buscar podcasts" title="Añadir podcast">＋</button>
+  <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
+</div>
+<div class="pod-search-drawer pod-add" id="podSearchDrawer" hidden>
+  <div class="pod-search-drawer-head"><strong>➕ Añadir podcast</strong><button id="podSearchClose" type="button" aria-label="Cerrar">✕</button></div>
+  <div class="pod-add-body">
+    <form class="pod-add-search" id="podSearchForm" onsubmit="return false">
+      <input id="podSearchText" type="search" placeholder="🔎 Nombre, tema, autor…" autocomplete="off" enterkeyhint="search" aria-label="Buscar podcasts">
+      <button id="podSearchBtn" type="button">Buscar</button>
+    </form>
+    <div class="pod-sources" id="podSources" role="radiogroup" aria-label="Dónde buscar">
+      <button type="button" data-source="all" class="on">Todos</button>
+      <button type="button" data-source="apple">Apple Podcasts</button>
+      <button type="button" data-source="fyyd">fyyd</button>
+      <button type="button" data-source="podcastindex">Podcast Index</button>
+    </div>
+    <p class="pod-sources-note" id="podSourcesNote" hidden></p>
+    <details class="pod-filters-more" id="podFiltersMore">
+      <summary>Filtros: categoría, país, idioma y orden <span id="podFiltersSummary"></span></summary>
       <div class="pod-search">
-        <div class="pod-search-text"><span class="pod-filter-label">Buscar</span><input id="podSearchText" type="text" placeholder="🔎 Buscar podcasts..." autocomplete="off"></div>
         <label class="pod-filter-field"><span class="pod-filter-label">Categoría</span><select id="podGenre" aria-label="Categoría"></select></label>
-        <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ALL">🌐 Todos</option><option value="ES">🇪🇸 España</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
+        <label class="pod-filter-field"><span class="pod-filter-label">País catálogo</span><select id="podCountry" aria-label="País del catálogo"><option value="ES" selected>🇪🇸 España</option><option value="ALL">🌐 Todos</option><option value="US">🇺🇸 EEUU</option><option value="GB">🇬🇧 Reino Unido</option><option value="MX">🇲🇽 México</option><option value="AR">🇦🇷 Argentina</option></select></label>
         <label class="pod-filter-field"><span class="pod-filter-label">Idioma</span><select id="podLanguage" aria-label="Idioma"><option value="">Todos</option><option value="es">🇪🇸 Español</option><option value="en">🇬🇧 Inglés</option><option value="fr">🇫🇷 Francés</option><option value="de">🇩🇪 Alemán</option><option value="it">🇮🇹 Italiano</option><option value="pt">🇵🇹 Portugués</option><option value="ca">🏴 Catalán</option></select></label>
-        <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Buscar</option><option value="popular">Más populares</option></select></label>
-        <button id="podSearchBtn" type="button">Buscar</button>
+        <label class="pod-filter-field"><span class="pod-filter-label">Orden</span><select id="podSort" aria-label="Orden"><option value="search">Relevancia</option><option value="popular">Más populares</option></select></label>
       </div>
     </details>
+    <div class="pod-add-actions">
+      <button type="button" id="podAddRssToggle">📡 Añadir pódcast por dirección RSS</button>
+      <form class="pod-add-rss" id="podAddRssForm" onsubmit="return false" hidden>
+        <input id="podRssUrl" type="url" inputmode="url" placeholder="https://… (dirección del feed)" autocomplete="off" aria-label="Dirección RSS">
+        <button id="podRssGo" type="button">Abrir</button>
+      </form>
+      <button type="button" id="podAddOpml">📥 Importar lista de podcasts (OPML)</button>
+    </div>
+    <div class="pod-suggest-head"><h3 id="podSuggestTitle">Sugerencias de Apple Podcasts</h3><button type="button" id="podSuggestMore">Descubrir más →</button></div>
+    <div class="pod-tiles pod-suggest" id="podSuggest"><div class="pod-loading">Cargando sugerencias…</div></div>
   </div>
-  <div class="pod-player" id="podcastPlayerMini">
+</div>
+<main id="podcastContent" class="podcast-content"></main>
+
+<div class="pod-player is-empty" id="podcastPlayerMini">
+    <div class="pod-mini-art" id="podMiniArt" aria-hidden="true">🎙️</div>
     <div class="pod-mini-info" id="podcastMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de podcast">
       <strong id="podcastNow">Sin episodio</strong><span id="podcastNowSub"></span>
     </div>
     <button id="podPrev" class="pod-mini-btn" type="button" aria-label="Episodio anterior">⏮</button>
     <button id="podBack15" class="pod-mini-btn" type="button" aria-label="Retroceder 15 segundos">↶15</button>
     <button id="podPlayPause" class="pod-mini-btn pod-mini-main" type="button" aria-label="Reproducir o pausar">▶</button>
-    <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+    <button id="podForward15" class="pod-mini-btn" type="button" aria-label="Avanzar 30 segundos">30↷</button>
     <button id="podNext" class="pod-mini-btn" type="button" aria-label="Siguiente episodio">⏭</button>
     <div class="pod-mini-volume volume-control" aria-label="Volumen del podcast"><button id="podMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podVolumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podVolumeValue">80%</output></div>
+    <div class="pod-mini-progress" aria-hidden="true"><i id="podMiniBar"></i></div>
     <audio id="podcastAudio" preload="none"></audio>
   </div>
   <div class="pod-expanded" id="podExpanded" hidden>
@@ -140,15 +153,54 @@
         <button id="podExpPrev" type="button" aria-label="Anterior">⏮</button>
         <button id="podExpBack15" type="button" aria-label="Retroceder 15 segundos">↶15</button>
         <button id="podExpPlay" class="main" type="button" aria-label="Reproducir o pausar">▶</button>
-        <button id="podExpForward15" type="button" aria-label="Avanzar 15 segundos">15↷</button>
+        <button id="podExpForward15" type="button" aria-label="Avanzar 30 segundos">30↷</button>
         <button id="podExpNext" type="button" aria-label="Siguiente">⏭</button>
       </div>
       <div class="pod-expanded-volume volume-control" aria-label="Volumen del podcast"><button id="podExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podExpVolumeValue">80%</output></div>
+      <div class="pod-exp-extra"><button id="podExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="podExpQueueCount">0</b></button><button id="podExpSpeed" type="button" aria-label="Velocidad de reproducción">1×</button><button id="podExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
+      <p class="pod-up-next" id="podUpNext" hidden></p>
     </div>
   </div>
 </section>
 
-<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText">1.5.0</strong> · Compilación <strong id="appBuildText">1465</strong></footer>
+<section class="view view-music" id="viewMusic">
+  <div class="mus-toolbar">
+    <div class="mus-searchbar"><input id="musSearch" type="search" placeholder="🔎 Canción, artista, álbum, carpeta…" autocomplete="off" enterkeyhint="search" aria-label="Buscar en mi música"><button id="musMenu" type="button" aria-label="Opciones de mi música">⋯</button></div>
+    <div class="mus-tabs" id="musTabs" role="tablist" aria-label="Ver por">
+      <button type="button" data-tab="favs">⭐ Favoritos</button><button type="button" data-tab="songs">🎵 Canciones</button><button type="button" data-tab="albums">💿 Álbumes</button><button type="button" data-tab="artists">🎤 Artistas</button><button type="button" data-tab="folders">📁 Carpetas</button><button type="button" data-tab="genres">🏷️ Géneros</button><button type="button" data-tab="lists">📃 Listas</button>
+    </div>
+  </div>
+  <main id="musicContent" class="music-content"></main>
+  <div class="pod-player mus-player is-empty" id="musPlayerMini">
+    <div class="pod-mini-art" id="musMiniArt" aria-hidden="true">🎵</div>
+    <div class="pod-mini-info" id="musMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de música"><strong id="musNow">Sin canción</strong><span id="musNowSub"></span></div>
+    <button id="musPrev" class="pod-mini-btn" type="button" aria-label="Canción anterior">⏮</button>
+    <button id="musPlay" class="pod-mini-btn pod-mini-main" type="button" aria-label="Reproducir o pausar">▶</button>
+    <button id="musNext" class="pod-mini-btn" type="button" aria-label="Canción siguiente">⏭</button>
+    <div class="pod-mini-progress" aria-hidden="true"><i id="musMiniBar"></i></div>
+    <audio id="musicAudio" preload="none"></audio>
+  </div>
+  <div class="pod-expanded mus-expanded" id="musExpanded" hidden>
+    <div class="pod-expanded-card">
+      <div class="pod-expanded-head"><button id="musExpClose" type="button" aria-label="Cerrar">←</button><span>Reproductor de música</span><button id="musExpMore" class="mus-exp-more" type="button" aria-label="Opciones de la canción">⋯</button></div>
+      <div class="pod-expanded-art" id="musExpArt">🎵</div>
+      <h2 id="musExpTitle">Sin canción</h2><p id="musExpSub"></p>
+      <div class="pod-progress"><span id="musCur">0:00</span><input id="musRange" type="range" min="0" max="100" step="0.1" value="0" aria-label="Progreso"><span id="musDurEl">0:00</span></div>
+      <div class="pod-expanded-controls">
+        <button id="musExpShuffle" class="mus-mode" type="button" aria-label="Aleatorio" aria-pressed="false">🔀</button>
+        <button id="musExpPrev" type="button" aria-label="Anterior">⏮</button>
+        <button id="musExpPlay" class="main" type="button" aria-label="Reproducir o pausar">▶</button>
+        <button id="musExpNext" type="button" aria-label="Siguiente">⏭</button>
+        <button id="musExpRepeat" class="mus-mode" type="button" aria-label="Repetir">🔁</button>
+      </div>
+      <div class="pod-expanded-volume volume-control" aria-label="Volumen de la música"><button id="musExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="musExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="musExpVolumeValue">80%</output></div>
+      <div class="pod-exp-extra"><button id="musExpFx" type="button" aria-label="Sonido y ecualizador">🎚️ Sonido</button><button id="musExpFav" type="button" aria-label="Favorita">☆ Favorita</button><button id="musExpLyrics" type="button" aria-label="Ver la letra">🎤 Letra</button><button id="musExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="musExpQueueCount">0</b></button><button id="musExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
+      <p class="pod-up-next" id="musUpNext" hidden></p>
+    </div>
+  </div>
+</section>
+
+<footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText"></strong> · Compilación <strong id="appBuildText"></strong></footer>
 
 <div class="error-modal" id="errorModal" hidden>
   <div class="error-modal-card">
@@ -164,7 +216,8 @@
 </div>
 
 <footer class="player-bar">
-<div class="player-info">
+<div class="player-thumb" id="playerThumb" data-src="" aria-hidden="true">📻</div>
+<div class="player-info" id="playerInfo" role="button" tabindex="0" aria-label="Ver lo que suena ahora">
 <div class="player-header">
 <span class="player-title" id="currentStationName">Sin emisora</span>
 <span class="player-status" id="playerStatus">Listo</span>
@@ -172,16 +225,29 @@
 <div class="now-playing-wrapper">
 <div class="now-playing" id="nowPlayingTrack">🎵 Sin información de canción</div>
 <div class="program-line" id="programNow">📻 Programa actual: sin información</div>
-<div class="program-next" id="programNext">Siguiente: —</div>
+<div class="program-next" id="programNext">Después: —</div>
 </div>
 </div>
-<div class="player-controls"><audio id="audioPlayer" controls></audio><div class="volume-control" aria-label="Control de volumen"><button id="btnMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="volumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="volumeValue">80%</output></div></div>
+<div class="player-controls"><audio id="audioPlayer"></audio><button id="btnRadioPlay" class="radio-play-btn" type="button" aria-label="Reproducir">▶</button><div class="radio-live" id="radioLive" aria-hidden="true"><span class="radio-live-dot"></span><span id="radioLiveText">Elige una emisora</span></div><div class="volume-control" aria-label="Control de volumen"><button id="btnMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="volumeRange" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="volumeValue">80%</output></div></div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
-<script src="stations-data.js?v=1.2.1"></script>
-<script src="app.js?v=1.5.0"></script>
-<script src="podcasts.js?v=1.5.0"></script>
-<script src="diagnostics.js?v=1.5.0"></script>
+<div class="radio-now" id="radioNowPanel" hidden>
+  <div class="radio-now-card" role="dialog" aria-label="Ahora suena">
+    <div class="rn-head"><button type="button" class="rn-close" id="radioNowClose" aria-label="Cerrar">✕</button><span>Ahora suena</span><button type="button" class="rn-play" id="radioNowPlay">▶ Escuchar</button></div>
+    <div class="rn-body"></div>
+  </div>
+</div>
+
+<script src="version.js?v=12730"></script>
+<script src="vendor/hls.min.js"></script>
+<script src="stations-data.js?v=12730"></script>
+<script src="buscador-radios.js?v=12730"></script>
+<script src="app.js?v=12730"></script>
+<script src="podcasts.js?v=12730"></script>
+<script src="podcast-listas.js?v=12730"></script>
+<script src="musica.js?v=12730"></script>
+<script src="letras.js?v=12730"></script>
+<script src="ecualizador.js?v=12730"></script>
+<script src="diagnostics.js?v=12730"></script>
 </body>
 </html>

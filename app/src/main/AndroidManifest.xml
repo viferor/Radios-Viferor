@@ -3,6 +3,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Servicio en primer plano mientras suena (si no, Android corta el audio en segundo plano). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Mantener CPU y Wi-Fi activos mientras suena con la pantalla apagada. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- «Mi música»: leer las canciones del móvil (Android 13+ / anteriores). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Solo Android 9 o anterior, para borrar canciones del móvil desde «Mi música». -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:icon="@mipmap/ic_launcher"
@@ -12,7 +22,14 @@
         android:usesCleartextTraffic="false"
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true">
-        <receiver android:name=".PodcastNotificationReceiver" android:enabled="true" android:exported="false" />
+        <service
+            android:name=".MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name=".PodcastCheckJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".MediaControlReceiver" android:enabled="true" android:exported="false" />
         <receiver android:name=".WidgetProvider" android:enabled="true" android:exported="true">
             <intent-filter>
@@ -32,6 +49,35 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- «Abrir con…» y «Compartir» para audio y listas M3U -->
+        <activity
+            android:name=".OpenAudioActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:label="Radios Viferor"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:label="Radios Viferor">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
+                <data android:mimeType="application/x-ogg" />
+                <data android:mimeType="application/x-flac" />
+                <data android:mimeType="application/flac" />
+                <data android:mimeType="application/x-mpegurl" />
+                <data android:mimeType="application/vnd.apple.mpegurl" />
+            </intent-filter>
+            <intent-filter android:label="Radios Viferor">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
             </intent-filter>
         </activity>
     </application>

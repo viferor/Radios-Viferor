@@ -1,0 +1,3822 @@
+// «Mi música» (1.17.0): reproductor de música local.
+//
+// · App Android (APK 1.10+): la biblioteca sale del móvil (MediaStore). El WebView
+//   sirve /__music/library.json, /__music/track/{id} y /__music/art/{albumId}.
+// · Navegador (PC): eliges una carpeta; en Chrome/Edge se recuerda (File System
+//   Access) y las etiquetas se leen con jsmediatags (vendor/), con caché en IndexedDB.
+// · Vistas: canciones, álbumes, artistas, carpetas y géneros; búsqueda.
+// · Reproductor con aleatorio, repetir, cola, historial, temporizador y listas
+//   (normales e inteligentes), como en Podcasts. Reutiliza podSheet, podToast,
+//   podPromptText, makeSortable… de podcast-listas.js.
+
+/* ===========================================================================
+   Estado y utilidades
+=========================================================================== */
+const MUS_KEYS = {
+  queue: 'radios_viferor_music_queue_v1',
+  history: 'radios_viferor_music_history_v1',
+  context: 'radios_viferor_music_context_v1',
+  opts: 'radios_viferor_music_opts_v1',
+  lists: 'radios_viferor_music_playlists_v1',
+  stats: 'radios_viferor_music_stats_v1',
+  resume: 'radios_viferor_music_resume_v1',
+  ui: 'radios_viferor_music_ui_v1',
+  volume: 'radios_viferor_music_volume',
+  favs: 'radios_viferor_music_favs_v1',
+  folders: 'radios_viferor_music_folders_v1',
+  shortSecs: 'radios_viferor_music_short_secs',
+  hidden: 'radios_viferor_music_hidden_v1',
+  shortOk: 'radios_viferor_music_short_ok_v1',
+  dupIgnore: 'radios_viferor_music_dup_ignore_v1',
+  playingList: 'radios_viferor_music_playing_list_v1'
+};
+const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
+const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
+const musicState = {
+  source: '', // android | folder | files
+  loaded: false,
+  loading: false,
+  tracks: [],
+  byId: new Map(),
+  albums: new Map(),
+  artists: new Map(),
+  genres: new Map(),
+  folders: new Map(),
+  queue: [],
+  history: [],
+  context: [],
+  current: null,
+  lists: [],
+  screen: 'tab',
+  tab: 'songs',
+  search: '',
+  files: new Map(), // navegador: id → FileSystemFileHandle | File
+  lrcFiles: new Map(), // navegador: ruta sin extensión → .lrc
+  folderName: ''
+};
+window.musicState = musicState;
+const $m = id => document.getElementById(id);
+const musCollator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+function mNorm(v) {
+  return typeof normalizar === 'function' ? normalizar(v || '') : String(v || '').toLowerCase().trim();
+}
+function lsGet(k, def) {
+  try {
+    const v = JSON.parse(localStorage.getItem(k) || 'null');
+    return v == null ? def : v;
+  } catch {
+    return def;
+  }
+}
+function lsSet(k, v) {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function musicUi() {
+  return { tab: 'songs', songSort: 'title', albumSort: 'name', ...lsGet(MUS_KEYS.ui, {}) };
+}
+function saveMusicUi(patch) {
+  lsSet(MUS_KEYS.ui, { ...musicUi(), ...patch });
+}
+function fmtDur(sec) {
+  return sec > 0 ? fmtPodTime(sec) : '';
+}
+function tracksSummary(list) {
+  const total = list.reduce((s, t) => s + (t.dur || 0), 0);
+  const tt = fmtLong(total);
+  return `${plural(list.length, 'canción', 'canciones')}${tt ? ` · ${tt}` : ''}`;
+}
+function musicViewActive() {
+  return !!$m('viewMusic')?.classList.contains('active');
+}
+function androidMusicApi() {
+  try {
+    return window.Android && typeof window.Android.musicApiVersion === 'function' ? Number(window.Android.musicApiVersion()) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+function isAndroidApp() {
+  return !!window.Android || /RadiosViferor\//.test(navigator.userAgent);
+}
+function stripExt(name) {
+  return String(name || '').replace(/\.[^.]+$/, '');
+}
+function trackArtist(t) {
+  return t.artist || MUS_UNKNOWN_ARTIST;
+}
+function trackSub(t) {
+  return [trackArtist(t), t.album].filter(Boolean).join(' · ');
+}
+function minimalTrack(t) {
+  return t ? { id: t.id, title: t.title, artist: t.artist, album: t.album, folder: t.folder, file: t.file, dur: t.dur } : null;
+}
+function pathKey(t) {
+  return mNorm((t.folder ? t.folder + '/' : '') + (t.file || ''));
+}
+// Encuentra en la biblioteca una canción guardada (por id; si cambió, por ruta).
+function resolveTrack(x) {
+  if (!x) return null;
+  const id = typeof x === 'string' ? x : x.id;
+  const byId = musicState.byId.get(id) || musicState.allById?.get(id);
+  if (byId) return byId;
+  if (typeof x === 'object' && x.file) return musicState.byPath?.get(pathKey(x)) || musicState.allByPath?.get(pathKey(x)) || null;
+  return null;
+}
+
+/* ===========================================================================
+   Biblioteca: Android
+=========================================================================== */
+async function loadAndroidLibrary() {
+  const r = await fetch('/__music/library.json?ts=' + Date.now(), { cache: 'no-store' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.ok) throw Error(d.error === 'permission' ? 'permission' : d.error || 'No se pudo leer la música');
+  return (d.tracks || []).map(x => {
+    const n = Number(x.n) || 0;
+    return {
+      id: 'a' + x.id,
+      title: x.t || stripExt(x.fn) || 'Sin título',
+      artist: x.a || '',
+      album: x.al || '',
+      albumArtist: x.aa || '',
+      track: n % 1000,
+      disc: n >= 1000 ? Math.floor(n / 1000) : 0,
+      year: Number(x.y) || 0,
+      dur: (Number(x.d) || 0) / 1000,
+      folder: x.f || '',
+      file: x.fn || '',
+      added: (Number(x.da) || 0) * 1000,
+      genre: x.g || '',
+      size: Number(x.s) || 0,
+      src: '/__music/track/' + x.id,
+      art: x.ai ? `/__music/art/${x.ai}?t=${x.id}` : ''
+    };
+  });
+}
+
+/* ===========================================================================
+   Biblioteca: navegador (carpeta elegida)
+=========================================================================== */
+const MUS_DB = 'radios-viferor-music';
+function musDb() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(MUS_DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      if (!db.objectStoreNames.contains('art')) db.createObjectStore('art');
+      if (!db.objectStoreNames.contains('lyrics')) db.createObjectStore('lyrics');
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idb(store, mode, fn) {
+  const db = await musDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, mode);
+    const st = tx.objectStore(store);
+    const out = fn(st);
+    tx.oncomplete = () => res(out && typeof out === 'object' && 'result' in out ? out.result : out);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+const idbGet = (store, key) => idb(store, 'readonly', st => st.get(key)).catch(() => undefined);
+const idbPut = (store, key, val) => idb(store, 'readwrite', st => st.put(val, key)).catch(() => undefined);
+function loadTagLib() {
+  if (window.jsmediatags) return Promise.resolve(window.jsmediatags);
+  return new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'vendor/jsmediatags.min.js';
+    s.onload = () => res(window.jsmediatags || null);
+    s.onerror = () => res(null);
+    document.head.append(s);
+  });
+}
+function readTags(lib, file) {
+  return new Promise(res => {
+    if (!lib) return res(null);
+    try {
+      lib.read(file, { onSuccess: r => res(r?.tags || null), onError: () => res(null) });
+    } catch {
+      res(null);
+    }
+  });
+}
+// Recorre la carpeta (handle) y devuelve [{path, folder, file, handle}].
+async function walkDir(dir, prefix = '', out = []) {
+  for await (const entry of dir.values()) {
+    if (entry.kind === 'directory') await walkDir(entry, prefix ? `${prefix}/${entry.name}` : entry.name, out);
+    else if (MUS_AUDIO_EXT.test(entry.name)) out.push({ path: prefix ? `${prefix}/${entry.name}` : entry.name, folder: prefix, file: entry.name, handle: entry });
+    // Letras .lrc al lado de las canciones (las usa letras.js).
+    else if (/\.lrc$/i.test(entry.name)) musicState.lrcFiles.set(mNorm(stripExt(prefix ? `${prefix}/${entry.name}` : entry.name)), entry);
+  }
+  return out;
+}
+// Lee etiquetas (con caché) y monta las canciones. items: [{path, folder, file, handle|fileObj}].
+async function buildFromFiles(items, rootName) {
+  const lib = await loadTagLib();
+  const tracks = [];
+  const arts = new Map();
+  let done = 0;
+  const total = items.length;
+  const progress = () => setMusicLoading(`Leyendo tu música… ${done} de ${total}`);
+  progress();
+  musicState.files = new Map();
+  const work = async it => {
+    const f = it.fileObj || (await it.handle.getFile());
+    const id = 'f:' + (rootName ? rootName + '/' : '') + it.path;
+    const cacheKey = id + '|' + f.size + '|' + f.lastModified;
+    let meta = await idbGet('meta', cacheKey);
+    if (!meta) {
+      const tags = await readTags(lib, f);
+      meta = {
+        title: tags?.title || '',
+        artist: tags?.artist || '',
+        album: tags?.album || '',
+        albumArtist: tags?.TPE2?.data || tags?.aART?.data || '',
+        track: parseInt(tags?.track, 10) || 0,
+        disc: parseInt(tags?.TPOS?.data || tags?.disk?.data?.disk, 10) || 0,
+        year: parseInt(tags?.year, 10) || 0,
+        genre: typeof tags?.genre === 'string' ? tags.genre.replace(/^\(\d+\)/, '') : '',
+        hasArt: !!tags?.picture
+      };
+      if (tags?.picture?.data?.length) {
+        const key = mNorm(meta.album) + '|' + it.folder;
+        const blob = new Blob([new Uint8Array(tags.picture.data)], { type: tags.picture.format || 'image/jpeg' });
+        await idbPut('art', key, blob);
+        meta.artKey = key;
+      }
+      idbPut('meta', cacheKey, meta);
+    }
+    const t = {
+      id,
+      title: meta.title || stripExt(it.file),
+      artist: meta.artist,
+      album: meta.album,
+      albumArtist: meta.albumArtist,
+      track: meta.track,
+      disc: meta.disc,
+      year: meta.year,
+      dur: Number(meta.dur) || 0,
+      folder: rootName ? (it.folder ? `${rootName}/${it.folder}` : rootName) : it.folder,
+      file: it.file,
+      added: f.lastModified || 0,
+      genre: meta.genre,
+      size: f.size,
+      src: '',
+      art: '',
+      artKey: meta.artKey || '',
+      cacheKey
+    };
+    musicState.files.set(id, it.fileObj || it.handle);
+    tracks.push(t);
+    done++;
+    if (done % 25 === 0) progress();
+  };
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      while (i < items.length) {
+        const it = items[i++];
+        try {
+          await work(it);
+        } catch {
+          done++;
+        }
+      }
+    })
+  );
+  // Carátulas: una URL por álbum (de la caché de IndexedDB).
+  for (const t of tracks) {
+    if (!t.artKey) continue;
+    if (!arts.has(t.artKey)) {
+      const blob = await idbGet('art', t.artKey);
+      arts.set(t.artKey, blob ? URL.createObjectURL(blob) : '');
+    }
+    t.art = arts.get(t.artKey);
+  }
+  return tracks;
+}
+async function pickMusicFolder() {
+  if (window.showDirectoryPicker) {
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker({ id: 'rv-music', mode: 'read' });
+    } catch (e) {
+      if (e?.name !== 'AbortError') podToast('No se pudo abrir la carpeta');
+      return;
+    }
+    await idbPut('kv', 'dir', dir);
+    return scanFolderHandle(dir);
+  }
+  // Firefox/Safari: selector de carpeta clásico (hay que elegirla en cada visita).
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.webkitdirectory = true;
+  input.onchange = async () => {
+    musicState.lrcFiles = new Map();
+    [...(input.files || [])].filter(f => /\.lrc$/i.test(f.name)).forEach(f => musicState.lrcFiles.set(mNorm(stripExt(f.webkitRelativePath || f.name)), f));
+    const files = [...(input.files || [])].filter(f => MUS_AUDIO_EXT.test(f.name));
+    if (!files.length) return podToast('No hay archivos de música en esa carpeta');
+    const items = files.map(f => {
+      const rel = f.webkitRelativePath || f.name;
+      const parts = rel.split('/');
+      const file = parts.pop();
+      return { path: rel, folder: parts.join('/'), file, fileObj: f };
+    });
+    musicState.source = 'files';
+    musicState.loading = true;
+    try {
+      finishLibrary(await buildFromFiles(items, ''), 'files');
+    } finally {
+      musicState.loading = false;
+    }
+  };
+  input.click();
+}
+async function scanFolderHandle(dir) {
+  musicState.loading = true;
+  musicState.folderName = dir.name;
+  setMusicLoading(`Buscando canciones en «${dir.name}»…`);
+  musicState.lrcFiles = new Map();
+  try {
+    const items = await walkDir(dir);
+    if (!items.length) {
+      musicState.loading = false;
+      renderMusicSetup('empty');
+      return;
+    }
+    finishLibrary(await buildFromFiles(items, dir.name), 'folder');
+  } catch (e) {
+    renderMusicSetup('error', e?.message);
+  } finally {
+    musicState.loading = false;
+  }
+}
+async function trackSrc(t, deck = musicState.deck) {
+  if (t.src) return t.src;
+  const h = musicState.files.get(t.id);
+  if (!h) return '';
+  const f = h instanceof File ? h : await h.getFile();
+  musicState._objUrls = musicState._objUrls || [];
+  if (musicState._objUrls[deck]) URL.revokeObjectURL(musicState._objUrls[deck]);
+  musicState._objUrls[deck] = URL.createObjectURL(f);
+  return musicState._objUrls[deck];
+}
+
+/* ===========================================================================
+   Índices: álbumes, artistas, géneros, carpetas
+=========================================================================== */
+function albumKeyOf(t) {
+  if (!t.album) return 'f|' + mNorm(t.folder);
+  return mNorm(t.album) + '|' + (t.albumArtist ? mNorm(t.albumArtist) : mNorm(t.folder));
+}
+function finishLibrary(tracks, source) {
+  // Se guardan todas y se muestran solo las de las carpetas permitidas.
+  musicState.allTracks = tracks;
+  musicState.allById = new Map(tracks.map(t => [t.id, t]));
+  musicState.allByPath = new Map(tracks.map(t => [pathKey(t), t]));
+  const ff = musicFolderFilter();
+  const hidden = musicHiddenMap();
+  tracks = tracks.filter(t => folderVisible(t.folder, ff) && !hidden[pathKey(t)]);
+  musicState.source = source;
+  musicState.tracks = tracks;
+  musicState.byId = new Map(tracks.map(t => [t.id, t]));
+  musicState.byPath = new Map(tracks.map(t => [pathKey(t), t]));
+  const albums = new Map(),
+    artists = new Map(),
+    genres = new Map(),
+    folders = new Map();
+  const node = path => {
+    if (!folders.has(path)) {
+      const parts = path ? path.split('/') : [];
+      folders.set(path, { path, name: parts.at(-1) || 'Todas las carpetas', parent: parts.length ? parts.slice(0, -1).join('/') : null, children: new Set(), tracks: [], count: 0 });
+      if (parts.length) node(parts.slice(0, -1).join('/')).children.add(path);
+    }
+    return folders.get(path);
+  };
+  node('');
+  for (const t of tracks) {
+    t.albumKey = albumKeyOf(t);
+    let al = albums.get(t.albumKey);
+    if (!al) {
+      al = { key: t.albumKey, name: t.album || (t.folder ? t.folder.split('/').at(-1) : 'Sin álbum'), artists: new Set(), albumArtist: t.albumArtist, year: 0, tracks: [], art: '', added: 0, folder: t.folder };
+      albums.set(t.albumKey, al);
+    }
+    al.tracks.push(t);
+    if (t.artist) al.artists.add(t.artist);
+    if (t.year) al.year = Math.max(al.year, t.year);
+    if (!al.art && t.art) al.art = t.art;
+    al.added = Math.max(al.added, t.added || 0);
+    const an = trackArtist(t);
+    const ak = mNorm(an);
+    if (!artists.has(ak)) artists.set(ak, { key: ak, name: an, tracks: [], albums: new Set(), art: '' });
+    const ar = artists.get(ak);
+    ar.tracks.push(t);
+    ar.albums.add(t.albumKey);
+    if (!ar.art && t.art) ar.art = t.art;
+    // Géneros: «Rock; Pop» o «Rock/Pop» cuentan en los dos.
+    String(t.genre || '')
+      .split(/\s*[;/,]\s*/)
+      .filter(Boolean)
+      .forEach(g => {
+        const gk = mNorm(g);
+        if (!genres.has(gk)) genres.set(gk, { key: gk, name: g, tracks: [] });
+        genres.get(gk).tracks.push(t);
+      });
+    node(t.folder).tracks.push(t);
+  }
+  const byDiscTrack = (a, b) => (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0) || musCollator.compare(a.title, b.title);
+  albums.forEach(al => {
+    al.tracks.sort(byDiscTrack);
+    al.artist = al.albumArtist || (al.artists.size === 1 ? [...al.artists][0] : al.artists.size ? 'Varios artistas' : MUS_UNKNOWN_ARTIST);
+  });
+  // Cuántas canciones hay debajo de cada carpeta (recursivo).
+  const countUnder = p => {
+    const n = folders.get(p);
+    n.count = n.tracks.length + [...n.children].reduce((s, c) => s + countUnder(c), 0);
+    return n.count;
+  };
+  countUnder('');
+  folders.forEach(f => f.tracks.sort((a, b) => musCollator.compare(a.file || a.title, b.file || b.title)));
+  Object.assign(musicState, { albums, artists, genres, folders, loaded: true, loading: false });
+  restoreMusicSession();
+  document.dispatchEvent(new CustomEvent('music:library'));
+  if (musicViewActive()) renderMusicScreen();
+  updateMusicStrip();
+}
+function folderTracks(path) {
+  if (!path) return musicState.tracks;
+  return musicState.tracks.filter(t => t.folder === path || t.folder.startsWith(path + '/'));
+}
+
+/* ===========================================================================
+   Reproducción
+=========================================================================== */
+const MUS_OPTS_DEFAULT = { shuffle: false, repeat: 'off' };
+function musicOpts() {
+  return { ...MUS_OPTS_DEFAULT, ...lsGet(MUS_KEYS.opts, {}) };
+}
+function setMusicOpt(k, v) {
+  lsSet(MUS_KEYS.opts, { ...musicOpts(), [k]: v });
+  updateMusicPlayerUI();
+  document.dispatchEvent(new CustomEvent('music:queue'));
+}
+/* ---- Dos platinas: la que suena y la siguiente (fundidos y sin pausas) ---- */
+const musDecks = [];
+musicState.deck = 0;
+function musicAudio() {
+  return musDecks[musicState.deck] || $m('musicAudio');
+}
+function otherDeckIndex() {
+  return 1 - musicState.deck;
+}
+function initMusicDecks() {
+  const a = $m('musicAudio');
+  if (!a || musDecks.length) return;
+  const b = document.createElement('audio');
+  b.id = 'musicAudio2';
+  b.preload = 'none';
+  a.after(b);
+  musDecks.push(a, b);
+}
+// Opciones del motor (las guarda ecualizador.js; aquí solo se leen).
+function musicEngineOpts() {
+  return { crossfade: 0, gapless: true, fadePause: true, ...(window.musicFx?.engineOpts?.() || {}) };
+}
+// Volumen del usuario y nivel de cada platina (0..1) para fundidos.
+let musUserVolume = 0.8;
+const musDeckLevel = [1, 1];
+const musDeckAnim = [0, 0];
+function applyDeckVolume(i) {
+  const el = musDecks[i];
+  if (!el) return;
+  if (window.musicFx?.active) el.volume = 1;
+  else el.volume = Math.max(0, Math.min(1, musUserVolume * musDeckLevel[i]));
+}
+function deckLevel(i, level, secs = 0) {
+  clearInterval(musDeckAnim[i]);
+  if (window.musicFx?.active) {
+    musDeckLevel[i] = level;
+    window.musicFx.setDeckGain(i, level, secs);
+    applyDeckVolume(i);
+    return;
+  }
+  if (!secs) {
+    musDeckLevel[i] = level;
+    return applyDeckVolume(i);
+  }
+  const from = musDeckLevel[i],
+    t0 = performance.now();
+  musDeckAnim[i] = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / (secs * 1000));
+    musDeckLevel[i] = from + (level - from) * k;
+    applyDeckVolume(i);
+    if (k >= 1) clearInterval(musDeckAnim[i]);
+  }, 30);
+}
+// Cancela un fundido o una precarga (al cambiar de canción a mano, saltar, etc.).
+function stopOtherDeck() {
+  const i = otherDeckIndex();
+  const el = musDecks[i];
+  if (musicState.xf) {
+    clearTimeout(musicState.xf.timer);
+    musicState.xf = null;
+  }
+  if (el && !el.paused) el.pause();
+  musicState.preload = null;
+  deckLevel(i, 1, 0);
+  deckLevel(musicState.deck, 1, 0);
+}
+function peekNextTrack() {
+  if (musicOpts().repeat === 'one' || musSleep.end) return null;
+  return musicState.queue[0] || null;
+}
+async function preloadNext(nx) {
+  const i = otherDeckIndex();
+  const el = musDecks[i];
+  if (!el || musicState.preload?.id === nx.id) return;
+  musicState.preload = { id: nx.id, deck: i, ready: false };
+  try {
+    const src = await trackSrc(nx, i);
+    if (musicState.preload?.id !== nx.id) return;
+    el.preload = 'auto';
+    el.src = src;
+    el.load();
+    musicState.preload.ready = true;
+  } catch {
+    musicState.preload = null;
+  }
+}
+// La siguiente canción pasa a sonar en la otra platina (fundido o sin pausa).
+async function switchToOtherDeck(nx, secs) {
+  const from = musicState.deck,
+    to = otherDeckIndex();
+  const b = musDecks[to];
+  if (!b) return false;
+  try {
+    if (!(musicState.preload?.id === nx.id && musicState.preload.ready)) {
+      b.src = await trackSrc(nx, to);
+      b.load();
+    }
+    b.currentTime = 0;
+    deckLevel(to, secs ? 0 : 1, 0);
+    window.musicFx?.resume?.();
+    await b.play();
+  } catch (e) {
+    musicState.preload = null;
+    return false;
+  }
+  const cur = musicState.current;
+  if (cur && !musicCounted) countMusicPlay(cur);
+  if (musicState.queue[0]?.id === nx.id) musicState.queue.shift();
+  else musicState.queue = musicState.queue.filter(x => x.id !== nx.id);
+  if (cur && cur.id !== nx.id) pushMusicHistory(cur);
+  musicState.deck = to;
+  musicState.current = nx;
+  musicState.preload = null;
+  musicCounted = false;
+  musicErrors = 0;
+  if (secs) {
+    deckLevel(to, 1, secs);
+    deckLevel(from, 0, secs);
+    musicState.xf = {
+      from,
+      timer: setTimeout(() => {
+        const f = musDecks[from];
+        if (f && !f.paused) f.pause();
+        deckLevel(from, 1, 0);
+        musicState.xf = null;
+      }, secs * 1000 + 150)
+    };
+  } else {
+    const f = musDecks[from];
+    if (f && !f.paused) f.pause();
+  }
+  saveMusicQueue();
+  saveMusicResume();
+  updateMusicNowUI();
+  syncMusicAndroid(true);
+  updateMediaSession();
+  return true;
+}
+let musicUserPaused = false,
+  musicCounted = false,
+  musicErrors = 0,
+  musicInterrupted = 0,
+  musicInterruptTimer = null,
+  musicLastSave = 0,
+  musicLastSync = 0;
+
+function saveMusicQueue() {
+  lsSet(MUS_KEYS.queue, musicState.queue.map(t => t.id));
+  lsSet(MUS_KEYS.context, musicState.context.slice(0, 5000).map(t => t.id));
+  document.dispatchEvent(new CustomEvent('music:queue'));
+}
+function saveMusicHistory() {
+  lsSet(MUS_KEYS.history, musicState.history.slice(-100).map(t => t.id));
+}
+function saveMusicResume() {
+  const a = musicAudio();
+  const t = musicState.current;
+  if (!t) return;
+  lsSet(MUS_KEYS.resume, { id: t.id, pos: Number(a?.currentTime) || 0, at: Date.now() });
+}
+function restoreMusicSession() {
+  const ids = x => (Array.isArray(x) ? x : []).map(resolveTrack).filter(Boolean);
+  musicState.queue = ids(lsGet(MUS_KEYS.queue, []));
+  musicState.history = ids(lsGet(MUS_KEYS.history, []));
+  musicState.context = ids(lsGet(MUS_KEYS.context, []));
+  musicState.listId = lsGet(MUS_KEYS.playingList, null);
+  musicState.listSig = playingListSig(musicState.listId && musicListById(musicState.listId));
+  if (!musicState.current) {
+    const r = lsGet(MUS_KEYS.resume, null);
+    const t = r && resolveTrack(r.id);
+    if (t) {
+      // Se deja preparada (sin sonar) donde estaba.
+      prepareTrack(t, r.pos || 0);
+    }
+  }
+}
+function pushMusicHistory(t) {
+  if (!t) return;
+  musicState.history = [...musicState.history.filter(x => x.id !== t.id), t].slice(-100);
+  saveMusicHistory();
+}
+// Estadísticas: veces escuchada y última vez (cuenta a los 30 s o a la mitad).
+function musicStats() {
+  if (!musicState._stats) musicState._stats = lsGet(MUS_KEYS.stats, {});
+  return musicState._stats;
+}
+function trackPlays(t) {
+  return Number(musicStats()[t.id]?.[0] || 0);
+}
+function trackLastPlayed(t) {
+  return Number(musicStats()[t.id]?.[1] || 0);
+}
+function countMusicPlay(t) {
+  if (t.external) return;
+  const st = musicStats();
+  const prev = st[t.id] || [0, 0];
+  st[t.id] = [prev[0] + 1, Date.now()];
+  const keys = Object.keys(st);
+  if (keys.length > 6000) keys.sort((a, b) => st[a][1] - st[b][1]).slice(0, keys.length - 6000).forEach(k => delete st[k]);
+  lsSet(MUS_KEYS.stats, st);
+}
+function pauseOtherAudio() {
+  try {
+    const pa = document.getElementById('podcastAudio');
+    if (pa && !pa.paused) window.viferorNativePodcastPause ? window.viferorNativePodcastPause() : pa.pause();
+  } catch {}
+  try {
+    const ra = document.getElementById('audioPlayer');
+    if (ra && !ra.paused) window.viferorNativeRadioPause ? window.viferorNativeRadioPause() : ra.pause();
+  } catch {}
+}
+async function prepareTrack(t, pos = 0) {
+  const a = musicAudio();
+  if (!a || !t) return;
+  musicState.current = t;
+  const src = await trackSrc(t);
+  if (!src) return;
+  a.preload = 'metadata';
+  a.src = src;
+  a.onloadedmetadata = () => {
+    if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
+    updateMusicPlayerUI();
+  };
+  updateMusicNowUI();
+}
+async function startTrack(t, { pos = 0 } = {}) {
+  const a = musicAudio();
+  if (!a || !t) return;
+  stopOtherDeck();
+  window.musicFx?.resume?.();
+  pauseOtherAudio();
+  musicState.current = t;
+  musicCounted = false;
+  musicUserPaused = false;
+  finMusicInterrupt();
+  updateMusicNowUI();
+  let src = '';
+  try {
+    src = await trackSrc(t);
+  } catch {}
+  if (!src) return musicTrackFailed(t);
+  if (musicState.current !== t) return; // otra canción pedida mientras tanto
+  a.src = src;
+  a.onloadedmetadata = () => {
+    if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
+    // En el navegador la duración no viene en las etiquetas: se guarda al conocerla.
+    if (!t.dur && Number.isFinite(a.duration)) {
+      t.dur = a.duration;
+      if (t.cacheKey) idbGet('meta', t.cacheKey).then(m => m && idbPut('meta', t.cacheKey, { ...m, dur: a.duration }));
+    }
+    updateMusicPlayerUI();
+  };
+  try {
+    await a.play();
+    musicErrors = 0;
+  } catch (e) {
+    if (e?.name !== 'AbortError') musicTrackFailed(t);
+  }
+  saveMusicResume();
+  saveMusicQueue();
+  syncMusicAndroid(true);
+  updateMediaSession();
+}
+function musicTrackFailed(t) {
+  try {
+    window.logError?.('MUSIC_AUDIO', 'No se pudo reproducir ' + (t?.id || ''));
+  } catch {}
+  musicErrors++;
+  podToast(`No se pudo reproducir «${t?.title || 'canción'}»`);
+  if (musicErrors < 5 && musicState.queue.length) setTimeout(() => nextTrack(true), 1200);
+}
+function playTrackNow(t) {
+  if (!t) return;
+  if (musicState.current && musicState.current.id !== t.id) pushMusicHistory(musicState.current);
+  musicState.queue = musicState.queue.filter(x => x.id !== t.id);
+  saveMusicQueue();
+  startTrack(t);
+}
+async function nextTrack(auto = false) {
+  const o = musicOpts();
+  const cur = musicState.current;
+  if (auto && cur && o.repeat === 'one') return startTrack(cur);
+  if (musicState.radio && musicState.queue.length < 2) await topUpSongRadio();
+  let next = musicState.queue.shift();
+  if (!next && o.repeat === 'all' && musicState.context.length) {
+    musicState.queue = o.shuffle ? shuffled(musicState.context) : [...musicState.context];
+    next = musicState.queue.shift();
+  }
+  if (!next) {
+    saveMusicQueue();
+    if (!auto) podToast('No hay más canciones en la cola');
+    else updateMusicPlayerUI();
+    return;
+  }
+  if (cur && cur.id !== next.id) pushMusicHistory(cur);
+  saveMusicQueue();
+  return startTrack(next);
+}
+function prevTrack(force = false) {
+  stopOtherDeck();
+  const a = musicAudio();
+  const cur = musicState.current;
+  if (a && cur && a.currentTime > 3 && force !== true) {
+    a.currentTime = 0;
+    return;
+  }
+  let prev = musicState.history.pop();
+  while (prev && cur && prev.id === cur.id) prev = musicState.history.pop();
+  saveMusicHistory();
+  if (!prev) {
+    if (a) a.currentTime = 0;
+    return;
+  }
+  musicState.queue = musicState.queue.filter(x => x.id !== prev.id);
+  if (cur) musicState.queue.unshift(cur);
+  saveMusicQueue();
+  startTrack(prev);
+}
+function toggleMusicPlay() {
+  const a = musicAudio();
+  if (!a) return;
+  if (!musicState.current) {
+    if (musicState.queue.length) nextTrack(false);
+    else if (musicState.tracks.length) playCollection(musicState.tracks, 0, { shuffle: true });
+    return;
+  }
+  const fade = musicEngineOpts().fadePause;
+  if (a.paused) {
+    pauseOtherAudio();
+    musicUserPaused = false;
+    finMusicInterrupt();
+    window.musicFx?.resume?.();
+    if (!a.src) startTrack(musicState.current);
+    else {
+      if (fade) deckLevel(musicState.deck, 0, 0);
+      a.play()
+        .then(() => fade && deckLevel(musicState.deck, 1, 0.35))
+        .catch(() => deckLevel(musicState.deck, 1, 0));
+    }
+  } else {
+    musicUserPaused = true;
+    if (fade && !musicState.xf) {
+      // Fundido corto para que no se oiga un chasquido al pausar.
+      const i = musicState.deck;
+      deckLevel(i, 0, 0.25);
+      setTimeout(() => {
+        if (musicUserPaused && musicState.deck === i) a.pause();
+        deckLevel(i, 1, 0);
+      }, 260);
+    } else {
+      stopOtherDeck();
+      a.pause();
+    }
+  }
+}
+// Reproducir una colección (álbum, carpeta, lista…) desde una canción.
+// how: replace | next | end. Con aleatorio, el resto se baraja.
+function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', label = '', listId = null } = {}) {
+  tracks = (tracks || []).filter(Boolean);
+  if (!tracks.length) return podToast('No hay canciones');
+  if (how !== 'replace') return queueTracks(tracks, how);
+  if (shuffle !== null) setMusicOpt('shuffle', !!shuffle);
+  const sh = musicOpts().shuffle;
+  let first, rest;
+  if (sh && shuffle === true) {
+    const all = shuffled(tracks);
+    first = all[0];
+    rest = all.slice(1);
+  } else {
+    // Por posición, no por canción: en una lista con canciones repetidas se
+    // sigue desde la que has tocado y no desde su primera aparición.
+    const i = Math.max(0, Math.min(Number(start) || 0, tracks.length - 1));
+    first = tracks[i];
+    rest = sh ? shuffled(tracks.filter((t, k) => k !== i)) : tracks.slice(i + 1);
+  }
+  const before = [...musicState.queue];
+  musicState.radio = null;
+  setPlayingList(listId);
+  musicState.context = [...tracks];
+  musicState.queue = rest;
+  // Como playTrackNow, pero sin quitar de la cola las repeticiones de la lista.
+  if (musicState.current && musicState.current.id !== first.id) pushMusicHistory(musicState.current);
+  saveMusicQueue();
+  startTrack(first);
+  if (before.length > 3)
+    podToast(label ? `Reproduciendo ${label}` : 'La cola se ha sustituido', {
+      action: 'Deshacer',
+      onAction: () => {
+        musicState.queue = before;
+        saveMusicQueue();
+      }
+    });
+}
+/* ---------------------------------------------------------------------------
+   Lista que está sonando: si la cambias (ordenar, arrastrar, mezclar, añadir o
+   quitar canciones), la cola sigue el nuevo orden de la lista.
+--------------------------------------------------------------------------- */
+const playingListSig = l => (l && l.type === 'manual' ? JSON.stringify((l.items || []).map(x => x?.id)) : '');
+function setPlayingList(id) {
+  musicState.listId = id || null;
+  musicState.listSig = playingListSig(id && musicListById(id));
+  lsSet(MUS_KEYS.playingList, musicState.listId);
+}
+function syncPlayingListQueue() {
+  const l = musicState.listId && musicListById(musicState.listId);
+  // Solo listas normales (las inteligentes en orden aleatorio cambiarían solas)
+  // y solo si esa lista ha cambiado de verdad: guardar otra lista no toca la cola.
+  if (!l || l.type !== 'manual') return;
+  const sig = playingListSig(l);
+  if (sig === musicState.listSig) return;
+  musicState.listSig = sig;
+  const cur = musicState.current;
+  if (!cur || musicState.radio || musicOpts().shuffle) return;
+  const tracks = musicListTracks(l, { fresh: true });
+  const inList = new Set(tracks.map(t => t.id));
+  const q = musicState.queue;
+  const listLeft = q.filter(t => inList.has(t.id)).length;
+  // Dónde va la canción que suena (si se repite en la lista, la que mejor
+  // encaja con lo que quedaba por escuchar).
+  let pos = -1;
+  tracks.forEach((t, k) => {
+    if (t.id === cur.id && (pos < 0 || Math.abs(tracks.length - k - 1 - listLeft) < Math.abs(tracks.length - pos - 1 - listLeft))) pos = k;
+  });
+  if (pos < 0) return; // la que suena ya no está en la lista: la cola se deja como estaba
+  const firstList = q.findIndex(t => inList.has(t.id));
+  const front = firstList < 0 ? q.filter(t => !inList.has(t.id)) : q.slice(0, firstList); // «a continuación» puestas a mano
+  const back = firstList < 0 ? [] : q.slice(firstList).filter(t => !inList.has(t.id)); // añadidas al final de la cola
+  musicState.context = [...tracks];
+  musicState.queue = [...front, ...tracks.slice(pos + 1), ...back];
+  saveMusicQueue();
+}
+function queueTracks(tracks, how = 'end', { toast = true } = {}) {
+  let items = tracks.filter(t => t && t.id !== musicState.current?.id);
+  if (!items.length) return;
+  if (how === 'next') {
+    const ids = new Set(items.map(t => t.id));
+    musicState.queue = musicState.queue.filter(t => !ids.has(t.id));
+    musicState.queue.unshift(...items);
+  } else {
+    const have = new Set(musicState.queue.map(t => t.id));
+    items = items.filter(t => !have.has(t.id));
+    if (!items.length) return toast && podToast('Ya estaba en la cola');
+    musicState.queue.push(...items);
+  }
+  saveMusicQueue();
+  if (!musicState.current) nextTrack(false);
+  else if (toast) podToast(how === 'next' ? `${plural(items.length, 'canción', 'canciones')} a continuación` : `${plural(items.length, 'canción añadida', 'canciones añadidas')} a la cola`);
+}
+/* ===========================================================================
+   Radio de una canción: cola con música parecida de tu biblioteca
+   (mismo artista, artistas parecidos según ListenBrainz, género y época)
+=========================================================================== */
+const MUS_SIMILAR_KEY = 'radios_viferor_music_similar_v2';
+function artistParts(t) {
+  const set = new Set();
+  [t.artist, t.albumArtist].forEach(v =>
+    String(v || '')
+      .split(/\s*(?:,|;|&|\/|\bfeat\.?|\bft\.?|\bfeaturing\b|\bcon\b|\bwith\b|\bx\b|\by\b)\s*/i)
+      .map(mNorm)
+      .filter(x => x && x !== mNorm(MUS_UNKNOWN_ARTIST))
+      .forEach(x => set.add(x))
+  );
+  return set;
+}
+function genreParts(t) {
+  return new Set(
+    String(t.genre || '')
+      .split(/\s*[;/,]\s*/)
+      .map(mNorm)
+      .filter(Boolean)
+  );
+}
+async function similarArtistNames(name) {
+  const key = mNorm(name);
+  if (!key || key === mNorm(MUS_UNKNOWN_ARTIST)) return [];
+  const all = lsGet(MUS_SIMILAR_KEY, {});
+  const c = all[key];
+  if (c && Date.now() - c.at < (c.names.length ? 14 : 1) * 86400000) return c.names;
+  try {
+    const ctl = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined;
+    const r = await fetch('/api/similar?artist=' + encodeURIComponent(name), { signal: ctl });
+    if (!r.ok) return c?.names || [];
+    const d = await r.json();
+    const names = (d.artists || []).slice(0, 60);
+    all[key] = { at: Date.now(), names };
+    const keys = Object.keys(all);
+    if (keys.length > 300) keys.sort((a, b) => all[a].at - all[b].at).slice(0, keys.length - 300).forEach(k => delete all[k]);
+    lsSet(MUS_SIMILAR_KEY, all);
+    return names;
+  } catch {
+    return c?.names || [];
+  }
+}
+async function buildSongRadio(seed, { exclude = new Set(), count = 50 } = {}) {
+  const seedArtists = artistParts(seed);
+  const seedGenres = genreParts(seed);
+  const related = new Map();
+  (await similarArtistNames(trackArtist(seed))).forEach((n, i) => {
+    const k = mNorm(n);
+    if (!related.has(k)) related.set(k, i);
+  });
+  const favArtists = new Set(musicFavs().artists || []);
+  const favIds = new Set((musicFavs().tracks || []).map(x => x.id));
+  const scored = [];
+  for (const t of musicState.tracks) {
+    if (t.id === seed.id || exclude.has(t.id)) continue;
+    const ta = artistParts(t);
+    const tg = genreParts(t);
+    let s = Math.random() * 14,
+      rel = false;
+    if ([...ta].some(a => seedArtists.has(a))) (s += 32), (rel = true);
+    else {
+      let best = Infinity;
+      ta.forEach(a => related.has(a) && (best = Math.min(best, related.get(a))));
+      if (best < Infinity) (s += 30 - Math.min(best, 30) * 0.5), (rel = true);
+    }
+    if (seedGenres.size && tg.size) {
+      if ([...tg].some(g => seedGenres.has(g))) (s += 22), (rel = true);
+      else s -= 6;
+    }
+    if (seed.year && t.year) {
+      const dy = Math.abs(seed.year - t.year);
+      s += dy <= 2 ? 8 : dy <= 5 ? 5 : dy <= 10 ? 1 : -4;
+      if (dy <= 3 && !seedGenres.size) rel = true;
+    }
+    if (seed.albumKey && t.albumKey === seed.albumKey) s += 6;
+    if (favIds.has(t.id)) s += 8;
+    if (favArtists.has(mNorm(trackArtist(t)))) s += 4;
+    s += Math.min(6, Math.log2(1 + trackPlays(t)) * 2);
+    if (!rel) s -= 25;
+    scored.push({ t, s, a: mNorm(trackArtist(t)) });
+  }
+  scored.sort((x, y) => y.s - x.s);
+  // Variedad: pocas del mismo artista y del mismo álbum.
+  const seedA = mNorm(trackArtist(seed));
+  const perArtist = new Map(),
+    perAlbum = new Map(),
+    picked = [];
+  const albumCap = Math.max(3, Math.round(count / 10));
+  const taken = new Set();
+  for (const x of scored) {
+    if (picked.length >= count || x.s <= 0) break;
+    const na = perArtist.get(x.a) || 0,
+      nb = perAlbum.get(x.t.albumKey) || 0;
+    if (na >= (x.a === seedA ? Math.max(4, Math.round(count / 8)) : Math.max(3, Math.round(count / 16))) || nb >= albumCap) continue;
+    perArtist.set(x.a, na + 1);
+    perAlbum.set(x.t.albumKey, nb + 1);
+    picked.push(x);
+    taken.add(x.t.id);
+  }
+  // Biblioteca pequeña: se completa con las más parecidas aunque se repita artista,
+  // y si aun así quedan pocas, con lo mejor del resto.
+  const minLen = Math.min(count, 15);
+  for (const x of scored) {
+    if (picked.length >= count || (x.s <= 0 && picked.length >= minLen)) break;
+    if (!taken.has(x.t.id)) picked.push(x), taken.add(x.t.id);
+  }
+  // Orden: que no suenen seguidas dos del mismo artista si se puede evitar.
+  const out = [];
+  let last = seedA;
+  while (picked.length) {
+    let k = picked.findIndex((x, i) => i < 6 && x.a !== last);
+    if (k < 0) k = 0;
+    const [x] = picked.splice(k, 1);
+    out.push(x.t);
+    last = x.a;
+  }
+  return out;
+}
+async function startSongRadio(seed) {
+  if (!seed) return;
+  if (musicState.tracks.length < 2) return podToast('Hace falta más música en la biblioteca');
+  podToast(`📻 Creando la radio de «${seed.title}»…`, { ms: 8000 });
+  const list = await buildSongRadio(seed);
+  if (!list.length) return podToast('No hay canciones parecidas en tu biblioteca');
+  const before = [...musicState.queue];
+  musicState.context = [seed, ...list];
+  musicState.queue = list;
+  musicState.radio = { seed: seed.id, title: seed.title };
+  setPlayingList(null);
+  if (musicState.current?.id === seed.id) {
+    saveMusicQueue();
+    if (musicAudio().paused) toggleMusicPlay();
+  } else playTrackNow(seed);
+  podToast(`📻 Radio de «${seed.title}»: ${plural(list.length, 'canción', 'canciones')} parecidas`, {
+    action: 'Deshacer',
+    onAction: () => {
+      musicState.queue = before;
+      musicState.radio = null;
+      saveMusicQueue();
+    }
+  });
+}
+// Radio sin fin: cuando quedan pocas en la cola se añaden más parecidas.
+let musRadioBusy = false;
+async function topUpSongRadio() {
+  const r = musicState.radio;
+  if (!r || musRadioBusy || musicState.queue.length > 3) return;
+  const seed = musicState.byId.get(r.seed);
+  if (!seed) return (musicState.radio = null);
+  musRadioBusy = true;
+  try {
+    const exclude = new Set([seed.id, musicState.current?.id, ...musicState.queue.map(t => t.id), ...musicState.history.slice(-80).map(t => t?.id)]);
+    let more = await buildSongRadio(seed, { exclude, count: 20 });
+    if (!more.length) more = await buildSongRadio(seed, { exclude: new Set([musicState.current?.id, ...musicState.queue.map(t => t.id)]), count: 20 });
+    if (musicState.radio !== r || !more.length) return;
+    musicState.queue.push(...more);
+    musicState.context.push(...more);
+    saveMusicQueue();
+  } finally {
+    musRadioBusy = false;
+  }
+}
+function toggleMusicShuffle() {
+  const on = !musicOpts().shuffle;
+  if (on) {
+    musicState.queue = shuffled(musicState.queue);
+  } else if (musicState.context.length) {
+    // Vuelve al orden original de lo que estabas escuchando.
+    const pos = new Map(musicState.context.map((t, i) => [t.id, i]));
+    musicState.queue = [...musicState.queue].sort((a, b) => (pos.get(a.id) ?? 1e9) - (pos.get(b.id) ?? 1e9));
+  }
+  setMusicOpt('shuffle', on);
+  saveMusicQueue();
+  podToast(on ? '🔀 Aleatorio activado' : 'Aleatorio desactivado');
+}
+function cycleMusicRepeat() {
+  const order = ['off', 'all', 'one'];
+  const next = order[(order.indexOf(musicOpts().repeat) + 1) % 3];
+  setMusicOpt('repeat', next);
+  podToast({ off: 'Sin repetir', all: '🔁 Repetir todo', one: '🔂 Repetir esta canción' }[next]);
+}
+
+// Interrupciones (notificación, llamada…): como en la radio y los podcasts.
+function finMusicInterrupt() {
+  musicInterrupted = 0;
+  clearInterval(musicInterruptTimer);
+  musicInterruptTimer = null;
+}
+function startMusicInterrupt(a) {
+  musicInterrupted = Date.now();
+  clearInterval(musicInterruptTimer);
+  musicInterruptTimer = setInterval(() => {
+    if (!musicInterrupted || !a.paused) return finMusicInterrupt();
+    const t = Date.now() - musicInterrupted;
+    if (t > 15 * 60 * 1000) {
+      finMusicInterrupt();
+      musicUserPaused = true;
+      syncMusicAndroid(true);
+      updateMusicPlayerUI();
+      return;
+    }
+    if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
+      finMusicInterrupt();
+      a.play().catch(() => {});
+    }
+  }, 1500);
+}
+
+/* ---- Android (notificación) y teclas multimedia del navegador ---- */
+function absUrl(u) {
+  try {
+    return u ? new URL(u, location.href).href : '';
+  } catch {
+    return '';
+  }
+}
+function syncMusicAndroid(force = false) {
+  try {
+    const a = musicAudio();
+    const t = musicState.current;
+    if (!a || !t || !window.Android) return;
+    const playing = (!a.paused && !a.ended) || !!musicInterrupted;
+    const d = Number.isFinite(a.duration) ? a.duration : t.dur || 0;
+    const pos = Number.isFinite(a.currentTime) ? a.currentTime : 0;
+    if (force && typeof window.Android.startMusicMedia === 'function') {
+      window.Android.setPlaybackSection?.('music');
+      window.Android.startMusicMedia(t.title || 'Canción', trackSub(t) || 'Mi música', absUrl(t.art), d, pos, playing);
+    } else if (typeof window.Android.updatePodcastMedia === 'function') {
+      window.Android.updatePodcastMedia(d, pos, playing);
+    }
+  } catch {}
+}
+function updateMediaSession() {
+  if (!('mediaSession' in navigator) || window.Android) return;
+  const t = musicState.current;
+  if (!t) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: trackArtist(t), album: t.album || '', artwork: t.art ? [{ src: absUrl(t.art) }] : [] });
+    navigator.mediaSession.setActionHandler('play', () => toggleMusicPlay());
+    navigator.mediaSession.setActionHandler('pause', () => toggleMusicPlay());
+    navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack(false));
+    navigator.mediaSession.setActionHandler('previoustrack', () => prevTrack());
+  } catch {}
+}
+window.viferorNativeMusicPlay = () => {
+  musicUserPaused = false;
+  const a = musicAudio();
+  if (a && musicState.current) {
+    pauseOtherAudio();
+    a.play().catch(() => {});
+  }
+};
+window.viferorNativeMusicPause = () => {
+  finMusicInterrupt();
+  musicUserPaused = true;
+  musicAudio()?.pause();
+};
+window.viferorNativeMusicNext = () => nextTrack(false);
+window.viferorNativeMusicPrevious = () => prevTrack();
+window.viferorNativeMusicSeek = delta => {
+  const a = musicAudio();
+  if (a && Number.isFinite(a.currentTime)) a.currentTime = Math.max(0, Math.min(a.duration || Infinity, a.currentTime + (Number(delta) || 0)));
+};
+window.viferorNativeMusicSetPosition = ms => {
+  const a = musicAudio();
+  if (a && Number.isFinite(a.duration)) a.currentTime = Math.max(0, Math.min(a.duration, (Number(ms) || 0) / 1000));
+};
+
+/* ===========================================================================
+   Listas de música (normales e inteligentes)
+=========================================================================== */
+const MUS_SMART_DEFAULTS = {
+  source: 'all', // all | artists | albums | folders | genres
+  picked: [], // claves elegidas (artistas, álbumes, carpetas o géneros)
+  state: 'all', // all | never | played | recent | forgotten
+  addedDays: 0,
+  minMin: 0,
+  maxMin: 0,
+  yearFrom: 0,
+  yearTo: 0,
+  order: 'random',
+  limit: 100
+};
+const MUS_SMART_LABELS = {
+  source: { all: 'Toda mi música', favs: 'Mis favoritos (canciones, álbumes, artistas…)', artists: 'Artistas elegidos', albums: 'Álbumes elegidos', folders: 'Carpetas elegidas', genres: 'Géneros elegidos' },
+  state: {
+    all: 'Todas',
+    never: 'Nunca escuchadas',
+    played: 'Escuchadas alguna vez',
+    recent: 'Escuchadas en los últimos 30 días',
+    forgotten: 'Olvidadas (no escuchadas en 30 días)'
+  },
+  order: {
+    random: 'Al azar',
+    plays: 'Más escuchadas primero',
+    lastPlayed: 'Escuchadas hace menos primero',
+    added: 'Añadidas recientemente primero',
+    title: 'Título (A-Z)',
+    artist: 'Artista y álbum',
+    album: 'Álbum (en su orden)',
+    year: 'Año (más nuevas primero)',
+    yearAsc: 'Año (más antiguas primero)',
+    shortest: 'Más cortas primero',
+    longest: 'Más largas primero'
+  }
+};
+const MUS_SMART_TEMPLATES = [
+  { icon: '🔥', name: 'Más escuchadas', hint: 'Tu top 50', rules: { state: 'played', order: 'plays', limit: 50 } },
+  { icon: '🆕', name: 'Añadidas recientemente', hint: 'Lo que entró en los últimos 30 días', rules: { addedDays: 30, order: 'added', limit: 100 } },
+  { icon: '✨', name: 'Nunca escuchadas', hint: 'Al azar', rules: { state: 'never', order: 'random', limit: 100 } },
+  { icon: '🕸', name: 'Olvidadas', hint: 'Escuchadas antes, pero no en 30 días', rules: { state: 'forgotten', order: 'random', limit: 50 } },
+  { icon: '🔀', name: 'Mezcla de 100', hint: 'Cien canciones al azar', rules: { order: 'random', limit: 100 } },
+  { icon: '🛠', name: 'Personalizada', hint: 'Elige artistas, carpetas, géneros, años…', rules: {} }
+];
+function loadMusicLists() {
+  const x = lsGet(MUS_KEYS.lists, []);
+  musicState.lists = (Array.isArray(x) ? x : []).map(normMusicList).filter(Boolean);
+}
+function normMusicList(l) {
+  if (!l || !l.name) return null;
+  const out = { id: String(l.id || newListId()), name: String(l.name).slice(0, 80), type: l.type === 'smart' ? 'smart' : 'manual', createdAt: l.createdAt || Date.now(), updatedAt: l.updatedAt || Date.now() };
+  if (out.type === 'smart') out.rules = { ...MUS_SMART_DEFAULTS, ...(l.rules || {}) };
+  else out.items = (Array.isArray(l.items) ? l.items : []).filter(x => x && x.id).map(x => ({ id: x.id, title: x.title || '', artist: x.artist || '', album: x.album || '', folder: x.folder || '', file: x.file || '', dur: x.dur || 0 }));
+  return out;
+}
+function saveMusicLists() {
+  if (!lsSet(MUS_KEYS.lists, musicState.lists)) podToast('⚠️ No se pudo guardar: el almacenamiento está lleno');
+  try {
+    syncPlayingListQueue();
+  } catch {}
+  document.dispatchEvent(new CustomEvent('music:lists'));
+}
+function musicListById(id) {
+  return musicState.lists.find(l => l.id === id) || null;
+}
+function createMusicList(name, tracks = []) {
+  const l = normMusicList({ name, type: 'manual', items: tracks.map(minimalTrack) });
+  musicState.lists.push(l);
+  saveMusicLists();
+  return l;
+}
+function addTracksToList(l, tracks, { allowSame = false } = {}) {
+  const have = new Set(l.items.map(x => x.id));
+  const add = tracks.filter(t => t && (allowSame || !have.has(t.id)));
+  l.items.push(...add.map(minimalTrack));
+  l.updatedAt = Date.now();
+  saveMusicLists();
+  return { added: add.length, already: tracks.length - add.length };
+}
+// Canciones de una lista normal que siguen en la biblioteca (y cuántas faltan).
+function manualListTracks(l) {
+  const out = [];
+  let missing = 0;
+  l.items.forEach(x => {
+    const t = resolveTrack(x);
+    if (t) out.push(t);
+    else missing++;
+  });
+  return { tracks: out, missing };
+}
+function smartPool(r) {
+  const picked = new Set((r.picked || []).map(String));
+  switch (r.source) {
+    case 'artists':
+      return musicState.tracks.filter(t => picked.has(mNorm(trackArtist(t))));
+    case 'albums':
+      return musicState.tracks.filter(t => picked.has(t.albumKey));
+    case 'genres':
+      return musicState.tracks.filter(t => String(t.genre || '').split(/\s*[;/,]\s*/).some(g => picked.has(mNorm(g))));
+    case 'folders':
+      return musicState.tracks.filter(t => [...picked].some(p => t.folder === p || t.folder.startsWith(p + '/')));
+    case 'favs':
+      return favPool();
+    default:
+      return musicState.tracks;
+  }
+}
+function resolveMusicSmart(rules) {
+  const r = { ...MUS_SMART_DEFAULTS, ...rules };
+  const now = Date.now(),
+    DAY = 86400000;
+  let list = smartPool(r).filter(t => {
+    const plays = trackPlays(t),
+      last = trackLastPlayed(t);
+    if (r.state === 'never' && plays) return false;
+    if (r.state === 'played' && !plays) return false;
+    if (r.state === 'recent' && (!last || now - last > 30 * DAY)) return false;
+    if (r.state === 'forgotten' && (!plays || now - last <= 30 * DAY)) return false;
+    if (r.addedDays && (!t.added || now - t.added > r.addedDays * DAY)) return false;
+    if (t.dur) {
+      if (r.minMin && t.dur < r.minMin * 60) return false;
+      if (r.maxMin && t.dur > r.maxMin * 60) return false;
+    }
+    if (r.yearFrom && (!t.year || t.year < r.yearFrom)) return false;
+    if (r.yearTo && (!t.year || t.year > r.yearTo)) return false;
+    return true;
+  });
+  if (r.noDups !== false) list = dedupeSongs(list);
+  const by = fn => list.sort(fn);
+  const byAlbum = (a, b) => musCollator.compare(a.album || '', b.album || '') || (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0);
+  switch (r.order) {
+    case 'plays': by((a, b) => trackPlays(b) - trackPlays(a) || trackLastPlayed(b) - trackLastPlayed(a)); break;
+    case 'lastPlayed': by((a, b) => trackLastPlayed(b) - trackLastPlayed(a)); break;
+    case 'added': by((a, b) => (b.added || 0) - (a.added || 0)); break;
+    case 'title': by((a, b) => musCollator.compare(a.title, b.title)); break;
+    case 'artist': by((a, b) => musCollator.compare(trackArtist(a), trackArtist(b)) || (b.year || 0) - (a.year || 0) || byAlbum(a, b)); break;
+    case 'album': by(byAlbum); break;
+    case 'year': by((a, b) => (b.year || 0) - (a.year || 0) || byAlbum(a, b)); break;
+    case 'yearAsc': by((a, b) => (a.year || 9999) - (b.year || 9999) || byAlbum(a, b)); break;
+    case 'shortest': by((a, b) => (a.dur || 1e9) - (b.dur || 1e9)); break;
+    case 'longest': by((a, b) => (b.dur || 0) - (a.dur || 0)); break;
+    default: list = shuffled(list);
+  }
+  return r.limit ? list.slice(0, r.limit) : list;
+}
+// Las inteligentes al azar no cambian cada vez que abres la lista (5 min).
+const musSmartCache = new Map();
+function musicListTracks(l, { fresh = false } = {}) {
+  if (l.type !== 'smart') return manualListTracks(l).tracks;
+  const sig = JSON.stringify(l.rules);
+  const c = musSmartCache.get(l.id);
+  if (!fresh && c && c.sig === sig && Date.now() - c.t < 300000 && c.n === musicState.tracks.length) return c.tracks;
+  const tracks = resolveMusicSmart(l.rules);
+  musSmartCache.set(l.id, { sig, t: Date.now(), n: musicState.tracks.length, tracks });
+  return tracks;
+}
+function musicSmartSummary(r) {
+  r = { ...MUS_SMART_DEFAULTS, ...r };
+  const parts = [r.source === 'all' ? 'Toda mi música' : r.source === 'favs' ? 'Mis favoritos' : `${(r.picked || []).length} ${{ artists: 'artistas', albums: 'álbumes', folders: 'carpetas', genres: 'géneros' }[r.source]}`];
+  if (r.state !== 'all') parts.push(MUS_SMART_LABELS.state[r.state].toLowerCase());
+  if (r.addedDays) parts.push(`añadidas en ${r.addedDays} días`);
+  if (r.minMin) parts.push(`más de ${r.minMin} min`);
+  if (r.maxMin) parts.push(`menos de ${r.maxMin} min`);
+  if (r.yearFrom || r.yearTo) parts.push(`años ${r.yearFrom || '…'}–${r.yearTo || '…'}`);
+  parts.push(MUS_SMART_LABELS.order[r.order].toLowerCase());
+  if (r.limit) parts.push(`máx. ${r.limit}`);
+  return parts.join(' · ');
+}
+function chooseMusicListFor(tracks) {
+  tracks = tracks.filter(Boolean);
+  if (!tracks.length) return;
+  const save = l =>
+    confirmListAdd(l, tracks, (sel, o) => {
+      const r = addTracksToList(l, sel, o);
+      podToast(r.added ? `${plural(r.added, 'canción añadida', 'canciones añadidas')} a «${l.name}»${r.already ? ` · ${r.already} ya estaban` : ''}` : `Ya estaba${tracks.length > 1 ? 'n' : ''} en «${l.name}»`, {
+        action: 'Abrir',
+        onAction: () => openMusicScreen('list:' + l.id)
+      });
+    });
+  const createNew = async () => {
+    const name = await podPromptText({ title: 'Nueva lista', label: 'Nombre de la lista', placeholder: 'Para correr, para el coche…', ok: 'Crear y añadir' });
+    if (name) confirmListAdd(null, tracks, (sel, o) => {
+      const l = createMusicList(name, []);
+      addTracksToList(l, sel, o);
+      podToast(`Lista «${l.name}»: ${plural(l.items.length, 'canción', 'canciones')}`, { action: 'Abrir', onAction: () => openMusicScreen('list:' + l.id) });
+    }, { listName: name });
+  };
+  const lists = musicState.lists.filter(l => l.type === 'manual');
+  if (!lists.length) return createNew();
+  podSheet({
+    title: 'Añadir a una lista',
+    subtitle: tracksSummary(tracks),
+    items: [
+      { icon: '＋', label: 'Nueva lista…', on: createNew },
+      { sep: true },
+      ...lists.map(l => {
+        const inside = tracks.length === 1 && l.items.some(x => x.id === tracks[0].id);
+        return { icon: '📃', label: l.name, hint: inside ? 'Ya está en esta lista' : plural(l.items.length, 'canción', 'canciones'), checked: inside, on: () => save(l) };
+      })
+    ]
+  });
+}
+function downloadText(name, content, mime) {
+  if (window.Android && typeof window.Android.saveTextFile === 'function') return window.Android.saveTextFile(name, content, mime);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function listSlug(name) {
+  return name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'lista';
+}
+function exportMusicList(l, format = 'json') {
+  if (format === 'm3u') {
+    // Rutas relativas (carpeta/archivo): las entienden VLC, Poweramp, foobar2000…
+    const tracks = musicListTracks(l);
+    const body = tracks.map(t => `#EXTINF:${Math.round(t.dur || -1)},${trackArtist(t)} - ${t.title}\n${t.folder ? t.folder + '/' : ''}${t.file || t.title}`).join('\n');
+    return downloadText(`${listSlug(l.name)}.m3u8`, `#EXTM3U\n#PLAYLIST:${l.name}\n${body}\n`, 'audio/x-mpegurl');
+  }
+  downloadText(`radios-viferor-musica-${listSlug(l.name)}.json`, JSON.stringify({ type: 'radios-viferor-music-playlist', version: 1, exportedAt: new Date().toISOString(), list: l }, null, 2), 'application/json');
+}
+// M3U de otros reproductores: se buscan las canciones por carpeta y nombre de archivo.
+function tracksFromM3u(text) {
+  const byFile = new Map();
+  musicState.tracks.forEach(t => {
+    const k = mNorm(t.file);
+    if (!byFile.has(k)) byFile.set(k, []);
+    byFile.get(k).push(t);
+  });
+  const out = [];
+  let missing = 0;
+  String(text)
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => s && !s.startsWith('#'))
+    .forEach(line => {
+      const parts = line.replace(/\\/g, '/').split('/').filter(Boolean);
+      const file = mNorm(decodeURIComponent(parts.pop() || ''));
+      const parent = mNorm(decodeURIComponent(parts.pop() || ''));
+      const cands = byFile.get(file) || [];
+      const t = cands.find(c => mNorm(c.folder.split('/').at(-1)) === parent) || cands[0];
+      if (t) out.push(t);
+      else missing++;
+    });
+  return { tracks: out, missing };
+}
+function importMusicListFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.m3u,.m3u8,application/json,audio/x-mpegurl';
+  input.onchange = () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const text = String(r.result || '');
+        if (/\.m3u8?$/i.test(f.name) || text.trimStart().startsWith('#EXTM3U')) {
+          const { tracks, missing } = tracksFromM3u(text);
+          if (!tracks.length) throw Error('Ninguna canción de esa lista está en tu música.');
+          const name = (text.match(/^#PLAYLIST:(.+)$/m)?.[1] || stripExt(f.name)).trim();
+          return confirmListAdd(
+            null,
+            tracks,
+            sel => {
+              const l = createMusicList(name, sel);
+              podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`);
+              openMusicScreen('list:' + l.id);
+            },
+            { listName: name }
+          );
+        }
+        const d = JSON.parse(text);
+        const raw = d?.type === 'radios-viferor-music-playlist' ? [d.list] : Array.isArray(d?.lists) ? d.lists : [];
+        const got = raw.map(x => normMusicList({ ...x, id: newListId() })).filter(Boolean);
+        if (!got.length) throw Error('El archivo no contiene ninguna lista de música.');
+        got.forEach(l => musicState.lists.push(l));
+        saveMusicLists();
+        podToast(got.length === 1 ? `Lista «${got[0].name}» importada` : `${got.length} listas importadas`);
+        if (got.length === 1) openMusicScreen('list:' + got[0].id);
+      } catch (e) {
+        alert('No se pudo importar: ' + (e?.message || e));
+      }
+    };
+    r.readAsText(f);
+  };
+  input.click();
+}
+
+/* ===========================================================================
+   Navegación
+=========================================================================== */
+function openMusicScreen(screen, { replace = false } = {}) {
+  if (!musicViewActive()) switchToMusic(true);
+  const st = { ...(history.state || {}), musicScreen: screen };
+  delete st.podcastScreen;
+  if (replace) history.replaceState(st, '');
+  else history.pushState(st, '');
+  musicState.screen = screen;
+  renderMusicScreen();
+  const c = $m('musicContent');
+  if (c && !replace) c.scrollTop = 0;
+}
+window.openMusicScreen = openMusicScreen;
+function restoreMusicHistory(st) {
+  if (!musicViewActive()) switchToMusic(true);
+  musicState.screen = st?.musicScreen || 'tab';
+  renderMusicScreen();
+}
+window.restoreMusicHistory = restoreMusicHistory;
+function backFromMusic() {
+  if (musicState.search) {
+    setMusicSearch('');
+    return;
+  }
+  if (musicState.screen !== 'tab') {
+    if (history.state?.musicScreen) history.back();
+    else {
+      musicState.screen = 'tab';
+      renderMusicScreen();
+    }
+    return;
+  }
+  switchToRadios();
+}
+window.backFromMusic = backFromMusic;
+function switchToMusic(fromHistory = false) {
+  ['viewFav', 'viewSearch', 'viewPodcasts'].forEach(id => $m(id)?.classList.remove('active'));
+  $m('viewMusic')?.classList.add('active');
+  document.body.classList.remove('podcasts-active', 'podcast-detail-active', 'podcast-subs-fullscreen', 'podcast-results-active', 'pod-adding');
+  document.body.classList.add('music-active');
+  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.toggle('active', b.id === 'btnViewMusic'));
+  window.closePodcastMineMenu?.();
+  if (!fromHistory) {
+    const st = { ...(history.state || {}), musicScreen: 'tab' };
+    delete st.podcastScreen;
+    history.pushState(st, '');
+    musicState.screen = 'tab';
+  }
+  renderMusicScreen();
+  ensureMusicLibrary();
+}
+window.switchToMusic = switchToMusic;
+function setMusicTab(tab) {
+  musicState.tab = tab;
+  saveMusicUi({ tab });
+  if (musicState.search) {
+    musicState.search = '';
+    if ($m('musSearch')) $m('musSearch').value = '';
+  }
+  document.querySelectorAll('#musTabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  if (musicState.screen !== 'tab') openMusicScreen('tab');
+  else {
+    renderMusicScreen();
+    $m('musicContent').scrollTop = 0;
+  }
+}
+let musSearchTimer = null;
+function setMusicSearch(q) {
+  musicState.search = q;
+  if ($m('musSearch') && $m('musSearch').value !== q) $m('musSearch').value = q;
+  renderMusicScreen();
+}
+
+/* ===========================================================================
+   Pantallas
+=========================================================================== */
+function musEl(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html != null) e.innerHTML = html;
+  return e;
+}
+function setMusicLoading(text) {
+  const root = $m('musicContent');
+  if (!root || !musicViewActive()) return;
+  let l = root.querySelector('.pod-loading.mus-loading');
+  if (!l) {
+    root.replaceChildren();
+    l = musEl('div', 'pod-loading mus-loading');
+    root.append(l);
+  }
+  l.textContent = text;
+}
+function renderMusicSetup(state, detail = '') {
+  musicState.setup = state;
+  const root = $m('musicContent');
+  if (!root || !musicViewActive()) return;
+  const T = {
+    ask: ['🎵', 'Tu música, aquí', 'Para ver las canciones guardadas en el móvil, Radios Viferor necesita permiso para leer «Música y audio». No se sube nada a internet: todo se queda en el móvil.', [['🔓 Permitir acceso a la música', () => window.Android.requestMusicPermission(), 'primary']]],
+    denied: ['🔒', 'Sin permiso', 'Sin el permiso de «Música y audio» no se pueden leer tus canciones.', [['🔓 Volver a pedir permiso', () => window.Android.requestMusicPermission(), 'primary']]],
+    blocked: ['🔒', 'Permiso desactivado', 'Android ya no deja volver a preguntarlo. Ábrelo en Ajustes → Permisos → «Música y audio» → Permitir, y vuelve aquí.', [['⚙️ Abrir los ajustes de la app', () => window.Android.openAppSettings(), 'primary']]],
+    'old-apk': ['⬆️', 'Actualiza la app', 'Para leer la música del móvil hace falta la versión 1.10.0 o posterior de la app Android (la parte web ya está al día). Instala el APK nuevo encima del actual: tus radios, podcasts y listas se conservan.', []],
+    pick: ['📁', 'Elige tu carpeta de música', window.showDirectoryPicker ? 'Elige la carpeta donde guardas tu música. Se recordará para la próxima vez (solo en este navegador). Los archivos no salen de tu ordenador.' : 'Elige la carpeta donde guardas tu música. En este navegador hay que elegirla en cada visita (en Chrome o Edge se recuerda). Los archivos no salen de tu ordenador.', [['📁 Elegir carpeta', pickMusicFolder, 'primary']]],
+    regrant: ['📁', `Tu carpeta «${musicState.folderName}»`, 'El navegador pide confirmar otra vez el acceso a la carpeta de música.', [[`🔓 Permitir acceso a «${musicState.folderName}»`, regrantMusicFolder, 'primary'], ['📁 Elegir otra carpeta', pickMusicFolder]]],
+    empty: ['🔍', 'No se ha encontrado música', isAndroidApp() ? 'Android no tiene canciones registradas en el móvil. Copia tu música (mp3, m4a, flac, ogg…) a la carpeta «Music» y vuelve a buscar.' : 'Esa carpeta no tiene archivos de música (mp3, m4a, flac, ogg, opus, wav…).', [[isAndroidApp() ? '🔄 Volver a buscar' : '📁 Elegir otra carpeta', () => (isAndroidApp() ? ensureMusicLibrary(true) : pickMusicFolder()), 'primary']]],
+    error: ['⚠️', 'No se pudo leer la música', detail || 'Error desconocido', [['🔄 Reintentar', () => ensureMusicLibrary(true), 'primary']]]
+  }[state] || ['🎵', 'Mi música', '', []];
+  const box = musEl('div', 'pod-empty mus-setup', `<div>${T[0]}</div><h3>${pEsc(T[1])}</h3><p>${pEsc(T[2])}</p>`);
+  const acts = musEl('div', 'pod-empty-actions');
+  T[3].forEach(([label, fn, cls]) => {
+    const b = musEl('button', cls || '', pEsc(label));
+    b.type = 'button';
+    b.onclick = fn;
+    acts.append(b);
+  });
+  box.append(acts);
+  root.replaceChildren(box);
+}
+async function regrantMusicFolder() {
+  const dir = await idbGet('kv', 'dir');
+  if (!dir) return pickMusicFolder();
+  try {
+    if ((await dir.requestPermission({ mode: 'read' })) === 'granted') return scanFolderHandle(dir);
+  } catch {}
+  podToast('Sin permiso para esa carpeta');
+}
+async function ensureMusicLibrary(force = false) {
+  if (musicState.loading || (musicState.loaded && !force)) return;
+  if (isAndroidApp()) {
+    if (!androidMusicApi()) return renderMusicSetup('old-apk');
+    let st = 'ask';
+    try {
+      st = window.Android.musicPermissionStatus();
+    } catch {}
+    if (st !== 'granted') return renderMusicSetup(st === 'blocked' ? 'blocked' : 'ask');
+    musicState.loading = true;
+    setMusicLoading('Buscando música en el móvil…');
+    try {
+      const tracks = await loadAndroidLibrary();
+      musicState.loading = false;
+      if (!tracks.length) return renderMusicSetup('empty');
+      finishLibrary(tracks, 'android');
+    } catch (e) {
+      musicState.loading = false;
+      renderMusicSetup(e?.message === 'permission' ? 'ask' : 'error', e?.message);
+    }
+    return;
+  }
+  if (force && musicState.source === 'files') return pickMusicFolder();
+  const dir = await idbGet('kv', 'dir');
+  if (dir && typeof dir.queryPermission === 'function') {
+    musicState.folderName = dir.name;
+    let p = 'prompt';
+    try {
+      p = await dir.queryPermission({ mode: 'read' });
+    } catch {}
+    if (p === 'granted') return scanFolderHandle(dir);
+    return renderMusicSetup('regrant');
+  }
+  renderMusicSetup('pick');
+}
+window.onAndroidMusicPermission = granted => {
+  if (granted) ensureMusicLibrary(true);
+  else renderMusicSetup(window.Android?.musicPermissionStatus?.() === 'blocked' ? 'blocked' : 'denied');
+};
+
+function renderMusicScreen() {
+  const root = $m('musicContent');
+  if (!root) return;
+  document.querySelectorAll('#musTabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === musicState.tab));
+  if (!musicState.loaded) {
+    if (!musicState.loading && musicState.setup) renderMusicSetup(musicState.setup);
+    else if (!musicState.loading) setMusicLoading('Cargando…');
+    return;
+  }
+  if (!musicState.tracks.length && musicState.screen !== 'fmanage') return musicState.allTracks?.length ? renderAllExcluded(root) : renderMusicSetup('empty');
+  const s = musicState.screen || 'tab';
+  root.replaceChildren();
+  document.body.classList.toggle('mus-detail', s !== 'tab' && !musicState.search);
+  if (musicState.search) return renderMusicSearch(root, musicState.search);
+  if (s === 'tab') return renderMusicTab(root, musicState.tab);
+  const [kind, ...rest] = s.split(':');
+  const key = rest.join(':');
+  if (kind === 'album') return renderAlbum(root, key);
+  if (kind === 'artist') return renderArtist(root, key);
+  if (kind === 'folder') return renderFolder(root, key, true);
+  if (kind === 'genre') return renderGenre(root, key);
+  if (kind === 'list') return renderMusicList(root, key);
+  if (kind === 'queue') return renderMusicQueue(root);
+  if (kind === 'fmanage') return renderFolderManager(root);
+  if (kind === 'short') return renderShortTracks(root, Number(key) || 30);
+  if (kind === 'dups') return renderDuplicates(root, key);
+  renderMusicTab(root, musicState.tab);
+}
+
+// ---- piezas comunes
+function musArtHtml(art, name, cls = '') {
+  const hue = [...String(name || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 11);
+  return `<span class="mus-art ${cls}" style="--ph:${hue}"><span>${pEsc(podcastInitials(name || '♪'))}</span>${art ? `<img src="${pEsc(art)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}</span>`;
+}
+function trackRow(t, i, o = {}) {
+  const row = musEl('div', 'pod-qrow mus-row' + (o.noArt ? ' mus-numbered' : '') + (musicState.current?.id === t.id ? ' is-current' : ''));
+  row.dataset.id = t.id;
+  const lead = o.handle ? '<button class="pod-qhandle" type="button" aria-label="Arrastrar para cambiar el orden">⠿</button>' : '';
+  const num = o.num != null ? `<span class="qnum">${o.num}</span>` : '';
+  const art = o.noArt ? '' : musArtHtml(t.art, t.album || t.title, 'mus-art-s');
+  row.innerHTML = `${lead}${num}${art}<div class="pod-qinfo"><strong>${isMusicFav('tracks', t.id) ? '<span class="mus-favmark" aria-label="Favorita">★</span>' : ''}${pEsc(t.title)}</strong><small>${pEsc(o.sub != null ? o.sub : trackSub(t))}</small></div><span class="mus-dur">${pEsc(fmtDur(t.dur))}</span><div class="pod-qbtns">${o.onRemove ? '<button class="pod-qdel" type="button" aria-label="Quitar">✕</button>' : ''}<button class="pod-qmenu" type="button" aria-label="Más opciones">⋯</button></div>`;
+  row.querySelector('.pod-qinfo').onclick = () => (o.onPlay ? o.onPlay(i) : playTrackNow(t));
+  const art2 = row.querySelector('.mus-art');
+  if (art2) art2.onclick = row.querySelector('.pod-qinfo').onclick;
+  row.querySelector('.pod-qmenu').onclick = () => openTrackMenu(t, { extra: o.menuExtra ? o.menuExtra(t, i) : [] });
+  if (o.onRemove) row.querySelector('.pod-qdel').onclick = () => o.onRemove(i);
+  return row;
+}
+// Listas largas: se pintan a trozos según bajas.
+function appendRowsChunked(container, items, make, chunk = 120) {
+  let i = 0;
+  const sentinel = musEl('div', 'mus-sentinel');
+  container.append(sentinel);
+  let io = null;
+  const more = () => {
+    const end = Math.min(items.length, i + chunk);
+    const frag = document.createDocumentFragment();
+    for (; i < end; i++) frag.append(make(items[i], i));
+    sentinel.before(frag);
+    if (i >= items.length) {
+      io?.disconnect();
+      sentinel.remove();
+    }
+  };
+  more();
+  if (i < items.length && 'IntersectionObserver' in window) {
+    io = new IntersectionObserver(es => es.some(e => e.isIntersecting) && more(), { root: $m('musicContent'), rootMargin: '800px' });
+    io.observe(sentinel);
+  } else while (i < items.length) more();
+}
+function collectionActions(tracks, { label = '', smart = null, more = null } = {}) {
+  const has = tracks.length > 0;
+  return actionBar([
+    ['▶ Reproducir', () => playCollection(tracks, 0, { shuffle: false, label }), 'primary', !has],
+    ['🔀 Aleatorio', () => playCollection(tracks, 0, { shuffle: true, label }), '', !has],
+    ['⏭ A continuación', () => queueTracks(tracks, 'next'), '', !has],
+    ['➕ A la cola', () => queueTracks(tracks, 'end'), '', !has],
+    more ? ['⋯ Más', more] : ['📃 A una lista', () => chooseMusicListFor(tracks), '', !has]
+  ]);
+}
+function collectionMenu(title, tracks, { smart = null } = {}) {
+  const one = smart && smart.picked?.length === 1 ? smart.picked[0] : null;
+  const favKind = one != null && ['albums', 'artists', 'folders', 'genres'].includes(smart.source) ? smart.source : null;
+  const fav = favKind && isMusicFav(favKind, one);
+  const folder = smart?.source === 'folders' ? one : null;
+  podSheet({
+    title,
+    subtitle: tracksSummary(tracks),
+    items: [
+      { icon: '▶', label: 'Reproducir', on: () => playCollection(tracks, 0, { shuffle: false, label: title }) },
+      { icon: '🔀', label: 'Reproducir en aleatorio', on: () => playCollection(tracks, 0, { shuffle: true, label: title }) },
+      { icon: '⏭', label: 'Reproducir a continuación', on: () => queueTracks(tracks, 'next') },
+      { icon: '➕', label: 'Añadir al final de la cola', on: () => queueTracks(tracks, 'end') },
+      { icon: '📃', label: 'Guardar en una lista…', on: () => chooseMusicListFor(tracks) },
+      smart && { icon: '✨', label: 'Crear lista inteligente con esto', hint: 'Por ejemplo: solo lo no escuchado, al azar', on: () => openMusicSmartEditor(null, { name: title, rules: smart }) },
+      favKind && { icon: fav ? '★' : '☆', label: fav ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleMusicFav(favKind, one, title) },
+      folder && { sep: true },
+      folder && { icon: '🚫', label: 'Excluir esta carpeta', hint: 'Desaparece de canciones, álbumes, artistas, búsqueda…', on: () => setFolderRule(folder, 'exclude', true) },
+      folder && { icon: '✅', label: 'Incluir solo esta carpeta', hint: 'Oculta todo lo que no esté dentro (se pueden incluir varias)', on: () => setFolderRule(folder, 'include', true) }
+    ]
+  });
+}
+function detailHead(title, sub, art, { round = false, onMore = null, fav = null } = {}) {
+  const h = musEl('div', 'pod-section-title pod-detail-head mus-head');
+  h.innerHTML = `<button class="pod-back-btn" type="button">← Volver</button><div class="mus-head-top">${art !== null ? musArtHtml(art, title, 'mus-art-l' + (round ? ' round' : '')) : ''}<div class="pod-detail-title"><h2>${pEsc(title)}</h2>${sub ? `<p class="pod-list-sub">${pEsc(sub)}</p>` : ''}</div>${fav ? `<button class="mus-head-more mus-head-fav${isMusicFav(fav[0], fav[1]) ? ' on' : ''}" type="button" aria-label="Favorito">${isMusicFav(fav[0], fav[1]) ? '★' : '☆'}</button>` : ''}${onMore ? '<button class="mus-head-more" type="button" aria-label="Más opciones">⋯</button>' : ''}</div>`;
+  h.querySelector('.pod-back-btn').onclick = backFromMusic;
+  if (fav)
+    h.querySelector('.mus-head-fav').onclick = e => {
+      const on = toggleMusicFav(fav[0], fav[1], title);
+      e.currentTarget.classList.toggle('on', on);
+      e.currentTarget.textContent = on ? '★' : '☆';
+    };
+  if (onMore) h.querySelector('.mus-head-more:not(.mus-head-fav)').onclick = onMore;
+  return h;
+}
+function tabHead(title, count, extraHtml = '') {
+  return musEl('div', 'mus-tab-head', `<h2>${title} <span>${count}</span></h2>${extraHtml}`);
+}
+function sortSelect(id, options, value) {
+  return `<select id="${id}" class="mus-sort" aria-label="Ordenar">${options.map(([v, t]) => `<option value="${v}"${v === value ? ' selected' : ''}>${pEsc(t)}</option>`).join('')}</select>`;
+}
+
+// ---- pestañas
+function sortedSongs(sort) {
+  const list = [...musicState.tracks];
+  const byAlbum = (a, b) => musCollator.compare(a.album || '', b.album || '') || (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0);
+  const f = {
+    title: (a, b) => musCollator.compare(a.title, b.title),
+    artist: (a, b) => musCollator.compare(trackArtist(a), trackArtist(b)) || byAlbum(a, b),
+    album: (a, b) => byAlbum(a, b),
+    added: (a, b) => (b.added || 0) - (a.added || 0),
+    plays: (a, b) => trackPlays(b) - trackPlays(a) || musCollator.compare(a.title, b.title),
+    dur: (a, b) => (b.dur || 0) - (a.dur || 0),
+    folder: (a, b) => musCollator.compare(a.folder, b.folder) || musCollator.compare(a.file, b.file)
+  }[sort];
+  return list.sort(f || ((a, b) => musCollator.compare(a.title, b.title)));
+}
+function renderMusicTab(root, tab) {
+  const ui = musicUi();
+  if (tab === 'favs') return renderFavsTab(root);
+  if (tab === 'songs') {
+    const list = sortedSongs(ui.songSort);
+    root.append(
+      tabHead(
+        '🎵 Canciones',
+        list.length,
+        sortSelect('musSongSort', [['title', 'Título'], ['artist', 'Artista'], ['album', 'Álbum'], ['added', 'Añadidas recientemente'], ['plays', 'Más escuchadas'], ['dur', 'Más largas'], ['folder', 'Carpeta']], ui.songSort)
+      )
+    );
+    root.querySelector('#musSongSort').onchange = e => {
+      saveMusicUi({ songSort: e.target.value });
+      renderMusicScreen();
+    };
+    root.append(collectionActions(list, { label: 'todas las canciones' }));
+    const box = musEl('div', 'pod-queue');
+    root.append(box);
+    appendRowsChunked(box, list, (t, i) => trackRow(t, i, { onPlay: k => playCollection(list, k) }));
+  } else if (tab === 'albums') {
+    let albums = [...musicState.albums.values()];
+    const s = ui.albumSort;
+    albums.sort(
+      s === 'artist' ? (a, b) => musCollator.compare(a.artist, b.artist) || (b.year || 0) - (a.year || 0) : s === 'year' ? (a, b) => (b.year || 0) - (a.year || 0) || musCollator.compare(a.name, b.name) : s === 'added' ? (a, b) => b.added - a.added : (a, b) => musCollator.compare(a.name, b.name)
+    );
+    root.append(tabHead('💿 Álbumes', albums.length, sortSelect('musAlbumSort', [['name', 'Nombre'], ['artist', 'Artista'], ['year', 'Año'], ['added', 'Añadidos recientemente']], s)));
+    root.querySelector('#musAlbumSort').onchange = e => {
+      saveMusicUi({ albumSort: e.target.value });
+      renderMusicScreen();
+    };
+    root.append(albumGrid(albums));
+  } else if (tab === 'artists') {
+    const artists = [...musicState.artists.values()].sort((a, b) => (a.name === MUS_UNKNOWN_ARTIST) - (b.name === MUS_UNKNOWN_ARTIST) || musCollator.compare(a.name, b.name));
+    root.append(tabHead('🎤 Artistas', artists.length));
+    const box = musEl('div', 'mus-list');
+    root.append(box);
+    appendRowsChunked(box, artists, ar => listRow(musArtHtml(ar.art, ar.name, 'mus-art-s round'), ar.name, `${plural(ar.albums.size, 'álbum', 'álbumes')} · ${plural(ar.tracks.length, 'canción', 'canciones')}`, () => openMusicScreen('artist:' + ar.key), () => collectionMenu(ar.name, artistTracks(ar), { smart: { source: 'artists', picked: [ar.key] } })));
+  } else if (tab === 'folders') {
+    renderFolder(root, '', false);
+  } else if (tab === 'genres') {
+    const genres = [...musicState.genres.values()].sort((a, b) => musCollator.compare(a.name, b.name));
+    root.append(tabHead('🏷️ Géneros', genres.length));
+    if (!genres.length) root.append(musEl('div', 'pod-empty pod-empty-small', '<p>Tus canciones no tienen el género indicado en sus etiquetas.</p>'));
+    const box = musEl('div', 'mus-list');
+    genres.forEach(g => box.append(listRow('<span class="mus-ic">🏷️</span>', g.name, plural(g.tracks.length, 'canción', 'canciones'), () => openMusicScreen('genre:' + g.key), () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } }))));
+    root.append(box);
+  } else if (tab === 'lists') {
+    renderMusicListsTab(root);
+  }
+}
+function listRow(leadHtml, title, sub, onOpen, onMenu) {
+  const r = musEl('div', 'pod-list-card mus-list-row');
+  r.innerHTML = `<button class="pod-list-open" type="button">${leadHtml}<span class="tx"><strong>${pEsc(title)}</strong><small>${pEsc(sub)}</small></span></button>${onMenu ? '<button class="pod-list-more" type="button" aria-label="Más opciones">⋯</button>' : ''}`;
+  r.querySelector('.pod-list-open').onclick = onOpen;
+  if (onMenu) r.querySelector('.pod-list-more').onclick = onMenu;
+  return r;
+}
+function albumGrid(albums) {
+  const g = musEl('div', 'pod-tiles mus-albums');
+  appendRowsChunked(g, albums, al => {
+    const b = musEl('button', 'pod-tile mus-album');
+    b.type = 'button';
+    b.innerHTML = `${musArtHtml(al.art, al.name, 'mus-art-tile')}${isMusicFav('albums', al.key) ? '<span class="mus-tile-fav" aria-label="Favorito">★</span>' : ''}<span class="pod-tile-title">${pEsc(al.name)}</span><small class="mus-tile-sub">${pEsc([al.artist, al.year || ''].filter(Boolean).join(' · '))}</small>`;
+    b.onclick = () => openMusicScreen('album:' + al.key);
+    return b;
+  }, 60);
+  return g;
+}
+function artistTracks(ar) {
+  const order = [...ar.albums].map(k => musicState.albums.get(k)).filter(Boolean).sort((a, b) => (b.year || 0) - (a.year || 0) || musCollator.compare(a.name, b.name));
+  const key = mNorm(ar.name);
+  return order.flatMap(al => al.tracks.filter(t => mNorm(trackArtist(t)) === key));
+}
+
+// ---- detalle
+function renderAlbum(root, key) {
+  const al = musicState.albums.get(key);
+  if (!al) return renderMusicTab(root, musicState.tab);
+  const tr = al.tracks;
+  root.append(detailHead(al.name, [al.artist, al.year || '', tracksSummary(tr)].filter(Boolean).join(' · '), al.art, { fav: ['albums', al.key], onMore: () => collectionMenu(al.name, tr, { smart: { source: 'albums', picked: [al.key] } }) }));
+  root.append(collectionActions(tr, { label: `«${al.name}»` }));
+  const box = musEl('div', 'pod-queue');
+  const multiArtist = al.artists.size > 1;
+  tr.forEach((t, i) => box.append(trackRow(t, i, { num: t.track || i + 1, noArt: true, sub: multiArtist ? trackArtist(t) : fmtDiscFolder(t, al), onPlay: k => playCollection(tr, k) })));
+  root.append(box);
+}
+function fmtDiscFolder(t, al) {
+  return t.disc > 1 || [...new Set(al.tracks.map(x => x.disc))].length > 1 ? `Disco ${t.disc || 1}` : trackArtist(t);
+}
+function renderArtist(root, key) {
+  const ar = musicState.artists.get(key);
+  if (!ar) return renderMusicTab(root, musicState.tab);
+  const tr = artistTracks(ar);
+  root.append(detailHead(ar.name, `${plural(ar.albums.size, 'álbum', 'álbumes')} · ${tracksSummary(tr)}`, ar.art, { round: true, fav: ['artists', ar.key], onMore: () => collectionMenu(ar.name, tr, { smart: { source: 'artists', picked: [ar.key] } }) }));
+  root.append(collectionActions(tr, { label: ar.name }));
+  const albums = [...ar.albums].map(k => musicState.albums.get(k)).filter(Boolean).sort((a, b) => (b.year || 0) - (a.year || 0));
+  if (albums.length > 1 || albums[0]?.tracks.length !== tr.length) {
+    root.append(musEl('h3', 'pod-list-h', 'Álbumes'));
+    root.append(albumGrid(albums));
+  }
+  root.append(musEl('h3', 'pod-list-h', 'Canciones'));
+  const box = musEl('div', 'pod-queue');
+  tr.forEach((t, i) => box.append(trackRow(t, i, { sub: [t.album, t.year || ''].filter(Boolean).join(' · '), onPlay: k => playCollection(tr, k) })));
+  root.append(box);
+}
+function renderGenre(root, key) {
+  const g = musicState.genres.get(key);
+  if (!g) return renderMusicTab(root, musicState.tab);
+  root.append(detailHead(g.name, tracksSummary(g.tracks), null, { fav: ['genres', g.key], onMore: () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } }) }));
+  root.append(collectionActions(g.tracks, { label: g.name }));
+  const box = musEl('div', 'pod-queue');
+  root.append(box);
+  appendRowsChunked(box, g.tracks, (t, i) => trackRow(t, i, { onPlay: k => playCollection(g.tracks, k) }));
+}
+function renderFolder(root, path, pushed) {
+  const F = musicState.folders;
+  // En la raíz se baja solo mientras haya una única subcarpeta sin canciones.
+  if (!pushed) {
+    let n = F.get('');
+    while (n && n.children.size === 1 && !n.tracks.length) n = F.get([...n.children][0]);
+    path = n?.path || '';
+  }
+  const node = F.get(path);
+  if (!node) return renderMusicTab(root, 'songs');
+  const all = folderTracks(path);
+  const crumbs = path ? path.split('/') : [];
+  if (pushed) root.append(detailHead(node.name, tracksSummary(all), null, { fav: path ? ['folders', path] : null, onMore: () => collectionMenu(node.name, all, { smart: path ? { source: 'folders', picked: [path] } : null }) }));
+  else root.append(tabHead('📁 Carpetas', node.count));
+  root.append(folderFilterBar());
+  if (crumbs.length) {
+    const bc = musEl('nav', 'mus-crumbs');
+    bc.setAttribute('aria-label', 'Ruta');
+    crumbs.forEach((c, i) => {
+      const p = crumbs.slice(0, i + 1).join('/');
+      const b = musEl('button', i === crumbs.length - 1 ? 'on' : '', pEsc(c));
+      b.type = 'button';
+      b.onclick = () => p !== path && openMusicScreen('folder:' + p);
+      bc.append(b);
+    });
+    root.append(bc);
+  }
+  root.append(collectionActions(all, { label: `la carpeta «${node.name}»` }));
+  const subs = [...node.children].map(p => F.get(p)).sort((a, b) => musCollator.compare(a.name, b.name));
+  if (subs.length) {
+    const box = musEl('div', 'mus-list');
+    subs.forEach(sf => box.append(listRow('<span class="mus-ic">📁</span>', sf.name, plural(sf.count, 'canción', 'canciones'), () => openMusicScreen('folder:' + sf.path), () => collectionMenu(sf.name, folderTracks(sf.path), { smart: { source: 'folders', picked: [sf.path] } }))));
+    root.append(box);
+  }
+  if (node.tracks.length) {
+    if (subs.length) root.append(musEl('h3', 'pod-list-h', 'Canciones de esta carpeta'));
+    const box = musEl('div', 'pod-queue');
+    root.append(box);
+    appendRowsChunked(box, node.tracks, (t, i) => trackRow(t, i, { sub: [trackArtist(t), t.file].filter(Boolean).join(' · '), onPlay: k => playCollection(node.tracks, k) }));
+  }
+}
+function renderMusicSearch(root, q) {
+  const words = mNorm(q).split(/\s+/).filter(Boolean);
+  const hay = (...vals) => {
+    const h = mNorm(vals.join(' '));
+    return words.every(w => h.includes(w));
+  };
+  const songs = musicState.tracks.filter(t => hay(t.title, t.artist, t.album, t.file, t.genre)).sort((a, b) => musCollator.compare(a.title, b.title));
+  const albums = [...musicState.albums.values()].filter(a => hay(a.name, a.artist));
+  const artists = [...musicState.artists.values()].filter(a => hay(a.name));
+  const folders = [...musicState.folders.values()].filter(f => f.path && hay(f.name));
+  root.append(tabHead(`🔎 «${pEsc(q)}»`, songs.length + albums.length + artists.length + folders.length));
+  if (!songs.length && !albums.length && !artists.length && !folders.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', '<p>No hay nada que coincida.</p>'));
+    return;
+  }
+  if (artists.length) {
+    root.append(musEl('h3', 'pod-list-h', 'Artistas'));
+    const box = musEl('div', 'mus-list');
+    artists.slice(0, 20).forEach(ar => box.append(listRow(musArtHtml(ar.art, ar.name, 'mus-art-s round'), ar.name, plural(ar.tracks.length, 'canción', 'canciones'), () => openMusicScreen('artist:' + ar.key))));
+    root.append(box);
+  }
+  if (albums.length) {
+    root.append(musEl('h3', 'pod-list-h', 'Álbumes'));
+    root.append(albumGrid(albums.slice(0, 30)));
+  }
+  if (folders.length) {
+    root.append(musEl('h3', 'pod-list-h', 'Carpetas'));
+    const box = musEl('div', 'mus-list');
+    folders.slice(0, 20).forEach(f => box.append(listRow('<span class="mus-ic">📁</span>', f.name, `${f.path} · ${plural(f.count, 'canción', 'canciones')}`, () => openMusicScreen('folder:' + f.path))));
+    root.append(box);
+  }
+  if (songs.length) {
+    root.append(musEl('h3', 'pod-list-h', `Canciones <small>${songs.length}</small>`));
+    root.append(collectionActions(songs, { label: 'los resultados' }));
+    const box = musEl('div', 'pod-queue');
+    root.append(box);
+    appendRowsChunked(box, songs, (t, i) => trackRow(t, i, { onPlay: k => playCollection(songs, k) }));
+  }
+}
+
+// ---- menú de canción
+function openTrackMenu(t, { extra = [] } = {}) {
+  const cur = musicState.current?.id === t.id;
+  const inQ = musicState.queue.some(x => x.id === t.id);
+  const ar = musicState.artists.get(mNorm(trackArtist(t)));
+  podSheet({
+    title: t.title,
+    subtitle: [trackArtist(t), t.album, fmtDur(t.dur)].filter(Boolean).join(' · '),
+    items: [
+      !cur && { icon: '▶', label: 'Reproducir ahora', on: () => playTrackNow(t) },
+      !cur && { icon: '⏭', label: 'Reproducir a continuación', on: () => queueTracks([t], 'next') },
+      !cur && !inQ && { icon: '➕', label: 'Añadir al final de la cola', on: () => queueTracks([t], 'end') },
+      !cur && inQ && {
+        icon: '✕',
+        label: 'Quitar de la cola',
+        on: () => {
+          musicState.queue = musicState.queue.filter(x => x.id !== t.id);
+          saveMusicQueue();
+        }
+      },
+      { icon: isMusicFav('tracks', t.id) ? '★' : '☆', label: isMusicFav('tracks', t.id) ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleMusicFav('tracks', t.id, t.title, t) },
+      { icon: '📃', label: 'Añadir a una lista…', on: () => chooseMusicListFor([t]) },
+      { icon: '📻', label: 'Radio de esta canción', hint: 'Una cola con música parecida de tu biblioteca', on: () => startSongRadio(t) },
+      { icon: '🎤', label: 'Letra', hint: 'Ver, sincronizar, traducir y su significado', on: () => window.openTrackLyrics?.(t) },
+      t.albumKey && musicState.albums.has(t.albumKey) && { icon: '💿', label: `Ir al álbum «${musicState.albums.get(t.albumKey).name}»`, on: () => openMusicScreen('album:' + t.albumKey) },
+      ar && { icon: '🎤', label: `Ir a ${ar.name}`, on: () => openMusicScreen('artist:' + ar.key) },
+      t.folder && { icon: '📁', label: 'Ir a la carpeta', hint: t.folder, on: () => openMusicScreen('folder:' + t.folder) },
+      { icon: 'ℹ️', label: 'Información', on: () => trackInfo(t) },
+      { icon: '✏️', label: 'Editar nombre y etiquetas…', hint: canEditFiles() ? 'Nombre del archivo e ID3 (título, artista, álbum…)' : 'Solo en la app Android', on: () => editTrackFlow(t) },
+      { icon: '🗑', label: 'Eliminar…', hint: 'Del móvil o solo de la biblioteca', on: () => deleteTracksFlow([t]) },
+      ...(extra.length ? [{ sep: true }, ...extra] : [])
+    ]
+  });
+}
+function trackInfo(t) {
+  const plays = trackPlays(t),
+    last = trackLastPlayed(t);
+  const rows = [
+    ['Título', t.title],
+    ['Artista', trackArtist(t)],
+    ['Álbum', t.album],
+    ['Artista del álbum', t.albumArtist],
+    ['Pista', t.track ? (t.disc ? `${t.disc}-` : '') + t.track : ''],
+    ['Año', t.year || ''],
+    ['Género', t.genre],
+    ['Duración', fmtDur(t.dur)],
+    ['Carpeta', t.folder],
+    ['Archivo', t.file],
+    ['Tamaño', t.size ? (t.size / 1048576).toFixed(1).replace('.', ',') + ' MB' : ''],
+    ['Escuchada', plays ? `${plural(plays, 'vez', 'veces')} · última: ${new Date(last).toLocaleDateString('es-ES')}` : 'Nunca']
+  ].filter(r => r[1]);
+  const body = musEl('dl', 'mus-info', rows.map(([k, v]) => `<dt>${pEsc(k)}</dt><dd>${pEsc(v)}</dd>`).join(''));
+  podSheet({ title: 'Información', body, cancel: 'Cerrar' });
+}
+
+/* ---------------------------------------------------------------------------
+   Canciones cortas (para encontrar archivos rotos o cortados)
+--------------------------------------------------------------------------- */
+const MUS_SHORT_STEPS = [5, 15, 30, 60, 120];
+function fmtSecsLabel(n) {
+  return n < 60 ? `${n} s` : n % 60 ? `${Math.floor(n / 60)} min ${n % 60} s` : `${n / 60} min`;
+}
+function shortTracks(secs, { withOk = false } = {}) {
+  const ok = new Set(withOk ? [] : lsGet(MUS_KEYS.shortOk, []));
+  return musicState.tracks.filter(t => (!(t.dur > 0) || t.dur < secs) && !ok.has(pathKey(t))).sort((a, b) => (a.dur || 0) - (b.dur || 0) || musCollator.compare(a.title, b.title));
+}
+async function askShortSecs() {
+  const v = await podPromptText({ title: '⏱ Duración máxima', label: 'Segundos o minutos (por ejemplo 45 o 1:30)', value: String(lsGet(MUS_KEYS.shortSecs, 30)), ok: 'Buscar', placeholder: '30' });
+  if (v == null) return null;
+  const m = String(v).trim().match(/^(\d+)(?:[:.,'](\d{1,2}))?\s*(s|seg|min|m)?$/i);
+  if (!m) return podToast('Escribe un número de segundos, o minutos:segundos'), null;
+  let n = m[2] != null ? Number(m[1]) * 60 + Number(m[2]) : Number(m[1]);
+  if (m[2] == null && /^m/i.test(m[3] || '')) n *= 60;
+  return Math.max(1, Math.min(3600, n));
+}
+function chooseShortTracks() {
+  const last = lsGet(MUS_KEYS.shortSecs, 30);
+  const steps = [...new Set([...MUS_SHORT_STEPS, last])].sort((a, b) => a - b);
+  podSheet({
+    title: '⏱ Canciones cortas',
+    subtitle: 'Sirve para encontrar archivos rotos o cortados. También salen las que no tienen duración.',
+    items: [
+      ...steps.map(n => ({ icon: n === last ? '●' : '○', label: `Menos de ${fmtSecsLabel(n)}`, hint: plural(shortTracks(n).length, 'canción', 'canciones'), on: () => openShortTracks(n) })),
+      { icon: '✏️', label: 'Otra duración…', on: async () => (n => n && openShortTracks(n))(await askShortSecs()) }
+    ]
+  });
+}
+function openShortTracks(n, replace = false) {
+  lsSet(MUS_KEYS.shortSecs, n);
+  openMusicScreen('short:' + n, { replace });
+}
+function renderShortTracks(root, secs) {
+  const songs = shortTracks(secs);
+  const unknown = songs.filter(t => !(t.dur > 0)).length;
+  root.append(detailHead(`Menos de ${fmtSecsLabel(secs)}`, `${plural(songs.length, 'canción', 'canciones')}${unknown ? ` · ${unknown} sin duración` : ''} · de la más corta a la más larga`, null));
+  const chips = musEl('div', 'mus-chips');
+  [...new Set([...MUS_SHORT_STEPS, secs])]
+    .sort((a, b) => a - b)
+    .forEach(n => {
+      const b = musEl('button', n === secs ? 'on' : '', pEsc('< ' + fmtSecsLabel(n)));
+      b.type = 'button';
+      b.onclick = () => openShortTracks(n, true);
+      chips.append(b);
+    });
+  const other = musEl('button', '', '✏️ Otra');
+  other.type = 'button';
+  other.onclick = async () => (n => n && openShortTracks(n, true))(await askShortSecs());
+  chips.append(other);
+  const dupB = musEl('button', '', '👯 Duplicadas');
+  dupB.type = 'button';
+  dupB.onclick = () => openDuplicates(undefined, true);
+  chips.append(dupB);
+  root.append(chips);
+  if (!songs.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', `<p>No hay ninguna canción de menos de ${pEsc(fmtSecsLabel(secs))}. 👍</p>`));
+    return;
+  }
+  root.append(
+    collectionActions(songs, {
+      label: 'estas canciones',
+      more: () =>
+        podSheet({
+          title: 'Canciones cortas',
+          items: [
+            { icon: '🗑', label: 'Eliminar todas…', hint: 'Del móvil o solo de la biblioteca', on: () => deleteTracksFlow(songs) },
+            { icon: '📃', label: 'Guardar como lista…', on: () => chooseMusicListFor(songs) },
+            { icon: '📄', label: 'Exportar sus rutas (.txt)', hint: 'Para localizarlas y borrarlas o reemplazarlas', on: () => downloadText(`canciones-de-menos-de-${secs}s.txt`, songs.map(t => `${fmtDur(t.dur || 0)}\t${[t.folder, t.file].filter(Boolean).join('/') || t.title}`).join('\n') + '\n', 'text/plain') }
+          ]
+        })
+    })
+  );
+  root.append(musEl('p', 'mus-hint', 'Escúchala para comprobarla. Si está rota, ✕ para eliminarla (del móvil o solo de la biblioteca); si está bien, ⋯ → «Está bien» y no volverá a salir aquí.'));
+  const box = musEl('div', 'pod-queue');
+  root.append(box);
+  appendRowsChunked(box, songs, (t, i) =>
+    trackRow(t, i, {
+      sub: (t.dur > 0 ? '' : '⚠️ sin duración · ') + ([t.folder, t.file].filter(Boolean).join('/') || trackSub(t)),
+      onPlay: k => playCollection(songs, k),
+      onRemove: k => deleteTracksFlow([songs[k]]),
+      menuExtra: x => [
+        { icon: '✅', label: 'Está bien: no mostrarla aquí', hint: 'Por ejemplo, una intro corta de verdad', on: () => markShortOk(x, true) },
+        x.folder && { icon: '🙈', label: 'Ocultar su carpeta en Mi música', hint: x.folder, on: () => setFolderRule(x.folder, 'exclude', true) }
+      ].filter(Boolean)
+    })
+  );
+  const okN = shortTracks(secs, { withOk: true }).length - songs.length;
+  if (okN > 0) {
+    const b = musEl('button', 'mus-link', `✅ ${plural(okN, 'canción marcada', 'canciones marcadas')} como bien · volver a mostrarlas`);
+    b.type = 'button';
+    b.onclick = () => {
+      const keys = new Set(shortTracks(secs, { withOk: true }).map(pathKey));
+      lsSet(MUS_KEYS.shortOk, lsGet(MUS_KEYS.shortOk, []).filter(k => !keys.has(k)));
+      renderMusicScreen();
+    };
+    root.append(b);
+  }
+}
+function markShortOk(t, on) {
+  const k = pathKey(t);
+  const set = new Set(lsGet(MUS_KEYS.shortOk, []));
+  on ? set.add(k) : set.delete(k);
+  lsSet(MUS_KEYS.shortOk, [...set].slice(-3000));
+  if (String(musicState.screen).startsWith('short:')) rerenderKeepScroll();
+  if (on) podToast('Marcada como bien', { action: 'Deshacer', onAction: () => markShortOk(t, false) });
+}
+function rerenderKeepScroll() {
+  const c = $m('musicContent'),
+    sc = c?.scrollTop || 0;
+  renderMusicScreen();
+  if (c) c.scrollTop = sc;
+}
+
+/* ===========================================================================
+   Duplicadas: en la biblioteca y al crear o llenar listas
+=========================================================================== */
+// «Canción (feat. X) [Remastered 2011]» → «cancion». Directo/acústica se tratan como otra versión.
+function dupTitle(t) {
+  return mNorm(
+    String(t.title || '')
+      .replace(/^\d{1,3}\s*[-._]\s+/, '')
+      .replace(/\s*[([](feat\.?|ft\.?|with|con)\s[^)\]]*[)\]]/gi, '')
+      .replace(/\s+(feat\.?|ft\.?)\s.*$/i, '')
+      .replace(/\s*[([][^)\]]*\b(remaster(ed|izad[oa])?|explicit|clean|album version|single version|bonus track)\b[^)\]]*[)\]]/gi, '')
+      .replace(/\s+-\s+(\d{4}\s+)?(remaster(ed)?|remasterizad[oa]|single version|album version)(\s+\d{4})?\s*$/i, '')
+      .replace(/\s*[([]\d{4}[)\]]\s*$/, '')
+  );
+}
+function dupArtist(t) {
+  const a = String(t.artist || t.albumArtist || '').split(/\s*(?:,|;|&|\/|\bfeat\.?|\bft\.?|\bfeaturing\b|\bx\b)\s*/i)[0];
+  const k = mNorm(a);
+  return k === mNorm(MUS_UNKNOWN_ARTIST) ? '' : k;
+}
+function songKey(t) {
+  const ti = dupTitle(t);
+  return ti ? dupArtist(t) + '|' + ti : '';
+}
+const DUP_TOL = 3; // segundos de diferencia que se toleran
+function sameSong(a, b) {
+  if (!a || !b) return false;
+  if (a.id === b.id) return true;
+  const k = songKey(a);
+  return !!k && k === songKey(b) && (!(a.dur > 0) || !(b.dur > 0) || Math.abs(a.dur - b.dur) <= DUP_TOL);
+}
+function dupKbps(t) {
+  return t.size > 0 && t.dur > 0 ? Math.round((t.size * 8) / t.dur / 1000) : 0;
+}
+// La copia que conviene conservar: más calidad, etiquetas completas, carátula, fuera de «Descargas»…
+function bestCopy(group) {
+  const favIds = new Set((musicFavs().tracks || []).map(x => x.id));
+  const score = t =>
+    Math.min(dupKbps(t), 1500) / 4 +
+    (t.art ? 20 : 0) +
+    (t.album ? 15 : 0) +
+    (t.artist ? 15 : 0) +
+    (t.year ? 5 : 0) +
+    (t.track ? 5 : 0) +
+    (/(^|\/)(download|downloads|descargas|whatsapp|telegram|bluetooth|tmp|temp|cache)(\/|$)/i.test(t.folder || '') ? -60 : 0) +
+    Math.min(30, trackPlays(t)) +
+    (favIds.has(t.id) ? 40 : 0);
+  return group.reduce((best, t) => (score(t) > score(best) ? t : best), group[0]);
+}
+function dupSignature(group) {
+  return group.map(pathKey).sort().join('\n');
+}
+const MUS_DUP_MODES = {
+  song: { label: 'Misma canción', hint: `Mismo título y artista, duración parecida (±${DUP_TOL} s)` },
+  exact: { label: 'Copias exactas', hint: 'Mismo tamaño y duración' },
+  title: { label: 'Mismo título y artista', hint: 'Aunque dure distinto (versiones, directos…)' }
+};
+function findDuplicateGroups(mode = 'song', tracks = musicState.tracks) {
+  const ignored = new Set(lsGet(MUS_KEYS.dupIgnore, []));
+  const buckets = new Map();
+  for (const t of tracks) {
+    const k = mode === 'exact' ? (t.size > 0 && t.dur > 0 ? `${t.size}|${Math.round(t.dur * 2)}` : '') : songKey(t);
+    if (!k) continue;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(t);
+  }
+  const groups = [];
+  buckets.forEach(list => {
+    if (list.length < 2) return;
+    if (mode !== 'song') return groups.push(list);
+    // Por duración: se agrupan las que se parecen (las sin duración van con todas).
+    const known = list.filter(t => t.dur > 0).sort((a, b) => a.dur - b.dur);
+    const unknown = list.filter(t => !(t.dur > 0));
+    const clusters = [];
+    known.forEach(t => {
+      const c = clusters.at(-1);
+      if (c && t.dur - c[0].dur <= DUP_TOL) c.push(t);
+      else clusters.push([t]);
+    });
+    if (unknown.length) {
+      if (clusters.length) clusters[0].push(...unknown);
+      else clusters.push(unknown);
+    }
+    clusters.filter(c => c.length > 1).forEach(c => groups.push(c));
+  });
+  return groups
+    .filter(g => !ignored.has(dupSignature(g)))
+    .map(g => {
+      const best = bestCopy(g);
+      return { tracks: [best, ...g.filter(t => t !== best)], best };
+    })
+    .sort((a, b) => musCollator.compare(a.best.title, b.best.title));
+}
+function openDuplicates(mode = lsGet(MUS_KEYS.ui, {})?.dupMode || 'song', replace = false) {
+  saveMusicUi({ dupMode: mode });
+  openMusicScreen('dups:' + mode, { replace });
+}
+function renderDuplicates(root, mode) {
+  if (!MUS_DUP_MODES[mode]) mode = 'song';
+  const groups = findDuplicateGroups(mode);
+  const extra = groups.reduce((n, g) => n + g.tracks.length - 1, 0);
+  root.append(detailHead('👯 Canciones duplicadas', groups.length ? `${plural(groups.length, 'grupo', 'grupos')} · ${plural(extra, 'copia sobrante', 'copias sobrantes')}` : 'Ninguna', null));
+  const chips = musEl('div', 'mus-chips');
+  Object.entries(MUS_DUP_MODES).forEach(([k, m]) => {
+    const b = musEl('button', k === mode ? 'on' : '', pEsc(m.label));
+    b.type = 'button';
+    b.title = m.hint;
+    b.onclick = () => openDuplicates(k, true);
+    chips.append(b);
+  });
+  const sh = musEl('button', '', '⏱ Cortas o rotas');
+  sh.type = 'button';
+  sh.onclick = () => openShortTracks(lsGet(MUS_KEYS.shortSecs, 30), true);
+  chips.append(sh);
+  root.append(chips);
+  root.append(musEl('p', 'mus-hint', `${pEsc(MUS_DUP_MODES[mode].hint)}. En cada grupo, la primera (⭐) es la que conviene conservar: más calidad, etiquetas y carátula.`));
+  const ign = lsGet(MUS_KEYS.dupIgnore, []).length;
+  if (!groups.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', '<p>No hay canciones duplicadas. 👍</p>'));
+  } else {
+    const spare = groups.flatMap(g => g.tracks.slice(1));
+    root.append(
+      actionBar([
+        [`🗑 Eliminar las ${spare.length} sobrantes…`, () => deleteTracksFlow(spare), 'primary'],
+        ['📄 Exportar informe (.txt)', () => downloadText(`duplicadas-${mode}.txt`, groups.map(g => g.tracks.map((t, i) => `${i ? '  ✕' : '⭐'} ${fmtDur(t.dur || 0)}  ${dupKbps(t) ? dupKbps(t) + ' kbps  ' : ''}${[t.folder, t.file].filter(Boolean).join('/') || t.title}`).join('\n')).join('\n\n') + '\n', 'text/plain')]
+      ])
+    );
+    const box = musEl('div', 'mus-dups');
+    root.append(box);
+    appendRowsChunked(box, groups, g => dupGroupEl(g), 40);
+  }
+  if (ign) {
+    const b = musEl('button', 'mus-link', `${plural(ign, 'grupo marcado', 'grupos marcados')} como «no son duplicadas» · volver a mostrarlos`);
+    b.type = 'button';
+    b.onclick = () => (lsSet(MUS_KEYS.dupIgnore, []), rerenderKeepScroll());
+    root.append(b);
+  }
+}
+function dupGroupEl(g) {
+  const el = musEl('section', 'mus-dup-group');
+  const b = g.best;
+  el.append(musEl('h4', '', `${pEsc(b.title)} <small>${pEsc(trackArtist(b))} · ${plural(g.tracks.length, 'copia', 'copias')}</small>`));
+  const box = musEl('div', 'pod-queue');
+  g.tracks.forEach((t, i) => {
+    const info = [i === 0 ? '⭐ conservar' : '', dupKbps(t) ? dupKbps(t) + ' kbps' : '', t.size ? (t.size / 1048576).toFixed(1).replace('.', ',') + ' MB' : '', [t.folder, t.file].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+    box.append(trackRow(t, i, { sub: info, onPlay: () => playTrackNow(t), onRemove: () => deleteTracksFlow([t]) }));
+  });
+  el.append(box);
+  el.append(
+    actionBar([
+      [g.tracks.length === 2 ? '🗑 Eliminar la sobrante…' : `🗑 Eliminar las ${g.tracks.length - 1} sobrantes…`, () => deleteTracksFlow(g.tracks.slice(1))],
+      [
+        '✋ No son duplicadas',
+        () => {
+          const sig = dupSignature(g.tracks);
+          lsSet(MUS_KEYS.dupIgnore, [...lsGet(MUS_KEYS.dupIgnore, []), sig].slice(-2000));
+          rerenderKeepScroll();
+          podToast('No volverán a salir juntas', { action: 'Deshacer', onAction: () => (lsSet(MUS_KEYS.dupIgnore, lsGet(MUS_KEYS.dupIgnore, []).filter(x => x !== sig)), rerenderKeepScroll()) });
+        }
+      ]
+    ])
+  );
+  return el;
+}
+
+// Una sola versión de cada canción (la mejor), en el orden de la primera aparición.
+function dedupeSongs(tracks) {
+  const groups = new Map();
+  const order = [];
+  tracks.forEach(t => {
+    const k = songKey(t) || 'id:' + t.id;
+    let g = groups.get(k)?.find(c => sameSong(c[0], t));
+    if (!g) {
+      g = [t];
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(g);
+      order.push(g);
+    } else if (!g.some(x => x.id === t.id)) g.push(t);
+  });
+  return order.map(g => (g.length > 1 ? bestCopy(g) : g[0]));
+}
+// Clasifica lo que se va a añadir a una lista: nuevas, ya en la lista, otra copia de una
+// que ya está, o repetidas entre sí.
+function listDupAnalysis(existing, incoming) {
+  const r = { fresh: [], sameTrack: [], sameSong: [], inBatch: [] };
+  const haveIds = new Set(existing.map(t => t.id));
+  const byKey = new Map();
+  const index = t => {
+    const k = songKey(t);
+    if (!k) return;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(t);
+  };
+  existing.forEach(index);
+  const batchIds = new Set();
+  const batchKey = new Map();
+  incoming.forEach(t => {
+    if (!t) return;
+    const k = songKey(t);
+    if (haveIds.has(t.id)) return r.sameTrack.push(t);
+    if (k && (byKey.get(k) || []).some(x => sameSong(x, t))) return r.sameSong.push(t);
+    if (batchIds.has(t.id) || (k && (batchKey.get(k) || []).some(x => sameSong(x, t)))) return r.inBatch.push(t);
+    r.fresh.push(t);
+    batchIds.add(t.id);
+    if (k) (batchKey.get(k) || batchKey.set(k, []).get(k)).push(t);
+  });
+  return r;
+}
+// Antes de crear o llenar una lista: si hay repetidas, se pregunta qué hacer.
+// done(tracks, { allowSame }) recibe las que hay que añadir.
+function confirmListAdd(list, tracks, done, { listName = '' } = {}) {
+  tracks = tracks.filter(Boolean);
+  const existing = list ? manualListTracks(list).tracks : [];
+  const r = listDupAnalysis(existing, tracks);
+  const dups = r.sameTrack.length + r.sameSong.length + r.inBatch.length;
+  if (!dups) return done(tracks, {});
+  const name = list?.name || listName;
+  const parts = [
+    r.sameTrack.length && `${plural(r.sameTrack.length, 'ya está', 'ya están')} en ${name ? `«${name}»` : 'la lista'}`,
+    r.sameSong.length && `${plural(r.sameSong.length, 'es otra copia', 'son otra copia')} de una que ya está`,
+    r.inBatch.length && `${plural(r.inBatch.length, 'está repetida', 'están repetidas')} entre las que añades`
+  ].filter(Boolean);
+  const show = () =>
+    podSheet({
+      title: '👯 Repetidas',
+      subtitle: 'Estas no se añadirían con «solo las nuevas»:',
+      items: [
+        ...[...r.sameTrack.map(t => [t, 'ya en la lista']), ...r.sameSong.map(t => [t, 'otra copia ya en la lista']), ...r.inBatch.map(t => [t, 'repetida'])]
+          .slice(0, 60)
+          .map(([t, why]) => ({ icon: '🎵', label: t.title, hint: `${trackArtist(t)} · ${why} · ${[t.folder, t.file].filter(Boolean).join('/')}`, on: ask })),
+        { sep: true },
+        { icon: '←', label: 'Volver', on: ask }
+      ]
+    });
+  function ask() {
+    podSheet({
+      title: '👯 Canciones repetidas',
+      subtitle: parts.join(' · ') + '.',
+      items: [
+        r.fresh.length && { icon: '✅', label: `Añadir solo las nuevas (${r.fresh.length})`, hint: 'Sin repetir canciones', on: () => done(r.fresh, {}) },
+        { icon: '➕', label: r.fresh.length ? `Añadir todas (${tracks.length})` : 'Añadir igualmente', hint: 'Con las repetidas', on: () => done(tracks, { allowSame: true }) },
+        { icon: '👁', label: 'Ver cuáles son', on: show }
+      ]
+    });
+  }
+  ask();
+}
+// Repetidas dentro de una lista normal: índices de las que sobran (se conserva la primera).
+function listInternalDups(l) {
+  const seen = [];
+  const out = [];
+  l.items.forEach((x, i) => {
+    const t = resolveTrack(x);
+    if (!t) return;
+    if (seen.some(s => sameSong(s, t))) out.push(i);
+    else seen.push(t);
+  });
+  return out;
+}
+function removeListDups(l) {
+  const idx = new Set(listInternalDups(l));
+  if (!idx.size) return podToast('No hay repetidas en esta lista');
+  const before = [...l.items];
+  l.items = l.items.filter((x, i) => !idx.has(i));
+  l.updatedAt = Date.now();
+  saveMusicLists();
+  podToast(`${plural(idx.size, 'repetida quitada', 'repetidas quitadas')} de «${l.name}»`, { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+}
+
+/* ---------------------------------------------------------------------------
+   Archivos abiertos desde otras apps («Abrir con…» / «Compartir», APK 1.14+)
+--------------------------------------------------------------------------- */
+async function waitMusicLibrary(ms = 6000) {
+  const t0 = Date.now();
+  while (musicState.loading && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 150));
+  return musicState.loaded;
+}
+async function openExternalAudio(info) {
+  if (typeof info === 'string') {
+    try {
+      info = JSON.parse(info);
+    } catch {
+      return;
+    }
+  }
+  if (!info) return;
+  if (info.error) return podToast('No se pudo abrir el archivo: ' + info.error);
+  if (!musicViewActive()) switchToMusic();
+  await waitMusicLibrary();
+  // Lista M3U: se crea una lista con las canciones que estén en el móvil.
+  if (info.playlist) {
+    if (!musicState.loaded) return podToast('Para abrir listas hace falta dar acceso a tu música');
+    const { tracks, missing } = tracksFromM3u(String(info.text || ''));
+    if (!tracks.length) return podToast('Ninguna canción de esa lista está en tu música');
+    const name = (String(info.text || '').match(/^#PLAYLIST:(.+)$/m)?.[1] || stripExt(info.name || 'Lista')).trim();
+    return confirmListAdd(
+      null,
+      tracks,
+      sel => {
+        const l = createMusicList(name, sel);
+        openMusicScreen('list:' + l.id);
+        podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`, { action: '▶ Reproducir', onAction: () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }) });
+      },
+      { listName: name }
+    );
+  }
+  // ¿Está en la biblioteca? Entonces suena «de verdad» (favoritos, contador, letra…).
+  const all = musicState.allTracks || musicState.tracks || [];
+  let t = (info.mediaId && (musicState.byId.get('a' + info.mediaId) || musicState.allById?.get('a' + info.mediaId))) || null;
+  if (!t && info.name) {
+    const same = all.filter(x => x.file === info.name && (!(info.size > 0) || !x.size || x.size === info.size));
+    if (same.length === 1) t = same[0]; // si hay varias iguales no se adivina
+  }
+  if (!t) {
+    if (!info.token) return podToast('No se pudo abrir el archivo');
+    const name = stripExt(info.name || '');
+    const m = name.match(/^(?:\d{1,3}\s*[-._)]?\s+)?(.+?)\s+[-–—]\s+(.+)$/);
+    t = {
+      id: 'x' + info.token,
+      title: info.title || (m ? m[2] : name) || 'Sin título',
+      artist: info.artist || (info.title ? '' : m ? m[1] : ''),
+      album: info.album || '',
+      albumArtist: '',
+      track: 0,
+      disc: 0,
+      year: 0,
+      dur: Number(info.dur) || 0,
+      folder: '',
+      file: info.name || '',
+      added: Date.now(),
+      genre: '',
+      size: Number(info.size) > 0 ? Number(info.size) : 0,
+      src: '/__music/ext/' + info.token,
+      art: info.art ? '/__music/extart/' + info.token : '',
+      external: true
+    };
+  }
+  playTrackNow(t);
+  openMusicExpanded();
+  podToast(`▶ ${t.title}${t.external ? ' · abierto desde otra app' : ''}`);
+}
+window.viferorOpenAudio = info => {
+  openExternalAudio(info);
+};
+
+/* ---------------------------------------------------------------------------
+   Editar el nombre del archivo y las etiquetas ID3 (app Android 1.13+)
+--------------------------------------------------------------------------- */
+const MUS_TAG_FIELDS = [
+  ['title', 'Título'],
+  ['artist', 'Artista'],
+  ['album', 'Álbum'],
+  ['albumArtist', 'Artista del álbum'],
+  ['track', 'Pista', 'short'],
+  ['disc', 'Disco', 'short'],
+  ['year', 'Año', 'short'],
+  ['genre', 'Género']
+];
+function canEditFiles() {
+  return musicState.source === 'android' && typeof window.Android?.editMusicFile === 'function';
+}
+function trackExt(t) {
+  return (String(t.file || '').match(/\.[a-z0-9]{1,5}$/i) || [''])[0];
+}
+function trackTagValues(t) {
+  return { title: t.title || '', artist: t.artist || '', album: t.album || '', albumArtist: t.albumArtist || '', track: t.track ? String(t.track) : '', disc: t.disc ? String(t.disc) : '', year: t.year ? String(t.year) : '', genre: t.genre || '' };
+}
+const cleanFileName = v =>
+  String(v || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+function editTrackFlow(t) {
+  if (!t) return;
+  const ext = trackExt(t);
+  const base = String(t.file || '').slice(0, ext ? -ext.length : undefined);
+  const mp3 = /^\.mp3$/i.test(ext);
+  const can = canEditFiles() && /^a\d+$/.test(t.id);
+  const v = trackTagValues(t);
+  const form = document.createElement('form');
+  form.className = 'pod-sheet-form mus-edit';
+  form.innerHTML = `
+    ${can ? '' : `<p class="mus-hint">⚠️ ${t.external ? 'Este archivo se abrió desde otra app y no se puede modificar desde aquí.' : musicState.source === 'android' ? 'Para cambiar el archivo hace falta la última versión de la app Android.' : 'Cambiar el archivo solo se puede en la app Android.'}</p>`}
+    <label><span>Nombre del archivo</span><div class="mus-edit-file"><input type="text" name="file" value="${pEsc(base)}" maxlength="190" autocomplete="off" spellcheck="false"><b>${pEsc(ext)}</b></div></label>
+    <div class="mus-edit-tools"><button type="button" data-do="fromTags">↓ Nombre desde las etiquetas</button><button type="button" data-do="fromFile">↑ Etiquetas desde el nombre</button></div>
+    <fieldset class="mus-edit-tags"${mp3 ? '' : ' disabled'}><legend>Etiquetas ID3 ${mp3 ? '' : '· solo en MP3'}</legend>
+      ${MUS_TAG_FIELDS.map(([k, label, cls]) => `<label class="${cls || ''}"><span>${label}</span><input type="text" name="${k}" value="${pEsc(v[k])}" maxlength="${k === 'year' ? 10 : k === 'track' || k === 'disc' ? 7 : 200}" autocomplete="off" ${k === 'track' || k === 'disc' || k === 'year' ? 'inputmode="numeric"' : ''}></label>`).join('')}
+    </fieldset>
+    <button type="submit" class="pod-sheet-ok"${can ? '' : ' disabled'}>💾 Guardar en el archivo</button>`;
+  const f = name => form.elements[name];
+  form.querySelector('[data-do=fromTags]').onclick = () => {
+    const a = f('artist').value.trim(),
+      ti = f('title').value.trim(),
+      n = parseInt(f('track').value, 10);
+    const name = [n > 0 ? String(n).padStart(2, '0') : '', [a, ti].filter(Boolean).join(' - ')].filter(Boolean).join(' ');
+    if (name) f('file').value = cleanFileName(name);
+  };
+  form.querySelector('[data-do=fromFile]').onclick = () => {
+    if (!mp3) return podToast('Las etiquetas solo se pueden cambiar en MP3');
+    let s2 = f('file').value.trim();
+    const m = s2.match(/^(\d{1,3})\s*[-._)]?\s+(.*)$/);
+    if (m) {
+      f('track').value = String(Number(m[1]));
+      s2 = m[2];
+    }
+    const parts = s2.split(/\s+[-–—]\s+/);
+    if (parts.length >= 2) {
+      f('artist').value = parts[0].trim();
+      f('title').value = parts.slice(1).join(' - ').trim();
+    } else f('title').value = s2;
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (!can) return;
+    const patch = {};
+    const nf = cleanFileName(f('file').value);
+    if (!nf) return f('file').focus();
+    if (nf !== base) patch.file = nf + ext;
+    if (mp3) {
+      const tags = {};
+      MUS_TAG_FIELDS.forEach(([k]) => {
+        const val = f(k).value.trim();
+        if (val !== v[k]) tags[k] = val;
+      });
+      if (tags.year && !/^\d{4}/.test(tags.year)) return podToast('El año tiene que empezar por 4 cifras'), f('year').focus();
+      if (Object.keys(tags).length) patch.tags = tags;
+    }
+    if (!patch.file && !patch.tags) return podSheetClose(false);
+    podSheetClose(false);
+    await saveTrackEdit(t, patch);
+  };
+  podSheet({ title: '✏️ Editar canción', subtitle: [t.folder, t.file].filter(Boolean).join('/'), body: form });
+}
+const musEditWaits = new Map();
+window.onAndroidMusicEdited = (reqId, res) => {
+  const w = musEditWaits.get(reqId);
+  if (!w) return;
+  musEditWaits.delete(reqId);
+  w(res || {});
+};
+async function saveTrackEdit(t, patch) {
+  // Si suena, se suelta mientras se reescribe el archivo y luego sigue donde iba.
+  const playingThis = musicState.current?.id === t.id;
+  const a = musicAudio();
+  const wasPlaying = playingThis && !a.paused;
+  const pos = playingThis ? a.currentTime || 0 : 0;
+  if (playingThis && patch.tags) {
+    try {
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+    } catch {}
+  }
+  podToast('Guardando en el archivo…', { ms: 20000 });
+  const reqId = 'e' + Date.now();
+  const res = await new Promise(resolve => {
+    musEditWaits.set(reqId, resolve);
+    window.Android.editMusicFile(reqId, t.id.replace(/^a/, ''), JSON.stringify(patch));
+    setTimeout(() => musEditWaits.has(reqId) && (musEditWaits.delete(reqId), resolve({ ok: false, error: 'timeout' })), 10 * 60 * 1000);
+  });
+  if (res.ok || res.tags) {
+    if (patch.tags && t.src) t.src = t.src.replace(/\?.*$/, '') + '?v=' + Date.now(); // que no use la copia en caché
+    if (patch.tags) {
+      const n = k => parseInt(patch.tags[k], 10) || 0;
+      Object.entries(patch.tags).forEach(([k, val]) => {
+        if (k === 'track') t.track = n('track');
+        else if (k === 'disc') t.disc = n('disc');
+        else if (k === 'year') t.year = n('year');
+        else t[k] = val;
+      });
+      if (!t.title) t.title = stripExt(t.file) || 'Sin título';
+    }
+    if (res.file) t.file = res.file;
+    applyFolderFilter();
+    if (playingThis) {
+      updateMusicNowUI();
+      if (patch.tags) {
+        await prepareTrack(t, pos);
+        if (wasPlaying) toggleMusicPlay();
+      }
+    }
+  } else if (playingThis && patch.tags) {
+    await prepareTrack(t, pos);
+    if (wasPlaying) toggleMusicPlay();
+  }
+  const err = res.error;
+  if (res.ok) podToast(patch.file && patch.tags ? 'Nombre y etiquetas guardados' : patch.file ? 'Nombre del archivo cambiado' : 'Etiquetas guardadas');
+  else if (err === 'cancelled') podToast('No se ha cambiado nada');
+  else if (err === 'permission') podToast('Android no ha dado permiso para modificar el archivo');
+  else if (err === 'timeout') podToast('No hubo respuesta al guardar');
+  else podToast((res.tags ? 'Etiquetas guardadas, pero el nombre no: ' : 'No se pudo guardar: ') + (err || 'error'));
+}
+
+/* ---------------------------------------------------------------------------
+   Eliminar canciones: del móvil (archivo) o solo de la biblioteca (ocultar)
+--------------------------------------------------------------------------- */
+function musicHiddenMap() {
+  return lsGet(MUS_KEYS.hidden, {}) || {};
+}
+function canDeleteFiles(tracks) {
+  if (musicState.source === 'android') return !!window.Android?.deleteMusicFiles && tracks.every(t => /^a\d+$/.test(t.id));
+  return tracks.every(t => typeof musicState.files.get(t.id)?.remove === 'function');
+}
+function deleteTracksFlow(tracks) {
+  tracks = (tracks || []).filter(Boolean);
+  if (!tracks.length) return;
+  const one = tracks.length === 1;
+  const what = one ? `«${tracks[0].title}»` : plural(tracks.length, 'canción', 'canciones');
+  const canFile = canDeleteFiles(tracks);
+  podSheet({
+    title: `🗑 Eliminar ${what}`,
+    subtitle: one ? [trackArtist(tracks[0]), [tracks[0].folder, tracks[0].file].filter(Boolean).join('/')].filter(Boolean).join(' · ') : '',
+    items: [
+      { icon: '🙈', label: 'Quitar de la biblioteca', hint: 'El archivo se queda en el móvil; se puede deshacer', on: () => hideTracks(tracks) },
+      {
+        icon: '🗑',
+        label: musicState.source === 'android' ? 'Borrar del móvil' : 'Borrar el archivo',
+        hint: canFile ? 'Se borra el archivo para siempre' : musicState.source === 'android' ? 'Necesita la última versión de la app Android' : 'Este navegador no permite borrar archivos',
+        danger: true,
+        disabled: !canFile,
+        on: () => confirmDeleteFiles(tracks)
+      }
+    ]
+  });
+}
+function hideTracks(tracks) {
+  const h = musicHiddenMap();
+  const keys = tracks.map(pathKey);
+  tracks.forEach((t, i) => (h[keys[i]] = { title: t.title, artist: trackArtist(t), path: [t.folder, t.file].filter(Boolean).join('/'), at: Date.now() }));
+  lsSet(MUS_KEYS.hidden, h);
+  dropTracksEverywhere(new Set(tracks.map(t => t.id)), false);
+  podToast(`${tracks.length === 1 ? 'Quitada' : plural(tracks.length, 'canción quitada', 'canciones quitadas')} de la biblioteca`, {
+    action: 'Deshacer',
+    onAction: () => unhideTracks(keys)
+  });
+}
+function unhideTracks(keys) {
+  const h = musicHiddenMap();
+  keys.forEach(k => delete h[k]);
+  lsSet(MUS_KEYS.hidden, h);
+  applyFolderFilter();
+}
+function openHiddenTracks() {
+  const h = musicHiddenMap();
+  const keys = Object.keys(h).sort((a, b) => (h[b].at || 0) - (h[a].at || 0));
+  if (!keys.length) return podToast('No has quitado ninguna canción de la biblioteca');
+  podSheet({
+    title: '🙈 Canciones quitadas',
+    subtitle: 'Siguen en el móvil. Toca una para devolverla a la biblioteca.',
+    items: [
+      { icon: '↩', label: 'Devolverlas todas', on: () => (unhideTracks(keys), podToast('Canciones devueltas a la biblioteca')) },
+      { sep: true },
+      ...keys.slice(0, 200).map(k => ({ icon: '🎵', label: h[k].title || h[k].path || k, hint: [h[k].artist, h[k].path].filter(Boolean).join(' · '), on: () => (unhideTracks([k]), podToast('Devuelta a la biblioteca')) }))
+    ]
+  });
+}
+// Quita canciones de la cola, el historial, la que suena… (y de la biblioteca si se borraron).
+function dropTracksEverywhere(ids, deleted) {
+  const cur = musicState.current;
+  const curGone = cur && ids.has(cur.id);
+  ['queue', 'history', 'context'].forEach(k => (musicState[k] = musicState[k].filter(t => t && !ids.has(t.id))));
+  saveMusicQueue();
+  saveMusicHistory();
+  if (deleted && musicState.allTracks) musicState.allTracks = musicState.allTracks.filter(t => !ids.has(t.id));
+  if (curGone) {
+    const a = musicAudio();
+    try {
+      a.pause();
+    } catch {}
+    stopOtherDeck();
+    if (musicState.queue.length) nextTrack(false);
+    else {
+      musicState.current = null;
+      try {
+        a.removeAttribute('src');
+        a.load();
+      } catch {}
+      updateMusicNowUI();
+      window.Android?.stopPodcastMedia?.();
+    }
+  }
+  applyFolderFilter();
+}
+function confirmDeleteFiles(tracks) {
+  const n = tracks.length;
+  const go = () => deleteTrackFiles(tracks);
+  // En Android 11+ el propio sistema pide confirmación.
+  if (musicState.source === 'android' && window.Android?.musicDeleteMode?.() === 'system') return go();
+  podSheet({
+    title: n === 1 ? '¿Borrar el archivo?' : `¿Borrar ${n} archivos?`,
+    subtitle: 'Se borra del almacenamiento para siempre. No se puede deshacer.',
+    items: [{ icon: '🗑', label: n === 1 ? 'Sí, borrar' : `Sí, borrar ${n}`, danger: true, on: go }]
+  });
+}
+const musDeleteWaits = new Map();
+window.onAndroidMusicDeleted = (reqId, ids, error) => {
+  const w = musDeleteWaits.get(reqId);
+  if (!w) return;
+  musDeleteWaits.delete(reqId);
+  w({ ids: (ids || []).map(x => 'a' + x), error });
+};
+async function deleteTrackFiles(tracks) {
+  let gone = [],
+    error = null;
+  if (musicState.source === 'android') {
+    const reqId = 'd' + Date.now();
+    // Si suena una de ellas, se suelta antes para que Android pueda borrarla.
+    if (musicState.current && tracks.some(t => t.id === musicState.current.id)) {
+      try {
+        musicAudio().pause();
+      } catch {}
+    }
+    const res = await new Promise(resolve => {
+      musDeleteWaits.set(reqId, resolve);
+      window.Android.deleteMusicFiles(reqId, tracks.map(t => t.id.slice(1)).join(','));
+      setTimeout(() => musDeleteWaits.has(reqId) && (musDeleteWaits.delete(reqId), resolve({ ids: [], error: 'timeout' })), 10 * 60 * 1000);
+    });
+    gone = res.ids;
+    error = res.error;
+  } else {
+    for (const t of tracks) {
+      const h = musicState.files.get(t.id);
+      try {
+        if ((await h.queryPermission?.({ mode: 'readwrite' })) !== 'granted' && (await h.requestPermission?.({ mode: 'readwrite' })) !== 'granted') {
+          error = 'permission';
+          break;
+        }
+        await h.remove();
+        gone.push(t.id);
+        musicState.files.delete(t.id);
+      } catch (e) {
+        error = e?.message || 'error';
+      }
+    }
+  }
+  if (gone.length) {
+    dropTracksEverywhere(new Set(gone), true);
+    podToast(gone.length === 1 ? 'Archivo borrado' : `${gone.length} archivos borrados`);
+  }
+  if (gone.length < tracks.length) {
+    if (error === 'cancelled') podToast(gone.length ? 'Algunas no se han borrado' : 'No se ha borrado nada');
+    else if (error === 'permission') podToast('Sin permiso para borrar: no se ha borrado');
+    else if (!gone.length) podToast('No se pudo borrar' + (error && error !== 'timeout' ? ': ' + error : ''));
+    else podToast(`No se pudieron borrar ${tracks.length - gone.length}`);
+  }
+}
+/* ===========================================================================
+   Listas: pestaña, detalle y editor
+=========================================================================== */
+function renderMusicListsTab(root) {
+  root.append(tabHead('📃 Listas', musicState.lists.length));
+  root.append(
+    actionBar([
+      ['＋ Nueva lista', newMusicListFlow, 'primary'],
+      ['✨ Lista inteligente', newMusicSmartFlow],
+      ['📥 Importar (M3U o JSON)', importMusicListFile]
+    ])
+  );
+  const box = musEl('div', 'pod-lists');
+  const q = musicState.queue;
+  const qc = musEl('div', 'pod-list-card is-queue');
+  qc.innerHTML = `<button class="pod-list-open" type="button"><span class="ic">☰</span><span class="tx"><strong>Cola</strong><small>${q.length ? pEsc(tracksSummary(q)) + (q[0] ? ` · Siguiente: ${pEsc(q[0].title)}` : '') : 'Vacía'}</small></span></button>`;
+  qc.querySelector('.pod-list-open').onclick = () => openMusicScreen('queue');
+  box.append(qc);
+  musicState.lists.forEach(l => {
+    const c = musEl('div', 'pod-list-card');
+    const n = l.type === 'smart' ? musicListTracks(l).length : manualListTracks(l).tracks.length;
+    c.innerHTML = `<button class="pod-list-open" type="button"><span class="ic">${l.type === 'smart' ? '✨' : '📃'}</span><span class="tx"><strong>${pEsc(l.name)}</strong><small>${pEsc(l.type === 'smart' ? `${plural(n, 'canción', 'canciones')} · ${musicSmartSummary(l.rules)}` : plural(n, 'canción', 'canciones'))}</small></span></button><button class="pod-list-play" type="button" aria-label="Reproducir">▶</button><button class="pod-list-more" type="button" aria-label="Más opciones">⋯</button>`;
+    c.querySelector('.pod-list-open').onclick = () => openMusicScreen('list:' + l.id);
+    c.querySelector('.pod-list-play').onclick = () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id });
+    c.querySelector('.pod-list-more').onclick = () => musicListMenu(l);
+    box.append(c);
+  });
+  root.append(box);
+  if (!musicState.lists.length)
+    root.append(
+      musEl(
+        'div',
+        'pod-empty pod-empty-small',
+        '<p><b>Una lista normal</b> guarda las canciones que eliges, en el orden que quieras. <b>Una inteligente</b> se llena sola: «nunca escuchadas», «más escuchadas», «solo estos artistas», «años 80»… También puedes importar listas M3U de otros reproductores.</p>'
+      )
+    );
+}
+async function newMusicListFlow() {
+  const name = await podPromptText({ title: 'Nueva lista', label: 'Nombre de la lista', placeholder: 'Para correr, para el coche…', ok: 'Crear' });
+  if (!name) return;
+  const l = createMusicList(name);
+  openMusicScreen('list:' + l.id);
+  podToast('Añade canciones con ⋯ → «Añadir a una lista…»');
+}
+function newMusicSmartFlow() {
+  podSheet({
+    title: 'Nueva lista inteligente',
+    subtitle: 'Se rellena sola según tus reglas. Elige un punto de partida:',
+    items: MUS_SMART_TEMPLATES.map(t => ({ icon: t.icon, label: t.name, hint: t.hint, on: () => openMusicSmartEditor(null, { name: t.name === 'Personalizada' ? '' : t.name, rules: t.rules }) }))
+  });
+}
+function musicListMenu(l, inside = false) {
+  const manual = l.type === 'manual';
+  const tracks = () => musicListTracks(l, { fresh: true });
+  podSheet({
+    title: l.name,
+    subtitle: manual ? plural(l.items.length, 'canción', 'canciones') : musicSmartSummary(l.rules),
+    items: [
+      { icon: '▶', label: 'Reproducir', on: () => playCollection(tracks(), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }) },
+      { icon: '🔀', label: 'Reproducir en aleatorio', on: () => playCollection(tracks(), 0, { shuffle: true, label: `«${l.name}»`, listId: l.id }) },
+      { icon: '⏭', label: 'Reproducir a continuación', on: () => queueTracks(tracks(), 'next') },
+      { icon: '➕', label: 'Añadir al final de la cola', on: () => queueTracks(tracks(), 'end') },
+      { sep: true },
+      {
+        icon: '✏️',
+        label: 'Cambiar el nombre',
+        on: async () => {
+          const n = await podPromptText({ title: 'Cambiar el nombre', label: 'Nombre de la lista', value: l.name });
+          if (n) {
+            l.name = n;
+            saveMusicLists();
+          }
+        }
+      },
+      !manual && { icon: '⚙️', label: 'Editar las reglas', on: () => openMusicSmartEditor(l) },
+      {
+        icon: '📄',
+        label: 'Duplicar',
+        on: () => {
+          const c = normMusicList({ ...JSON.parse(JSON.stringify(l)), id: newListId(), name: l.name + ' (copia)' });
+          musicState.lists.splice(musicState.lists.indexOf(l) + 1, 0, c);
+          saveMusicLists();
+          podToast(`Creada «${c.name}»`);
+        }
+      },
+      !manual && {
+        icon: '📌',
+        label: 'Convertir en lista normal',
+        hint: 'Fija las canciones de ahora',
+        on: () => {
+          confirmListAdd(null, tracks(), sel => openMusicScreen('list:' + createMusicList(l.name + ' (fija)', sel).id), { listName: l.name + ' (fija)' });
+        }
+      },
+      manual && l.items.length > 1 && { icon: '⇅', label: 'Ordenar…', on: () => sortMusicListMenu(l) },
+      manual && l.items.length > 1 && { icon: '👯', label: 'Quitar repetidas', hint: (n => (n ? plural(n, 'repetida', 'repetidas') : 'No hay ninguna'))(listInternalDups(l).length), on: () => removeListDups(l) },
+      { icon: '📤', label: 'Exportar como M3U', hint: 'Para VLC, Poweramp, foobar2000…', on: () => exportMusicList(l, 'm3u') },
+      { icon: '💾', label: 'Exportar (copia de Radios Viferor)', on: () => exportMusicList(l, 'json') },
+      {
+        icon: '🗑',
+        label: 'Borrar la lista',
+        danger: true,
+        on: () => {
+          const idx = musicState.lists.indexOf(l);
+          musicState.lists.splice(idx, 1);
+          saveMusicLists();
+          podToast(`Lista «${l.name}» borrada`, {
+            action: 'Deshacer',
+            onAction: () => {
+              musicState.lists.splice(idx, 0, l);
+              saveMusicLists();
+            }
+          });
+          if (inside) backFromMusic();
+        }
+      }
+    ]
+  });
+}
+function sortMusicListMenu(l) {
+  const apply = fn => {
+    const before = [...l.items];
+    const tr = new Map(l.items.map(x => [x.id, resolveTrack(x) || x]));
+    l.items.sort((a, b) => fn(tr.get(a.id), tr.get(b.id)));
+    saveMusicLists();
+    podToast('Lista ordenada', {
+      action: 'Deshacer',
+      onAction: () => {
+        l.items = before;
+        saveMusicLists();
+      }
+    });
+  };
+  podSheet({
+    title: `Ordenar «${l.name}»`,
+    items: [
+      { icon: '🔤', label: 'Título', on: () => apply((a, b) => musCollator.compare(a.title || '', b.title || '')) },
+      { icon: '🎤', label: 'Artista', on: () => apply((a, b) => musCollator.compare(a.artist || '', b.artist || '') || musCollator.compare(a.album || '', b.album || '')) },
+      { icon: '💿', label: 'Álbum', on: () => apply((a, b) => musCollator.compare(a.album || '', b.album || '') || (a.track || 0) - (b.track || 0)) },
+      { icon: '🔥', label: 'Más escuchadas', on: () => apply((a, b) => trackPlays(b) - trackPlays(a)) },
+      {
+        icon: '🔀',
+        label: 'Al azar',
+        on: () => {
+          const before = [...l.items];
+          l.items = shuffled(l.items);
+          saveMusicLists();
+          podToast('Lista mezclada', { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+        }
+      },
+      { icon: '↕', label: 'Invertir el orden', on: () => ((l.items = l.items.reverse()), saveMusicLists()) }
+    ]
+  });
+}
+function renderMusicList(root, id) {
+  const l = musicListById(id);
+  if (!l) return renderMusicTab(root, 'lists');
+  const smart = l.type === 'smart';
+  const tracks = musicListTracks(l);
+  const missing = smart ? 0 : manualListTracks(l).missing;
+  root.append(detailHead(`${smart ? '✨' : '📃'} ${l.name}`, tracksSummary(tracks), null, { onMore: () => musicListMenu(l, true) }));
+  if (smart) root.append(musEl('p', 'pod-list-rules', pEsc(musicSmartSummary(l.rules))));
+  root.append(
+    actionBar([
+      ['▶ Reproducir', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }), 'primary', !tracks.length],
+      ['🔀 Aleatorio', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: true, label: `«${l.name}»`, listId: l.id }), '', !tracks.length],
+      ['⏭ A continuación', () => queueTracks(tracks, 'next'), '', !tracks.length],
+      ['➕ A la cola', () => queueTracks(tracks, 'end'), '', !tracks.length],
+      smart && ['⚙️ Reglas', () => openMusicSmartEditor(l)],
+      smart && ['🔄 Actualizar', () => (musicListTracks(l, { fresh: true }), renderMusicScreen())],
+      ['⋯ Más', () => musicListMenu(l, true)]
+    ])
+  );
+  if (missing) root.append(musEl('p', 'mus-note', `⚠️ ${plural(missing, 'canción de esta lista ya no está', 'canciones de esta lista ya no están')} en tu música.`));
+  const nd = smart ? 0 : listInternalDups(l).length;
+  if (nd) {
+    const note = musEl('p', 'mus-note mus-dup-note', `👯 ${plural(nd, 'canción repetida', 'canciones repetidas')} en esta lista. <button type="button">Quitar repetidas</button>`);
+    note.querySelector('button').onclick = () => removeListDups(l);
+    root.append(note);
+  }
+  if (!tracks.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', smart ? '<p>Ahora mismo ninguna canción cumple estas reglas.</p>' : '<p>La lista está vacía. Usa <b>⋯ → Añadir a una lista…</b> en cualquier canción, álbum, artista o carpeta.</p>'));
+    return;
+  }
+  const box = musEl('div', 'pod-queue' + (smart ? '' : ' pod-qlist'));
+  root.append(box);
+  if (smart) {
+    appendRowsChunked(box, tracks, (t, i) => trackRow(t, i, { num: i + 1, onPlay: k => playCollection(tracks, k, { listId: l.id }) }));
+    return;
+  }
+  root.insertBefore(musEl('h3', 'pod-list-h', '<small>Arrastra ⠿ para cambiar el orden · toca una canción para empezar desde ahí</small>'), box);
+  const idx = l.items.map(x => resolveTrack(x));
+  let played = 0; // posición en «tracks» (las que faltan no cuentan)
+  l.items.forEach((x, i) => {
+    const t = idx[i];
+    if (!t) return;
+    const at = played++;
+    box.append(
+      trackRow(t, i, {
+        handle: true,
+        onPlay: () => playCollection(tracks, tracks[at] === t ? at : tracks.indexOf(t), { listId: l.id }),
+        onRemove: k => removeFromMusicList(l, k),
+        menuExtra: () => [
+          i > 0 && { icon: '⤒', label: 'Subir al principio', on: () => moveMusicListItem(l, i, 0) },
+          i < l.items.length - 1 && { icon: '⤓', label: 'Bajar al final', on: () => moveMusicListItem(l, i, l.items.length - 1) },
+          { icon: '✕', label: 'Quitar de esta lista', on: () => removeFromMusicList(l, i) }
+        ].filter(Boolean)
+      })
+    );
+  });
+  // Los índices de las filas son los de l.items (las que faltan no se pintan).
+  const rowIdx = l.items.map((x, i) => (idx[i] ? i : -1)).filter(i => i >= 0);
+  makeSortable(box, (from, to) => moveMusicListItem(l, rowIdx[from], rowIdx[to]), $m('musicContent'));
+}
+function moveMusicListItem(l, from, to) {
+  l.items = moveInArray(l.items, from, to);
+  l.updatedAt = Date.now();
+  saveMusicLists();
+}
+function removeFromMusicList(l, i) {
+  const before = [...l.items];
+  l.items.splice(i, 1);
+  saveMusicLists();
+  podToast(`Quitada de «${l.name}»`, { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+}
+function openMusicSmartEditor(list, preset = {}) {
+  const editing = !!list;
+  const r = { ...MUS_SMART_DEFAULTS, ...(editing ? list.rules : preset.rules || {}) };
+  const pickSources = {
+    artists: () => [...musicState.artists.values()].map(a => [a.key, a.name, a.tracks.length]),
+    albums: () => [...musicState.albums.values()].map(a => [a.key, `${a.name} — ${a.artist}`, a.tracks.length]),
+    folders: () => [...musicState.folders.values()].filter(f => f.path).map(f => [f.path, f.path, f.count]),
+    genres: () => [...musicState.genres.values()].map(g => [g.key, g.name, g.tracks.length])
+  };
+  const form = musEl('form', 'pod-sheet-form pod-smart-form');
+  form.innerHTML = `
+    <label><span>Nombre</span><input type="text" data-k="name" maxlength="80" placeholder="Por ejemplo: Rock de los 80" autocomplete="off"></label>
+    <label><span>Canciones de</span>${selectHtml('source', Object.entries(MUS_SMART_LABELS.source), r.source)}</label>
+    <fieldset class="if-pick"><legend>Elige <small data-pick-count></small></legend><input type="search" class="pod-pick-filter" placeholder="Filtrar…" aria-label="Filtrar"><div class="pod-pick-list"></div></fieldset>
+    <label><span>Cuáles</span>${selectHtml('state', Object.entries(MUS_SMART_LABELS.state), r.state)}</label>
+    <label><span>Añadidas al móvil</span>${selectHtml('addedDays', [[0, 'Cuando sea'], [7, 'Última semana'], [30, 'Último mes'], [90, 'Últimos 3 meses'], [365, 'Último año']], r.addedDays)}</label>
+    <div class="pod-smart-row"><label><span>Duración mínima</span>${selectHtml('minMin', [[0, 'Cualquiera'], [1, '1 min'], [2, '2 min'], [3, '3 min'], [5, '5 min'], [10, '10 min']], r.minMin)}</label><label><span>Duración máxima</span>${selectHtml('maxMin', [[0, 'Cualquiera'], [3, '3 min'], [4, '4 min'], [5, '5 min'], [6, '6 min'], [8, '8 min'], [10, '10 min'], [20, '20 min']], r.maxMin)}</label></div>
+    <div class="pod-smart-row"><label><span>Desde el año</span><input type="number" data-k="yearFrom" inputmode="numeric" min="1900" max="2100" placeholder="Cualquiera"></label><label><span>Hasta el año</span><input type="number" data-k="yearTo" inputmode="numeric" min="1900" max="2100" placeholder="Cualquiera"></label></div>
+    <div class="pod-smart-row"><label><span>Orden</span>${selectHtml('order', Object.entries(MUS_SMART_LABELS.order), r.order)}</label><label><span>Máximo</span>${selectHtml('limit', [[25, '25'], [50, '50'], [100, '100'], [250, '250'], [500, '500'], [0, 'Todas']], r.limit)}</label></div>
+    <p class="mus-preview" data-preview></p>
+    <button type="submit" class="pod-sheet-ok">${editing ? 'Guardar cambios' : 'Crear lista'}</button>`;
+  const $f = k => form.querySelector(`[data-k="${k}"]`);
+  $f('name').value = editing ? list.name : preset.name || '';
+  if (r.yearFrom) $f('yearFrom').value = r.yearFrom;
+  if (r.yearTo) $f('yearTo').value = r.yearTo;
+  let picked = new Set((r.picked || []).map(String));
+  let shownSource = '';
+  const fillPick = () => {
+    const src = $f('source').value;
+    const fs = form.querySelector('.if-pick');
+    fs.hidden = src === 'all' || src === 'favs';
+    if (src === 'all' || src === 'favs' || src === shownSource) return;
+    if (shownSource) picked = new Set();
+    shownSource = src;
+    fs.querySelector('legend').firstChild.textContent = { artists: 'Elige artistas ', albums: 'Elige álbumes ', folders: 'Elige carpetas ', genres: 'Elige géneros ' }[src];
+    const items = pickSources[src]().sort((a, b) => musCollator.compare(a[1], b[1]));
+    fs.querySelector('.pod-pick-list').innerHTML = items.length
+      ? items.map(([k, label, n]) => `<label><input type="checkbox" value="${pEsc(k)}"${picked.has(String(k)) ? ' checked' : ''}><span>${pEsc(label)} <small>${n}</small></span></label>`).join('')
+      : '<em>No hay nada que elegir.</em>';
+  };
+  const read = () => ({
+    source: $f('source').value,
+    picked: [...form.querySelectorAll('.if-pick input[type=checkbox]:checked')].map(c => c.value),
+    state: $f('state').value,
+    addedDays: Number($f('addedDays').value),
+    minMin: Number($f('minMin').value),
+    maxMin: Number($f('maxMin').value),
+    yearFrom: Number($f('yearFrom').value) || 0,
+    yearTo: Number($f('yearTo').value) || 0,
+    order: $f('order').value,
+    limit: Number($f('limit').value)
+  });
+  const preview = () => {
+    const rr = read();
+    const n = !['all', 'favs'].includes(rr.source) && !rr.picked.length ? 0 : resolveMusicSmart({ ...rr, limit: 0, order: 'title' }).length;
+    form.querySelector('[data-pick-count]').textContent = rr.picked.length ? `(${rr.picked.length})` : '';
+    form.querySelector('[data-preview]').textContent = `Ahora mismo cumplen las reglas ${plural(n, 'canción', 'canciones')}${rr.limit && n > rr.limit ? ` (la lista tendrá ${rr.limit})` : ''}.`;
+  };
+  form.addEventListener('change', () => {
+    fillPick();
+    preview();
+  });
+  form.addEventListener('input', e => {
+    if (e.target.matches('[data-k=yearFrom],[data-k=yearTo]')) preview();
+  });
+  form.querySelector('.pod-pick-filter').addEventListener('input', ev => {
+    const t = mNorm(ev.target.value);
+    form.querySelectorAll('.pod-pick-list label').forEach(lb => (lb.hidden = !!t && !mNorm(lb.textContent).includes(t)));
+  });
+  fillPick();
+  preview();
+  form.onsubmit = ev => {
+    ev.preventDefault();
+    const nm = $f('name').value.trim();
+    if (!nm) return $f('name').focus();
+    const rules = read();
+    if (!['all', 'favs'].includes(rules.source) && !rules.picked.length) return podToast('Elige al menos uno');
+    if (rules.minMin && rules.maxMin && rules.minMin >= rules.maxMin) return podToast('La duración mínima debe ser menor que la máxima');
+    let l = list;
+    if (editing) Object.assign(l, { name: nm, rules, updatedAt: Date.now() });
+    else {
+      l = normMusicList({ name: nm, type: 'smart', rules });
+      musicState.lists.push(l);
+    }
+    musSmartCache.delete(l.id);
+    podSheetClose(false);
+    saveMusicLists();
+    if (musicState.screen === 'list:' + l.id) renderMusicScreen();
+    else openMusicScreen('list:' + l.id);
+  };
+  podSheet({ title: editing ? 'Editar lista inteligente' : 'Nueva lista inteligente', body: form });
+  if (!$f('name').value) setTimeout(() => $f('name').focus(), 60);
+}
+
+/* ===========================================================================
+   Cola
+=========================================================================== */
+let musHistOpen = false;
+function renderMusicQueue(root) {
+  const q = musicState.queue;
+  const o = musicOpts();
+  root.append(detailHead('☰ Cola', q.length ? tracksSummary(q) : 'Vacía', null));
+  const cur = musicState.current;
+  if (cur) {
+    root.append(musEl('h3', 'pod-list-h', 'Sonando ahora'));
+    root.append(trackRow(cur, 0, { onPlay: () => toggleMusicPlay() }));
+  }
+  root.append(
+    actionBar([
+      [o.shuffle ? '🔀 Aleatorio: sí' : '🔀 Aleatorio: no', toggleMusicShuffle, o.shuffle ? 'on' : ''],
+      [{ off: '🔁 Repetir: no', all: '🔁 Repetir: todo', one: '🔂 Repetir: una' }[o.repeat], cycleMusicRepeat, o.repeat !== 'off' ? 'on' : ''],
+      ['💾 Guardar como lista', saveMusicQueueAsList, '', !q.length && !cur],
+      [
+        '🗑 Vaciar',
+        () => {
+          const before = [...q];
+          musicState.queue = [];
+          saveMusicQueue();
+          podToast('Cola vaciada', { action: 'Deshacer', onAction: () => ((musicState.queue = before), saveMusicQueue()) });
+        },
+        'danger',
+        !q.length
+      ]
+    ])
+  );
+  root.append(musEl('h3', 'pod-list-h', `A continuación${q.length ? ' <small>arrastra ⠿ para ordenar</small>' : ''}`));
+  if (!q.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', `<p>La cola está vacía.${o.repeat === 'all' && musicState.context.length ? ' Con «Repetir: todo» volverá a empezar lo que estás escuchando.' : ' Usa ⋯ en cualquier canción, álbum o carpeta para añadir.'}</p>`));
+  } else {
+    const box = musEl('div', 'pod-queue pod-qlist');
+    const shown = q.slice(0, 300);
+    shown.forEach((t, i) =>
+      box.append(
+        trackRow(t, i, {
+          num: i + 1,
+          handle: true,
+          onPlay: () => playTrackNow(t),
+          onRemove: k => {
+            const before = [...musicState.queue];
+            musicState.queue.splice(k, 1);
+            saveMusicQueue();
+            podToast('Quitada de la cola', { action: 'Deshacer', onAction: () => ((musicState.queue = before), saveMusicQueue()) });
+          },
+          menuExtra: (tt, k) => [
+            k > 0 && { icon: '⤒', label: 'Subir al principio', on: () => ((musicState.queue = moveInArray(musicState.queue, k, 0)), saveMusicQueue()) },
+            k < musicState.queue.length - 1 && { icon: '⤓', label: 'Bajar al final', on: () => ((musicState.queue = moveInArray(musicState.queue, k, musicState.queue.length - 1)), saveMusicQueue()) }
+          ].filter(Boolean)
+        })
+      )
+    );
+    makeSortable(
+      box,
+      (from, to) => {
+        musicState.queue = moveInArray(musicState.queue, from, to);
+        saveMusicQueue();
+      },
+      $m('musicContent')
+    );
+    root.append(box);
+    if (q.length > shown.length) root.append(musEl('p', 'mus-note', `… y ${q.length - shown.length} más.`));
+  }
+  const hist = [...musicState.history].reverse().filter(t => !cur || t.id !== cur.id).slice(0, 30);
+  if (hist.length) {
+    const d = musEl('details', 'pod-history', `<summary>🕘 Escuchado hace poco <span>${hist.length}</span></summary>`);
+    d.open = musHistOpen;
+    d.ontoggle = () => (musHistOpen = d.open);
+    const box = musEl('div', 'pod-queue');
+    hist.forEach((t, i) => box.append(trackRow(t, i, { onPlay: () => playTrackNow(t) })));
+    d.append(box);
+    root.append(d);
+  }
+}
+async function saveMusicQueueAsList() {
+  const tracks = [musicState.current, ...musicState.queue].filter(Boolean);
+  const name = await podPromptText({ title: 'Guardar la cola como lista', label: 'Nombre de la lista', value: 'Cola del ' + new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long' }) });
+  if (!name) return;
+  confirmListAdd(
+    null,
+    tracks,
+    sel => {
+      const l = createMusicList(name, sel);
+      podToast(`Lista «${l.name}» creada`, { action: 'Abrir', onAction: () => openMusicScreen('list:' + l.id) });
+    },
+    { listName: name }
+  );
+}
+
+/* ===========================================================================
+   Reproductor (mini y ampliado)
+=========================================================================== */
+/* ---------------------------------------------------------------------------
+   Gesto en el reproductor ampliado (como en las demás apps de música):
+   deslizar a la izquierda → siguiente, a la derecha → anterior. La carátula
+   sigue al dedo.
+--------------------------------------------------------------------------- */
+function initMusicSwipe() {
+  const card = document.querySelector('#musExpanded .pod-expanded-card');
+  const art = $m('musExpArt');
+  if (!card || !art) return;
+  let g = null;
+  const setArt = (x, anim = false) => {
+    art.style.transition = anim ? 'transform .22s ease, opacity .22s ease' : 'none';
+    art.style.transform = x ? `translateX(${x}px) rotate(${x / 40}deg)` : '';
+    art.style.opacity = x ? String(Math.max(0.35, 1 - Math.abs(x) / 500)) : '';
+  };
+  card.addEventListener('pointerdown', e => {
+    if (e.button > 0 || e.target.closest('input, select, textarea, .pod-sheet')) return;
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, on: false, t: performance.now() };
+  });
+  card.addEventListener('pointermove', e => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x,
+      dy = e.clientY - g.y;
+    if (!g.on) {
+      if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) return (g = null); // desplazamiento vertical
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      g.on = true;
+      card.setPointerCapture?.(e.pointerId);
+    }
+    g.dx = dx;
+    setArt(dx);
+  });
+  const end = e => {
+    if (!g || (e && e.pointerId !== g.id)) return;
+    const { dx, on, t } = g;
+    g = null;
+    if (!on) return;
+    // Que el gesto no cuente además como pulsación (abrir la letra, botones…).
+    const block = ev => (ev.stopPropagation(), ev.preventDefault());
+    window.addEventListener('click', block, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', block, { capture: true }), 350);
+    const fast = Math.abs(dx) > 40 && Math.abs(dx) / Math.max(1, performance.now() - t) > 0.5;
+    if (!musicState.current || (Math.abs(dx) < Math.min(110, card.clientWidth * 0.25) && !fast)) return setArt(0, true);
+    const dir = dx < 0 ? -1 : 1;
+    setArt(dir * card.clientWidth, true);
+    setTimeout(() => {
+      if (dir < 0) nextTrack(false);
+      else prevTrack(true);
+      setArt(-dir * card.clientWidth * 0.6);
+      requestAnimationFrame(() => requestAnimationFrame(() => setArt(0, true)));
+    }, 180);
+  };
+  card.addEventListener('pointerup', end);
+  card.addEventListener('pointercancel', () => {
+    if (g?.on) setArt(0, true);
+    g = null;
+  });
+}
+function updateMusicNowUI() {
+  const t = musicState.current;
+  $m('musPlayerMini')?.classList.toggle('is-empty', !t);
+  if (t) {
+    const art = musArtHtml(t.art, t.album || t.title);
+    $m('musNow').textContent = t.title;
+    $m('musNowSub').textContent = trackSub(t);
+    $m('musMiniArt').innerHTML = art;
+    $m('musExpArt').innerHTML = art;
+    $m('musExpTitle').textContent = t.title;
+    $m('musExpSub').textContent = trackSub(t);
+  }
+  document.querySelectorAll('#musicContent .mus-row').forEach(r => r.classList.toggle('is-current', !!t && r.dataset.id === t.id));
+  updateMusicPlayerUI();
+  updateMusicFavButton();
+  document.dispatchEvent(new CustomEvent('music:now'));
+}
+function updateMusicPlayerUI() {
+  const a = musicAudio();
+  if (!a) return;
+  const cur = Number.isFinite(a.currentTime) ? a.currentTime : 0;
+  const dur = Number.isFinite(a.duration) ? a.duration : musicState.current?.dur || 0;
+  const r = $m('musRange');
+  if (r && !r.matches(':active')) {
+    r.max = dur || 100;
+    r.value = Math.min(cur, dur || 100);
+  }
+  if ($m('musCur')) $m('musCur').textContent = fmtPodTime(cur);
+  if ($m('musDurEl')) $m('musDurEl').textContent = '−' + fmtPodTime(Math.max(0, dur - cur));
+  if ($m('musMiniBar')) $m('musMiniBar').style.width = dur ? Math.min(100, (cur / dur) * 100).toFixed(2) + '%' : '0%';
+  const playing = !a.paused || !!musicInterrupted;
+  ['musPlay', 'musExpPlay'].forEach(id => $m(id) && ($m(id).textContent = playing ? '⏸' : '▶'));
+  const o = musicOpts();
+  const sh = $m('musExpShuffle'),
+    rp = $m('musExpRepeat');
+  if (sh) {
+    sh.classList.toggle('on', o.shuffle);
+    sh.setAttribute('aria-pressed', o.shuffle ? 'true' : 'false');
+  }
+  if (rp) {
+    rp.classList.toggle('on', o.repeat !== 'off');
+    rp.textContent = o.repeat === 'one' ? '🔂' : '🔁';
+    rp.title = { off: 'Sin repetir', all: 'Repetir todo', one: 'Repetir esta canción' }[o.repeat];
+  }
+  if ($m('musExpQueueCount')) $m('musExpQueueCount').textContent = musicState.queue.length;
+  const up = $m('musUpNext');
+  if (up) {
+    const n = musicState.queue[0];
+    up.hidden = !n;
+    up.textContent = n ? `A continuación: ${n.title} — ${trackArtist(n)}` : '';
+  }
+  const sl = $m('musExpSleep');
+  if (sl) {
+    sl.classList.toggle('on', !!(musSleep.until || musSleep.end));
+    sl.textContent = musSleep.end ? '🌙 Fin de la canción' : musSleep.until ? '🌙 ' + fmtPodTime((musSleep.until - Date.now()) / 1000) : '🌙 Temporizador';
+  }
+}
+let musSleep = { until: 0, end: false, timer: null };
+function setMusicSleep(min) {
+  clearInterval(musSleep.timer);
+  musSleep = { until: 0, end: min === 'end', timer: null };
+  if (min > 0) {
+    musSleep.until = Date.now() + min * 60000;
+    musSleep.timer = setInterval(() => {
+      if (Date.now() >= musSleep.until) {
+        setMusicSleep(0);
+        if (!musicAudio().paused) {
+          window.viferorNativeMusicPause();
+          podToast('🌙 Temporizador: música en pausa');
+        }
+      }
+      updateMusicPlayerUI();
+    }, 1000);
+  }
+  updateMusicPlayerUI();
+}
+function openMusicSleepMenu() {
+  const active = musSleep.until || musSleep.end;
+  podSheet({
+    title: '🌙 Temporizador para dormir',
+    items: [
+      active && { icon: '✕', label: 'Desactivar', on: () => setMusicSleep(0) },
+      { icon: '⏹', label: 'Al terminar esta canción', checked: musSleep.end, on: () => setMusicSleep('end') },
+      ...[5, 10, 15, 30, 45, 60, 90].map(m => ({ icon: '⏱', label: m < 60 ? `${m} minutos` : m === 60 ? '1 hora' : '1 hora y media', on: () => setMusicSleep(m) }))
+    ]
+  });
+}
+function setMusicVolume(v) {
+  v = Math.max(0, Math.min(100, Number(v) || 0));
+  musUserVolume = v / 100;
+  if (window.musicFx?.active) window.musicFx.setVolume(musUserVolume);
+  [0, 1].forEach(applyDeckVolume);
+  if ($m('musExpVolume')) $m('musExpVolume').value = v;
+  if ($m('musExpVolumeValue')) $m('musExpVolumeValue').value = v + '%';
+  if ($m('musExpMute')) $m('musExpMute').textContent = v === 0 ? '🔇' : v < 40 ? '🔉' : '🔊';
+  if (v > 0) lsSet(MUS_KEYS.volume, v);
+}
+function openMusicExpanded() {
+  if (!musicState.current) return;
+  $m('musExpanded').hidden = false;
+  updateMusicPlayerUI();
+}
+function closeMusicExpanded() {
+  $m('musExpanded').hidden = true;
+}
+window.closeMusicExpanded = closeMusicExpanded;
+
+/* ===========================================================================
+   Arranque
+=========================================================================== */
+function initMusic() {
+  loadMusicLists();
+  musicState.tab = musicUi().tab;
+  $m('btnViewMusic')?.addEventListener('click', () => switchToMusic());
+  document.querySelectorAll('#musTabs [data-tab]').forEach(b => (b.onclick = () => setMusicTab(b.dataset.tab)));
+  $m('musSearch')?.addEventListener('input', e => {
+    clearTimeout(musSearchTimer);
+    const v = e.target.value.trim();
+    musSearchTimer = setTimeout(() => setMusicSearch(v), 220);
+  });
+  $m('musMenu')?.addEventListener('click', () =>
+    podSheet({
+      title: '🎵 Mi música',
+      subtitle: musicState.loaded ? `${tracksSummary(musicState.tracks)} · ${musicState.source === 'android' ? 'en el móvil' : `carpeta «${musicState.folderName || 'elegida'}»`}` : '',
+      items: [
+        { icon: '☰', label: 'Cola', hint: plural(musicState.queue.length, 'canción', 'canciones'), on: () => openMusicScreen('queue') },
+        { icon: '📃', label: 'Listas', on: () => setMusicTab('lists') },
+        { icon: '🎚️', label: 'Sonido y ecualizador', hint: 'Corrección de auriculares, fundidos, nivelador…', on: () => window.openFxPanel?.() },
+        { icon: '⏱', label: 'Buscar canciones cortas o rotas…', hint: 'Las que duran menos de lo que elijas', disabled: !musicState.tracks.length, on: chooseShortTracks },
+        { icon: '👯', label: 'Buscar canciones duplicadas', hint: 'Copias de la misma canción', disabled: !musicState.tracks.length, on: () => openDuplicates() },
+        { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
+        { sep: true },
+        Object.keys(musicHiddenMap()).length && { icon: '🙈', label: 'Canciones quitadas de la biblioteca', hint: plural(Object.keys(musicHiddenMap()).length, 'canción', 'canciones'), on: openHiddenTracks },
+        { icon: '🔄', label: isAndroidApp() ? 'Volver a buscar música en el móvil' : 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
+        !isAndroidApp() && { icon: '📁', label: 'Elegir otra carpeta', on: pickMusicFolder }
+      ]
+    })
+  );
+  initMusicDecks();
+  // Cada evento se escucha en las dos platinas, pero solo cuenta el de la que suena.
+  const on = (ev, fn) => musDecks.forEach(el => el.addEventListener(ev, e => el === musicAudio() && fn(el, e)));
+  setMusicVolume(lsGet(MUS_KEYS.volume, 80) || 80);
+  on('play', () => {
+    pauseOtherAudio();
+    window.musicFx?.resume?.();
+    syncMusicAndroid(true);
+    updateMusicPlayerUI();
+  });
+  on('playing', () => {
+    finMusicInterrupt();
+    musicUserPaused = false;
+  });
+  on('pause', a => {
+    saveMusicResume();
+    if (musicState.current && !a.ended && !musicUserPaused && !(window.rvPausaDelUsuario?.() ?? true)) {
+      // Pausa del sistema (notificación, llamada…): se reanuda sola.
+      startMusicInterrupt(a);
+      updateMusicPlayerUI();
+      return;
+    }
+    // Al terminar la canción también llega «pause»: ahí no se cancela la precarga.
+    if (!a.ended) stopOtherDeck();
+    syncMusicAndroid(false);
+    updateMusicPlayerUI();
+  });
+  on('timeupdate', a => {
+    const t = musicState.current;
+    if (t && !musicCounted && (a.currentTime >= 30 || (a.duration && a.currentTime >= a.duration * 0.5))) {
+      musicCounted = true;
+      countMusicPlay(t);
+    }
+    // Fundido entre canciones o precarga de la siguiente (sin pausas).
+    const rem = a.duration - a.currentTime;
+    const eng = musicEngineOpts();
+    if (musicState.radio && musicState.queue.length < 4 && !musRadioBusy) topUpSongRadio();
+    if (!a.paused && Number.isFinite(rem) && !musicState.xf) {
+      const nx = peekNextTrack();
+      if (nx) {
+        const xf = Number(eng.crossfade) || 0;
+        if (xf > 0 && a.duration > xf * 2 + 5 && rem <= xf) switchToOtherDeck(nx, Math.max(1, Math.min(xf, rem)));
+        else if ((eng.gapless || xf > 0) && rem <= 15) preloadNext(nx);
+      }
+    }
+    const now = Date.now();
+    if (now - musicLastSave > 5000) {
+      musicLastSave = now;
+      saveMusicResume();
+    }
+    if (now - musicLastSync > 5000) {
+      musicLastSync = now;
+      syncMusicAndroid(false);
+    }
+    updateMusicPlayerUI();
+  });
+  on('loadedmetadata', updateMusicPlayerUI);
+  on('ended', async () => {
+    const t = musicState.current;
+    if (t && !musicCounted) countMusicPlay(t);
+    musicCounted = true;
+    if (musSleep.end) {
+      setMusicSleep(0);
+      musicUserPaused = true;
+      syncMusicAndroid(false);
+      podToast('🌙 Temporizador: fin de la canción');
+      return;
+    }
+    // Sin pausas: la siguiente ya está cargada en la otra platina.
+    const nx = peekNextTrack();
+    if (nx && musicState.preload?.id === nx.id && musicState.preload.ready && (await switchToOtherDeck(nx, 0))) return;
+    nextTrack(true);
+  });
+  on('error', a => {
+    if (a.src && musicState.current) musicTrackFailed(musicState.current);
+  });
+  // Si empieza la radio o un podcast, la música se pausa (como pausa del usuario).
+  ['audioPlayer', 'podcastAudio'].forEach(id =>
+    document.getElementById(id)?.addEventListener('play', () => {
+      const a = musicAudio();
+      if (!a.paused || musicInterrupted) {
+        finMusicInterrupt();
+        musicUserPaused = true;
+        stopOtherDeck();
+        a.pause();
+      }
+    })
+  );
+  // Mini y ampliado
+  $m('musPlay').onclick = toggleMusicPlay;
+  $m('musPrev').onclick = prevTrack;
+  $m('musNext').onclick = () => nextTrack(false);
+  $m('musMiniOpen').onclick = openMusicExpanded;
+  $m('musMiniArt').onclick = openMusicExpanded;
+  $m('musMiniOpen').onkeydown = e => (e.key === 'Enter' || e.key === ' ') && openMusicExpanded();
+  $m('musExpClose').onclick = closeMusicExpanded;
+  $m('musExpanded').addEventListener('click', e => e.target.id === 'musExpanded' && closeMusicExpanded());
+  $m('musExpPlay').onclick = toggleMusicPlay;
+  $m('musExpPrev').onclick = () => prevTrack();
+  initMusicSwipe();
+  // Si la app se abrió con un archivo de audio de otra app.
+  setTimeout(() => {
+    try {
+      const o = window.Android?.takeOpenedAudio?.();
+      if (o) openExternalAudio(o);
+    } catch {}
+  }, 300);
+  $m('musExpNext').onclick = () => nextTrack(false);
+  $m('musExpShuffle').onclick = toggleMusicShuffle;
+  $m('musExpRepeat').onclick = cycleMusicRepeat;
+  $m('musExpQueue').onclick = () => {
+    closeMusicExpanded();
+    openMusicScreen('queue');
+  };
+  $m('musExpSleep').onclick = openMusicSleepMenu;
+  $m('musExpFav')?.addEventListener('click', () => {
+    const t = musicState.current;
+    if (t) toggleMusicFav('tracks', t.id, t.title, t);
+  });
+  document.addEventListener('music:favs', () => {
+    updateMusicFavButton();
+    if (!musicViewActive() || podDragging) return;
+    const c = $m('musicContent'),
+      sc = c.scrollTop;
+    renderMusicScreen();
+    c.scrollTop = sc;
+  });
+  $m('musExpMore').onclick = () => musicState.current && openTrackMenu(musicState.current);
+  // Pulsar la carátula del reproductor abre la letra.
+  const expArt = $m('musExpArt');
+  expArt.setAttribute('role', 'button');
+  expArt.tabIndex = 0;
+  expArt.title = 'Ver la letra';
+  expArt.setAttribute('aria-label', 'Ver la letra');
+  expArt.onclick = () => musicState.current && window.openLyrics?.(musicState.current);
+  expArt.onkeydown = e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), expArt.click());
+  $m('musExpMute').onclick = () => setMusicVolume(musUserVolume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
+  $m('musExpVolume').addEventListener('input', e => setMusicVolume(e.target.value));
+  $m('musRange').addEventListener('input', e => {
+    const a = musicAudio();
+    stopOtherDeck();
+    if (Number.isFinite(a.duration)) a.currentTime = Number(e.target.value);
+    updateMusicPlayerUI();
+  });
+  document.addEventListener('music:queue', () => {
+    updateMusicPlayerUI();
+    if (podDragging || !musicViewActive()) return;
+    if (musicState.screen === 'queue' || (musicState.screen === 'tab' && musicState.tab === 'lists' && !musicState.search)) {
+      const c = $m('musicContent'),
+        sc = c.scrollTop;
+      renderMusicScreen();
+      c.scrollTop = sc;
+    }
+  });
+  document.addEventListener('music:lists', () => {
+    if (podDragging || !musicViewActive()) return;
+    const s = musicState.screen;
+    if ((s === 'tab' && musicState.tab === 'lists') || s.startsWith('list:')) {
+      const c = $m('musicContent'),
+        sc = c.scrollTop;
+      renderMusicScreen();
+      c.scrollTop = sc;
+    }
+  });
+  // Al volver de los ajustes de Android (permiso concedido a mano).
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && musicViewActive() && !musicState.loaded && !musicState.loading && isAndroidApp()) ensureMusicLibrary();
+  });
+  window.addEventListener('pagehide', saveMusicResume);
+  updateMusicPlayerUI();
+}
+
+/* ===========================================================================
+   Favoritos (canciones, álbumes, artistas, carpetas y géneros)
+=========================================================================== */
+const MUS_FAV_KINDS = ['tracks', 'albums', 'artists', 'folders', 'genres'];
+function musicFavs() {
+  if (!musicState._favs) {
+    const f = lsGet(MUS_KEYS.favs, {});
+    musicState._favs = {};
+    MUS_FAV_KINDS.forEach(k => (musicState._favs[k] = Array.isArray(f[k]) ? f[k] : []));
+  }
+  return musicState._favs;
+}
+function isMusicFav(kind, key) {
+  const f = musicFavs()[kind] || [];
+  return kind === 'tracks' ? f.some(x => x.id === key) : f.includes(key);
+}
+// Devuelve si queda como favorito.
+function toggleMusicFav(kind, key, label = '', obj = null) {
+  const f = musicFavs();
+  const on = !isMusicFav(kind, key);
+  if (kind === 'tracks') f.tracks = on ? [...f.tracks, minimalTrack(obj || resolveTrack(key))].filter(Boolean) : f.tracks.filter(x => x.id !== key);
+  else f[kind] = on ? [...f[kind], key] : f[kind].filter(x => x !== key);
+  lsSet(MUS_KEYS.favs, f);
+  podToast(on ? `★ ${label ? `«${label}» ` : ''}en favoritos` : `Quitado de favoritos`, on ? { action: 'Ver', onAction: () => setMusicTab('favs') } : {});
+  document.dispatchEvent(new CustomEvent('music:favs'));
+  return on;
+}
+function favTracks() {
+  return musicFavs().tracks.map(resolveTrack).filter(Boolean);
+}
+// Todo lo marcado: canciones y lo que hay dentro de álbumes, artistas, carpetas y géneros favoritos.
+function favPool() {
+  const f = musicFavs();
+  const out = new Map();
+  favTracks().forEach(t => out.set(t.id, t));
+  f.albums.forEach(k => musicState.albums.get(k)?.tracks.forEach(t => out.set(t.id, t)));
+  f.artists.forEach(k => {
+    const ar = musicState.artists.get(k);
+    if (ar) artistTracks(ar).forEach(t => out.set(t.id, t));
+  });
+  f.folders.forEach(p => folderTracks(p).forEach(t => out.set(t.id, t)));
+  f.genres.forEach(k => musicState.genres.get(k)?.tracks.forEach(t => out.set(t.id, t)));
+  return [...out.values()];
+}
+function renderFavsTab(root) {
+  const f = musicFavs();
+  const songs = favTracks();
+  const albums = f.albums.map(k => musicState.albums.get(k)).filter(Boolean);
+  const artists = f.artists.map(k => musicState.artists.get(k)).filter(Boolean);
+  const folders = f.folders.map(p => musicState.folders.get(p)).filter(Boolean);
+  const genres = f.genres.map(k => musicState.genres.get(k)).filter(Boolean);
+  const total = songs.length + albums.length + artists.length + folders.length + genres.length;
+  root.append(tabHead('⭐ Favoritos', total));
+  if (!total) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', '<p>Marca con <b>☆</b> tus canciones (menú ⋯ o el reproductor), álbumes, artistas, carpetas y géneros (botón ☆ arriba en cada uno o su menú ⋯). Aparecerán aquí, y podrás escucharlo todo junto o crear una lista inteligente «Mis favoritos».</p>'));
+    return;
+  }
+  const pool = favPool();
+  root.append(musEl('p', 'pod-list-sub mus-fav-sum', `En total, ${tracksSummary(pool)} entre todo lo que has marcado.`));
+  root.append(collectionActions(pool, { label: 'tus favoritos' }));
+  if (songs.length) {
+    root.append(musEl('h3', 'pod-list-h', `Canciones <small>${songs.length}</small>`));
+    const box = musEl('div', 'pod-queue');
+    songs.forEach((t, i) => box.append(trackRow(t, i, { onPlay: k => playCollection(songs, k) })));
+    root.append(box);
+  }
+  if (albums.length) {
+    root.append(musEl('h3', 'pod-list-h', `Álbumes <small>${albums.length}</small>`));
+    root.append(albumGrid(albums));
+  }
+  const listSection = (title, items, make) => {
+    if (!items.length) return;
+    root.append(musEl('h3', 'pod-list-h', `${title} <small>${items.length}</small>`));
+    const box = musEl('div', 'mus-list');
+    items.forEach(x => box.append(make(x)));
+    root.append(box);
+  };
+  listSection('Artistas', artists, ar => listRow(musArtHtml(ar.art, ar.name, 'mus-art-s round'), ar.name, plural(ar.tracks.length, 'canción', 'canciones'), () => openMusicScreen('artist:' + ar.key), () => collectionMenu(ar.name, artistTracks(ar), { smart: { source: 'artists', picked: [ar.key] } })));
+  listSection('Carpetas', folders, fo => listRow('<span class="mus-ic">📁</span>', fo.name, `${fo.path} · ${plural(fo.count, 'canción', 'canciones')}`, () => openMusicScreen('folder:' + fo.path), () => collectionMenu(fo.name, folderTracks(fo.path), { smart: { source: 'folders', picked: [fo.path] } })));
+  listSection('Géneros', genres, g => listRow('<span class="mus-ic">🏷️</span>', g.name, plural(g.tracks.length, 'canción', 'canciones'), () => openMusicScreen('genre:' + g.key), () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } })));
+}
+function updateMusicFavButton() {
+  const b = $m('musExpFav');
+  const t = musicState.current;
+  if (!b) return;
+  const on = !!t && isMusicFav('tracks', t.id);
+  b.textContent = on ? '★ Favorita' : '☆ Favorita';
+  b.classList.toggle('on', on);
+}
+
+/* ===========================================================================
+   Carpetas incluidas y excluidas
+=========================================================================== */
+function musicFolderFilter() {
+  const f = lsGet(MUS_KEYS.folders, {});
+  return { include: Array.isArray(f.include) ? f.include : [], exclude: Array.isArray(f.exclude) ? f.exclude : [] };
+}
+function underFolder(folder, p) {
+  return !p || folder === p || folder.startsWith(p + '/');
+}
+// Visible si está dentro de alguna incluida (o no hay ninguna) y fuera de todas las excluidas.
+function folderVisible(folder, ff) {
+  if (ff.include.length && !ff.include.some(p => underFolder(folder, p))) return false;
+  return !ff.exclude.some(p => underFolder(folder, p));
+}
+function setFolderRule(path, kind, on, { toast = true } = {}) {
+  const ff = musicFolderFilter();
+  const other = kind === 'include' ? 'exclude' : 'include';
+  ff[kind] = ff[kind].filter(p => p !== path);
+  if (on) {
+    ff[kind].push(path);
+    ff[other] = ff[other].filter(p => p !== path);
+  }
+  lsSet(MUS_KEYS.folders, ff);
+  applyFolderFilter();
+  if (toast)
+    podToast(on ? (kind === 'exclude' ? `🚫 «${path.split('/').at(-1)}» excluida` : `✅ «${path.split('/').at(-1)}» incluida`) : 'Filtro quitado', {
+      action: 'Carpetas',
+      onAction: () => openMusicScreen('fmanage')
+    });
+}
+function clearFolderRules() {
+  lsSet(MUS_KEYS.folders, { include: [], exclude: [] });
+  applyFolderFilter();
+  podToast('Se muestran todas las carpetas');
+}
+// Vuelve a montar la biblioteca con el filtro nuevo (sin volver a leer el móvil o la carpeta).
+function applyFolderFilter() {
+  if (!musicState.allTracks) return;
+  const c = $m('musicContent'),
+    sc = c?.scrollTop || 0;
+  finishLibrary(musicState.allTracks, musicState.source);
+  if (c && musicState.screen === 'fmanage') c.scrollTop = sc;
+}
+function folderFilterSummary(ff = musicFolderFilter()) {
+  const parts = [];
+  if (ff.include.length) parts.push(`solo ${plural(ff.include.length, 'carpeta incluida', 'carpetas incluidas')}`);
+  if (ff.exclude.length) parts.push(plural(ff.exclude.length, 'carpeta excluida', 'carpetas excluidas'));
+  return parts.join(' · ');
+}
+function folderFilterBar() {
+  const ff = musicFolderFilter();
+  const sum = folderFilterSummary(ff);
+  const hidden = (musicState.allTracks?.length || 0) - musicState.tracks.length;
+  const bar = musEl('div', 'mus-ffbar' + (sum ? ' on' : ''), `<span>${sum ? `🔎 ${pEsc(sum)}${hidden ? ` · ${plural(hidden, 'canción oculta', 'canciones ocultas')}` : ''}` : 'Se muestran todas las carpetas'}</span><button type="button">⚙️ Incluir / excluir carpetas</button>`);
+  bar.querySelector('button').onclick = () => openMusicScreen('fmanage');
+  return bar;
+}
+function renderAllExcluded(root) {
+  const box = musEl('div', 'pod-empty mus-setup', `<div>🙈</div><h3>Todo está oculto</h3><p>Con las carpetas que has incluido o excluido no queda ninguna canción a la vista (${pEsc(folderFilterSummary())}).</p>`);
+  box.append(lyrButtonsLike([['⚙️ Revisar carpetas', () => openMusicScreen('fmanage'), 'primary'], ['Mostrar todo', clearFolderRules]]));
+  root.replaceChildren(box);
+}
+function lyrButtonsLike(list) {
+  const acts = musEl('div', 'pod-empty-actions');
+  list.forEach(([label, fn, cls]) => {
+    const b = musEl('button', cls || '', pEsc(label));
+    b.type = 'button';
+    b.onclick = fn;
+    acts.append(b);
+  });
+  return acts;
+}
+const musFmOpen = new Set();
+// Árbol de TODAS las carpetas (también las ocultas) con su estado.
+function renderFolderManager(root) {
+  const all = musicState.allTracks || [];
+  const ff = musicFolderFilter();
+  const nodes = new Map();
+  const node = path => {
+    if (!nodes.has(path)) {
+      const parts = path ? path.split('/') : [];
+      nodes.set(path, { path, name: parts.at(-1) || '', depth: parts.length, children: new Set(), count: 0 });
+      if (parts.length) node(parts.slice(0, -1).join('/')).children.add(path);
+    }
+    return nodes.get(path);
+  };
+  node('');
+  all.forEach(t => {
+    let p = t.folder;
+    node(p);
+    for (;;) {
+      nodes.get(p).count++;
+      if (!p) break;
+      p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+    }
+  });
+  // Abiertas: el primer nivel y el camino hasta cada carpeta con regla.
+  if (!musFmOpen.size) {
+    musFmOpen.add('');
+    [...ff.include, ...ff.exclude].forEach(p => {
+      const parts = p.split('/');
+      for (let i = 0; i < parts.length; i++) musFmOpen.add(parts.slice(0, i).join('/'));
+    });
+  }
+  root.append(detailHead('📁 Carpetas que se muestran', `${tracksSummary(musicState.tracks)} a la vista de ${plural(all.length, 'canción', 'canciones')}`, null));
+  root.append(
+    musEl(
+      'p',
+      'mus-fm-help',
+      '<b>🚫 Excluir</b> oculta una carpeta (y lo que tiene dentro) en toda tu música: canciones, álbumes, artistas, búsqueda y listas inteligentes. <b>✅ Incluir</b> hace lo contrario: si incluyes alguna, solo se ve lo que está dentro de las incluidas. Puedes combinarlas (incluir «Music» y excluir «Music/Podcasts»).'
+    )
+  );
+  if (ff.include.length || ff.exclude.length) root.append(actionBar([['↺ Mostrar todas las carpetas', clearFolderRules, 'danger']]));
+  const list = musEl('div', 'mus-fm');
+  const walk = (p, ancestorsHidden) => {
+    const n = nodes.get(p);
+    [...n.children]
+      .map(c => nodes.get(c))
+      .sort((a, b) => musCollator.compare(a.name, b.name))
+      .forEach(c => {
+        const inc = ff.include.includes(c.path),
+          exc = ff.exclude.includes(c.path);
+        const visible = all.some(t => underFolder(t.folder, c.path) && folderVisible(t.folder, ff));
+        const row = musEl('div', 'mus-fm-row' + (visible ? '' : ' off') + (inc ? ' inc' : '') + (exc ? ' exc' : ''));
+        row.style.setProperty('--d', c.depth - 1);
+        const open = musFmOpen.has(c.path);
+        row.innerHTML = `<button type="button" class="mus-fm-tg" ${c.children.size ? '' : 'disabled'} aria-label="${open ? 'Cerrar' : 'Abrir'}">${c.children.size ? (open ? '▾' : '▸') : ''}</button><span class="mus-fm-name"><strong>📁 ${pEsc(c.name)}</strong><small>${plural(c.count, 'canción', 'canciones')}${visible ? '' : ' · oculta'}</small></span><button type="button" class="mus-fm-inc${inc ? ' on' : ''}" aria-pressed="${inc}">✅ Incluir</button><button type="button" class="mus-fm-exc${exc ? ' on' : ''}" aria-pressed="${exc}">🚫 Excluir</button>`;
+        row.querySelector('.mus-fm-tg').onclick = () => {
+          open ? musFmOpen.delete(c.path) : musFmOpen.add(c.path);
+          const sc = $m('musicContent').scrollTop;
+          renderMusicScreen();
+          $m('musicContent').scrollTop = sc;
+        };
+        row.querySelector('.mus-fm-inc').onclick = () => setFolderRule(c.path, 'include', !inc, { toast: false });
+        row.querySelector('.mus-fm-exc').onclick = () => setFolderRule(c.path, 'exclude', !exc, { toast: false });
+        list.append(row);
+        if (open) walk(c.path);
+      });
+  };
+  walk('');
+  root.append(list);
+}
+
+function updateMusicStrip() {}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initMusic);
+else initMusic();
