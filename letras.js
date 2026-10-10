@@ -185,7 +185,7 @@ function buildLyricsPanel() {
     'div',
     'lyr-panel',
     `<div class="lyr-head"><button type="button" class="lyr-close" aria-label="Cerrar la letra">←</button><div class="lyr-title"><strong id="lyrTitle"></strong><small id="lyrSub"></small></div><button type="button" class="lyr-more" aria-label="Opciones de la letra">⋯</button></div>
-     <div class="lyr-modes" role="tablist"><button type="button" data-mode="orig">🎤 Letra</button><button type="button" data-mode="trans">🌐 Original + español</button></div>
+     <div class="lyr-modes" role="tablist"><button type="button" data-mode="orig">🎤 Letra</button><button type="button" data-mode="trans">🌐 Original + español</button><button type="button" data-mode="meaning">💡 Significado</button></div>
      <div class="lyr-body" id="lyrBody"></div>
      <div class="lyr-foot" id="lyrFoot"></div>`
   );
@@ -251,12 +251,14 @@ async function loadLyricsFor(t, opts = {}) {
   lyr.loading = false;
   renderLyrics();
   if (lyr.mode === 'trans') ensureTranslation();
+  if (lyr.mode === 'meaning') openMeaning();
 }
 function setLyricsMode(mode) {
   lyr.mode = mode;
   lsSet(LYR_UI_KEY, { ...lyrUi(), mode });
   renderLyrics();
   if (mode === 'trans') ensureTranslation();
+  if (mode === 'meaning') openMeaning();
 }
 function isLyrTrackPlaying() {
   return !!lyr.track && musicState.current?.id === lyr.track.id;
@@ -285,6 +287,11 @@ function renderLyrics() {
     return body.append(lyrButtons([['🔄 Reintentar', () => loadLyricsFor(t, { force: true }), 'primary']]));
   }
   const d = lyr.data;
+  if (lyr.mode === 'meaning') {
+    body.append(renderMeaningCard());
+    if (!d?.lines?.length) body.append(musEl('p', 'lyr-ai-note', 'Sin letra, la explicación se basa solo en lo que se sabe de la canción.'));
+    return;
+  }
   if (d?.instrumental) {
     body.append(musEl('div', 'lyr-msg', '🎼 Es una pieza instrumental: no tiene letra.'));
     return body.append(lyrButtons([['🔎 Buscar otra versión', searchOtherLyrics]]));
@@ -294,6 +301,7 @@ function renderLyrics() {
     return body.append(
       lyrButtons([
         ['🔎 Buscar otra versión', searchOtherLyrics, 'primary'],
+        ['🌐 Buscar en internet', () => searchLyricsWeb(t)],
         ['✏️ Escribir o pegar la letra', editLyrics]
       ])
     );
@@ -311,10 +319,11 @@ function renderLyrics() {
   body.append(list);
   // Pie: de dónde viene y sincronización.
   foot.append(musEl('span', 'lyr-src', pEsc(d.label + (d.synced ? ' · ⏱ sincronizada' : ' · sin sincronizar') + (d.offset ? ` · desfase ${d.offset > 0 ? '+' : ''}${d.offset.toFixed(1).replace('.', ',')} s` : ''))));
+  const mine = d.source === 'user' && !lyrUserGet(lyr.track)?.published;
   foot.append(
     lyrButtons(
       d.synced
-        ? [['⇆ Ajustar desfase', offsetMenu], ['⏱ Volver a sincronizar', startSync]]
+        ? [['⇆ Ajustar desfase', offsetMenu], ['⏱ Volver a sincronizar', startSync], ...(mine ? [['📤 Compartir', () => shareToLrclib(lyr.track)]] : [])]
         : [['⏱ Sincronizar', startSync, 'primary'], ['🔎 Buscar versión sincronizada', searchOtherLyrics]]
     )
   );
@@ -339,13 +348,6 @@ function renderTransTop() {
     box.append(lyrButtons([['🔄 Reintentar la traducción', () => ensureTranslation(true)]]));
   } else if (lyr.trans?.lang === 'es') box.append(musEl('p', 'lyr-note', 'La letra ya está en español.'));
   else if (lyr.trans) box.append(musEl('p', 'lyr-note', `Traducido del ${langName(lyr.trans.lang)} · traducción automática`));
-  // Significado
-  if (!lyr.meaningOpen) {
-    const b = musEl('button', 'lyr-meaning-btn', '💡 <b>Significado de la canción</b><small>Qué quiso transmitir el autor</small>');
-    b.type = 'button';
-    b.onclick = openMeaning;
-    box.append(b);
-  } else box.append(renderMeaningCard());
   return box;
 }
 function langName(code) {
@@ -387,7 +389,7 @@ function updateLyricsHighlight(force) {
     r.classList.toggle('past', k < i);
   });
   // Con el significado abierto no se desplaza sola (si no, lo sacaría de la vista).
-  if (i >= 0 && !(lyr.mode === 'trans' && lyr.meaningOpen) && Date.now() - lyr.userScrollAt > 4000) rows[i]?.scrollIntoView({ block: 'center', behavior: force ? 'auto' : 'smooth' });
+  if (i >= 0 && lyr.mode !== 'meaning' && Date.now() - lyr.userScrollAt > 4000) rows[i]?.scrollIntoView({ block: 'center', behavior: force ? 'auto' : 'smooth' });
 }
 function seekToLine(i) {
   const d = lyr.data;
@@ -487,7 +489,8 @@ function syncSave() {
   });
   lyrUserSet(lyr.track, { text: toLrc(lyr.track, s.lines), source: 'sync', offset: undefined });
   lyr.sync = null;
-  podToast('Letra sincronizada guardada');
+  const tr = lyr.track;
+  podToast('Letra sincronizada guardada', { action: '📤 Compartir en LRCLIB', onAction: () => shareToLrclib(tr) });
   loadLyricsFor(lyr.track);
 }
 
@@ -504,8 +507,11 @@ function lyricsMenu() {
       d?.lines?.length && { icon: '⏱', label: d.synced ? 'Volver a sincronizar' : 'Sincronizar', on: startSync },
       d?.synced && { icon: '⇆', label: 'Ajustar desfase', on: offsetMenu },
       { icon: '🔎', label: 'Buscar otra versión', hint: 'En LRCLIB, con o sin tiempos', on: searchOtherLyrics },
+      { icon: '🌐', label: 'Buscar la letra en internet', hint: 'Para copiarla y pegarla aquí', on: () => searchLyricsWeb(lyr.track) },
+      { icon: '🌐', label: 'Buscar un .lrc sincronizado en internet', on: () => searchLyricsWeb(lyr.track, 'lrc') },
       { icon: '✏️', label: d?.lines?.length ? 'Editar la letra' : 'Escribir o pegar la letra', hint: 'Admite texto normal o .lrc', on: editLyrics },
       d?.lines?.length && { icon: '💾', label: d.synced ? 'Exportar .lrc' : 'Exportar .txt', on: exportLyrics },
+      d?.lines?.length && d.source === 'user' && { icon: '📤', label: user?.published ? 'Compartir otra vez en LRCLIB' : 'Compartir en LRCLIB', hint: user?.published ? 'Ya la compartiste' : 'Para que aparezca sola a todo el mundo', on: () => shareToLrclib(lyr.track) },
       { icon: '🔄', label: 'Volver a buscar', on: () => loadLyricsFor(lyr.track, { force: true }) },
       user?.text && { icon: '🗑', label: 'Borrar mi versión', hint: 'Vuelve a la del archivo o la de LRCLIB', danger: true, on: () => (lyrUserDelete(lyr.track), loadLyricsFor(lyr.track)) }
     ]
@@ -538,7 +544,8 @@ function offsetMenu() {
 function editLyrics() {
   const d = lyr.data;
   const form = musEl('form', 'pod-sheet-form');
-  form.innerHTML = `<label><span>Letra (texto normal o .lrc con tiempos [mm:ss.xx])</span><textarea class="lyr-textarea" rows="14" spellcheck="false"></textarea></label><button type="submit" class="pod-sheet-ok">Guardar</button>`;
+  form.innerHTML = `<button type="button" class="lyr-web-btn">🌐 Buscar la letra en internet para copiarla</button><label><span>Letra (texto normal o .lrc con tiempos [mm:ss.xx])</span><textarea class="lyr-textarea" rows="14" spellcheck="false"></textarea></label><button type="submit" class="pod-sheet-ok">Guardar</button>`;
+  form.querySelector('.lyr-web-btn').onclick = () => searchLyricsWeb(lyr.track);
   const ta = form.querySelector('textarea');
   ta.value = d?.synced ? toLrc(lyr.track, d.lines) : (d?.lines || []).map(l => l.text).join('\n');
   form.onsubmit = ev => {
@@ -693,7 +700,7 @@ function renderMeaningCard() {
   } else if (lyr.meaning) {
     card.append(musEl('div', 'lyr-md', mdToHtml(lyr.meaning.text)));
     card.append(musEl('p', 'lyr-ai-note', `Explicación generada por IA (${lyr.meaning.provider === 'anthropic' ? 'Claude' : 'Gemini'}); puede contener errores.`));
-    card.append(lyrButtons([['🔄 Regenerar', () => openMeaning(true)], ['Ocultar', () => ((lyr.meaningOpen = false), renderLyrics())]]));
+    card.append(lyrButtons([['🔄 Regenerar', () => openMeaning(true)]]));
   }
   return card;
 }
@@ -786,3 +793,154 @@ function initLyrics() {
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initLyrics);
 else initLyrics();
+
+/* ---------------------------------------------------------------------------
+   Buscar la letra en internet (para copiarla y pegarla)
+--------------------------------------------------------------------------- */
+function searchLyricsWeb(t, kind = 'letra') {
+  t = t || lyr.track;
+  if (!t) return;
+  const q = `${t.artist ? t.artist + ' ' : ''}${t.title} ${kind}`;
+  // En la app Android, los enlaces de fuera se abren en el navegador del móvil.
+  window.open('https://www.google.com/search?q=' + encodeURIComponent(q), '_blank', 'noopener');
+}
+
+/* ---------------------------------------------------------------------------
+   Compartir en LRCLIB (con su reto de prueba de trabajo)
+--------------------------------------------------------------------------- */
+// SHA-256 en JavaScript dentro de un Web Worker: busca un número tal que
+// SHA-256(prefijo + número) < objetivo (comparando bytes), como pide LRCLIB.
+const LYR_POW_WORKER = `
+const K=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+const W=new Uint32Array(64);
+function sha256(m,len){
+  const nb=((len+9+63)>>6)<<6, p=new Uint8Array(nb); p.set(m.subarray(0,len)); p[len]=0x80;
+  const bits=len*8; p[nb-4]=bits>>>24; p[nb-3]=(bits>>>16)&255; p[nb-2]=(bits>>>8)&255; p[nb-1]=bits&255;
+  let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+  for(let o=0;o<nb;o+=64){
+    for(let i=0;i<16;i++)W[i]=(p[o+i*4]<<24)|(p[o+i*4+1]<<16)|(p[o+i*4+2]<<8)|p[o+i*4+3];
+    for(let i=16;i<64;i++){const a=W[i-15],b=W[i-2];W[i]=(((a>>>7)|(a<<25))^((a>>>18)|(a<<14))^(a>>>3))+W[i-16]+(((b>>>17)|(b<<15))^((b>>>19)|(b<<13))^(b>>>10))+W[i-7]|0;}
+    let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+    for(let i=0;i<64;i++){
+      const t1=h+(((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7)))+((e&f)^(~e&g))+K[i]+W[i]|0;
+      const t2=(((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10)))+((a&b)^(a&c)^(b&c))|0;
+      h=g;g=f;f=e;e=d+t1|0;d=c;c=b;b=a;a=t1+t2|0;
+    }
+    h0=h0+a|0;h1=h1+b|0;h2=h2+c|0;h3=h3+d|0;h4=h4+e|0;h5=h5+f|0;h6=h6+g|0;h7=h7+h|0;
+  }
+  const out=new Uint8Array(32),hs=[h0,h1,h2,h3,h4,h5,h6,h7];
+  for(let i=0;i<8;i++){out[i*4]=hs[i]>>>24;out[i*4+1]=(hs[i]>>>16)&255;out[i*4+2]=(hs[i]>>>8)&255;out[i*4+3]=hs[i]&255;}
+  return out;
+}
+function less(h,t){for(let i=0;i<32;i++){if(h[i]!==t[i])return h[i]<t[i];}return false;}
+onmessage=e=>{
+  if(e.data.test){const b=new TextEncoder().encode(e.data.test);postMessage({hex:[...sha256(b,b.length)].map(x=>x.toString(16).padStart(2,'0')).join('')});return;}
+  const {prefix,target,start,step}=e.data;
+  const tb=new Uint8Array(32);for(let i=0;i<32;i++)tb[i]=parseInt(target.substr(i*2,2),16)||0;
+  const pb=new TextEncoder().encode(prefix),buf=new Uint8Array(pb.length+24);buf.set(pb);
+  let n=start,c=0;
+  for(;;){
+    const s=String(n);for(let i=0;i<s.length;i++)buf[pb.length+i]=s.charCodeAt(i);
+    if(less(sha256(buf,pb.length+s.length),tb)){postMessage({nonce:s,count:c});return;}
+    n+=step;if(++c%100000===0)postMessage({progress:100000});
+  }
+};`;
+function solveLrclibChallenge(prefix, target, onProgress, timeoutMs = 280000) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([LYR_POW_WORKER], { type: 'text/javascript' }));
+    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    const workers = [];
+    let tried = 0;
+    const stop = () => {
+      workers.forEach(w => w.terminate());
+      URL.revokeObjectURL(url);
+      clearTimeout(timer);
+    };
+    const timer = setTimeout(() => {
+      stop();
+      reject(Error('Se ha tardado demasiado. Prueba otra vez (mejor con el móvil cargando).'));
+    }, timeoutMs);
+    for (let i = 0; i < n; i++) {
+      const w = new Worker(url);
+      w.onmessage = e => {
+        if (e.data.nonce != null) {
+          stop();
+          resolve(e.data.nonce);
+        } else if (e.data.progress) {
+          tried += e.data.progress;
+          onProgress?.(tried);
+        }
+      };
+      w.onerror = e => {
+        stop();
+        reject(Error('No se pudo resolver el reto' + (e?.message ? ': ' + e.message : '')));
+      };
+      w.postMessage({ prefix, target, start: i, step: n });
+      workers.push(w);
+    }
+  });
+}
+window.solveLrclibChallenge = solveLrclibChallenge;
+function lyrPlainText(d) {
+  return d.lines.map(l => l.text).join('\n').trim();
+}
+// LRC para LRCLIB: solo líneas con tiempo y con el desfase ya aplicado.
+function lyrSyncedForPublish(d) {
+  return d.lines
+    .filter(l => l.t != null)
+    .map(l => `[${fmtLrcTime(l.t - (d.offset || 0))}]${l.text}`)
+    .join('\n');
+}
+async function shareToLrclib(t) {
+  t = t || lyr.track;
+  const d = lyr.track?.id === t.id ? lyr.data : await loadLyrics(t);
+  if (!d?.lines?.length) return podToast('No hay letra que compartir');
+  if (!t.artist) return podToast('La canción no tiene artista en sus etiquetas; LRCLIB lo necesita');
+  if (!(t.dur > 0)) return podToast('Reproduce la canción un momento para saber su duración y vuelve a intentarlo');
+  podSheet({
+    title: '📤 Compartir en LRCLIB',
+    subtitle: `${trackArtist(t)} — ${t.title} · ${fmtPodTime(t.dur)}${d.synced ? ' · sincronizada' : ' · sin tiempos'}`,
+    items: [
+      {
+        icon: '📤',
+        label: 'Publicar',
+        hint: 'Será pública para cualquiera que use LRCLIB. Antes, tu móvil resuelve un pequeño reto de cálculo (de segundos a un par de minutos).',
+        on: () => publishToLrclib(t, d)
+      }
+    ]
+  });
+}
+async function publishToLrclib(t, d) {
+  const say = (m, o = {}) => podToast(m, { ms: 60000, ...o });
+  try {
+    say('Pidiendo el reto a LRCLIB…');
+    const ch = await fetch('/api/lyrics-publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ step: 'challenge' }) });
+    const c = await ch.json().catch(() => ({}));
+    if (!ch.ok) throw Error(c.error || 'LRCLIB no responde');
+    if (!c.prefix || !/^[0-9a-f]{64}$/i.test(c.target || '')) throw Error('LRCLIB ha enviado un reto no válido');
+    say('Resolviendo el reto… (deja la app abierta)');
+    const started = Date.now();
+    const nonce = await solveLrclibChallenge(c.prefix, c.target, n => say(`Resolviendo el reto… ${(n / 1e6).toFixed(1).replace('.', ',')} M intentos · ${Math.round((Date.now() - started) / 1000)} s`));
+    say('Publicando…');
+    const body = {
+      step: 'publish',
+      token: `${c.prefix}:${nonce}`,
+      trackName: t.title,
+      artistName: t.artist,
+      albumName: t.album || t.title,
+      duration: Math.round(t.dur),
+      plainLyrics: lyrPlainText(d),
+      syncedLyrics: d.synced ? lyrSyncedForPublish(d) : null
+    };
+    const r = await fetch('/api/lyrics-publish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw Error(res.error || 'LRCLIB la ha rechazado');
+    lyrUserSet(t, { published: Date.now() });
+    idbPut('lyrics', 'l|' + lyrKey(t), null);
+    podToast('¡Publicada en LRCLIB! Gracias por compartirla 🎉');
+    if (lyr.track?.id === t.id) renderLyrics();
+  } catch (e) {
+    podToast('No se pudo publicar: ' + (e?.message || 'error'));
+  }
+}
+window.shareToLrclib = shareToLrclib;

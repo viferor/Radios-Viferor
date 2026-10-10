@@ -1551,3 +1551,6 @@ html.dark-mode .mus-player #musPrev,html.dark-mode .mus-player #musNext{color:#f
 html.dark-mode .lyr-textarea{background:#11151a;color:#f5f7f9;border-color:#353c44}
 @media(min-width:900px){.lyr-body{padding-left:max(18px,calc(50% - 360px));padding-right:max(18px,calc(50% - 360px))}.lyr-line{font-size:1.6rem}}
 .lyr-ai-setup input[type=password]{width:100%;height:44px;border:1px solid;border-radius:10px;padding:0 10px;font-size:.95rem}
+.lyr-web-btn{width:100%;border:1px dashed #b9c2ca;background:transparent;color:var(--text);border-radius:10px;padding:10px;font-weight:800;font-size:.86rem;cursor:pointer}
+.lyr-modes button{padding:8px 6px;font-size:.78rem;line-height:1.15}
+@media(max-width:420px){.lyr-modes{gap:5px;padding:0 8px 8px}.lyr-modes button{font-size:.72rem;padding:8px 4px}}

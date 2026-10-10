@@ -1,6 +1,18 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.18.1 — Significado como pestaña, buscar en internet y compartir en LRCLIB
+
+- La letra tiene tres pestañas: **🎤 Letra**, **🌐 Original + español** y **💡 Significado**.
+- **Gemini saturado (503):** reintenta una vez y, si sigue, prueba otros modelos «flash» de tu
+  clave (los consulta a Google; también `GEMINI_FALLBACK_MODELS`). Si en Vercel hay además
+  `ANTHROPIC_API_KEY`, la usa como último recurso. `vercel.json` da 60 s a esa función.
+- **🌐 Buscar la letra en internet** (o un .lrc) cuando no está: abre Google para copiarla y
+  pegarla en la app.
+- **📤 Compartir en LRCLIB** las letras que escribes o sincronizas (`/api/lyrics-publish`). El
+  dispositivo resuelve el reto de LRCLIB (SHA-256 en Web Workers) y se publica con el desfase
+  aplicado.
+
 ## 1.18.0 — Letras: sincronizadas, traducidas y su significado
 
 En «Mi música», botón **🎤 Letra** (reproductor ampliado o ⋯ de cualquier canción).

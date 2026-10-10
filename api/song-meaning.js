@@ -36,8 +36,8 @@ export function buildUserPrompt({ title, artist, album, year, lyrics }) {
   return `${meta}\n\nLetra (para tu análisis, no la reproduzcas):\n"""\n${text || '(sin letra disponible)'}\n"""`;
 }
 
-async function callGemini(key, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
+async function callGemini(key, prompt, model = GEMINI_MODEL) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const r = await safeFetch(
     url,
     {
@@ -52,11 +52,77 @@ async function callGemini(key, prompt) {
     { allowFirstHost: h => h === 'generativelanguage.googleapis.com', timeoutMs: 45000, maxRedirects: 0 }
   );
   const d = JSON.parse(new TextDecoder().decode(await readLimited(r, 2_000_000)) || '{}');
-  if (!r.ok) throw Object.assign(new Error(apiError('Gemini', r.status, d?.error?.message)), { status: r.status === 429 ? 429 : 502 });
+  if (!r.ok) throw Object.assign(new Error(apiError('Gemini', r.status, d?.error?.message)), { status: r.status === 429 ? 429 : 502, upstream: r.status });
   const c = d.candidates?.[0];
   const text = (c?.content?.parts || []).map(p => p.text || '').join('').trim();
   if (!text) throw Object.assign(new Error(c?.finishReason === 'RECITATION' ? 'Gemini no ha querido responder (contenido protegido). Prueba a regenerar.' : 'Gemini no ha devuelto respuesta'), { status: 502 });
-  return { text, provider: 'gemini', model: GEMINI_MODEL };
+  return { text, provider: 'gemini', model };
+}
+
+// Modelos «flash» que tu clave puede usar (para cuando el principal está saturado).
+const modelCache = globalThis.__geminiModels || (globalThis.__geminiModels = new Map());
+async function listGeminiFlash(key) {
+  const ck = key.slice(-8);
+  const c = modelCache.get(ck);
+  if (c && Date.now() - c.t < 3600000) return c.v;
+  let v = [];
+  try {
+    const r = await safeFetch(
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+      { headers: { 'x-goog-api-key': key } },
+      { allowFirstHost: h => h === 'generativelanguage.googleapis.com', timeoutMs: 8000, maxRedirects: 0 }
+    );
+    const d = JSON.parse(new TextDecoder().decode(await readLimited(r, 2_000_000)) || '{}');
+    v = pickFlashModels(d.models || []);
+  } catch {}
+  modelCache.set(ck, { t: Date.now(), v });
+  return v;
+}
+// De la lista de Google: los que generan texto, «flash», sin variantes de imagen, voz, etc.;
+// los más nuevos primero (y las versiones «lite» después de las normales).
+export function pickFlashModels(models) {
+  const ver = n => (n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0';
+  return models
+    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map(m => String(m.name || '').replace(/^models\//, ''))
+    .filter(n => /^gemini-.*flash/.test(n) && !/(image|tts|audio|live|embedding|vision|preview-\d{2}-\d{2}-exp|learnlm)/i.test(n))
+    .sort((a, b) => Number(ver(b)) - Number(ver(a)) || /lite/.test(a) - /lite/.test(b) || a.length - b.length)
+    .slice(0, 6);
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// 503/500 (saturado): un reintento y luego otros modelos. 404: modelo inexistente → siguiente.
+// 429: cuota de ese modelo agotada → siguiente. 401/403 (clave mala): se para.
+export async function geminiWithFallback(key, prompt, { call = callGemini, list = listGeminiFlash, extra = (process.env.GEMINI_FALLBACK_MODELS || '').split(','), deadline = Date.now() + 50000 } = {}) {
+  const tried = new Set();
+  let last = null;
+  const queue = [GEMINI_MODEL, ...extra.map(x => x.trim()).filter(Boolean)];
+  let listed = false;
+  while (Date.now() < deadline) {
+    if (!queue.length && !listed) {
+      listed = true;
+      queue.push(...(await list(key)));
+    }
+    const model = queue.shift();
+    if (!model) break;
+    if (tried.has(model)) continue;
+    tried.add(model);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await call(key, prompt, model);
+      } catch (e) {
+        last = e;
+        const up = e.upstream || 0;
+        if (up === 401 || up === 403 || up === 400) throw e;
+        if ((up === 503 || up === 500 || up === 504) && attempt === 0) {
+          await sleep(1500);
+          continue;
+        }
+        break; // 404, 429 o sigue saturado → siguiente modelo
+      }
+    }
+  }
+  if (last?.upstream === 503 || last?.upstream === 500) last.message = 'Gemini está saturado ahora mismo. Prueba otra vez en un par de minutos.';
+  throw last || new Error('Gemini no ha respondido');
 }
 
 async function callAnthropic(key, prompt) {
@@ -110,7 +176,16 @@ export default async function handler(req, res) {
     const title = String(b.title || '').slice(0, 200).trim();
     if (!title) return res.status(400).json({ error: 'Falta el título' });
     const prompt = buildUserPrompt({ title, artist: String(b.artist || '').slice(0, 200), album: String(b.album || '').slice(0, 200), year: Number(b.year) || '', lyrics: String(b.lyrics || '') });
-    const out = ch.provider === 'gemini' ? await callGemini(ch.key, prompt) : await callAnthropic(ch.key, prompt);
+    let out;
+    if (ch.provider === 'gemini') {
+      try {
+        out = await geminiWithFallback(ch.key, prompt);
+      } catch (e) {
+        // Si también hay clave de Claude en Vercel, se usa como último recurso.
+        if (process.env.ANTHROPIC_API_KEY && ![400, 401, 403].includes(e.upstream)) out = await callAnthropic(process.env.ANTHROPIC_API_KEY, prompt);
+        else throw e;
+      }
+    } else out = await callAnthropic(ch.key, prompt);
     return res.status(200).json(out);
   } catch (e) {
     return res.status(e.status || 502).json({ error: e.message || 'No se pudo obtener el significado' });
