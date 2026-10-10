@@ -1,6 +1,21 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.24.0 — Canciones duplicadas
+
+- **👯 Buscar canciones duplicadas** (menú ⋯ de Mi música, y botón junto a «Cortas o rotas»):
+  tres modos — *misma canción* (título y artista iguales, duración ±3 s; ignora «feat.»,
+  «Remastered», números de pista…), *copias exactas* (mismo tamaño y duración) y *mismo
+  título y artista* (incluye versiones de otra duración). En cada grupo se recomienda cuál
+  conservar (más calidad, etiquetas y carátula, fuera de «Descargas»/WhatsApp, favorita o más
+  escuchada) y se pueden eliminar las sobrantes (del móvil o de la biblioteca), una a una o
+  todas, marcar «No son duplicadas» o exportar un informe.
+- **Listas**: al crear una lista o añadir canciones (también al guardar la cola, importar M3U o
+  fijar una inteligente) avisa si alguna ya está, si es otra copia de una que ya está o si
+  se repite entre las que añades: «solo las nuevas», «todas» o «ver cuáles son». Las listas
+  con repetidas lo indican con un botón «Quitar repetidas» (también en su menú ⋯).
+- Las listas inteligentes ya no repiten la misma canción: usan la mejor copia.
+
 ## 1.23.0 · APK 1.11.0 — Eliminar canciones (del móvil o de la biblioteca)
 
 - **🗑 Eliminar…** en el menú ⋯ de cualquier canción, con ✕ en la lista de canciones

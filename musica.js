@@ -26,7 +26,8 @@ const MUS_KEYS = {
   folders: 'radios_viferor_music_folders_v1',
   shortSecs: 'radios_viferor_music_short_secs',
   hidden: 'radios_viferor_music_hidden_v1',
-  shortOk: 'radios_viferor_music_short_ok_v1'
+  shortOk: 'radios_viferor_music_short_ok_v1',
+  dupIgnore: 'radios_viferor_music_dup_ignore_v1'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -1207,9 +1208,9 @@ function createMusicList(name, tracks = []) {
   saveMusicLists();
   return l;
 }
-function addTracksToList(l, tracks) {
+function addTracksToList(l, tracks, { allowSame = false } = {}) {
   const have = new Set(l.items.map(x => x.id));
-  const add = tracks.filter(t => t && !have.has(t.id));
+  const add = tracks.filter(t => t && (allowSame || !have.has(t.id)));
   l.items.push(...add.map(minimalTrack));
   l.updatedAt = Date.now();
   saveMusicLists();
@@ -1263,6 +1264,7 @@ function resolveMusicSmart(rules) {
     if (r.yearTo && (!t.year || t.year > r.yearTo)) return false;
     return true;
   });
+  if (r.noDups !== false) list = dedupeSongs(list);
   const by = fn => list.sort(fn);
   const byAlbum = (a, b) => musCollator.compare(a.album || '', b.album || '') || (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0);
   switch (r.order) {
@@ -1306,16 +1308,21 @@ function musicSmartSummary(r) {
 function chooseMusicListFor(tracks) {
   tracks = tracks.filter(Boolean);
   if (!tracks.length) return;
-  const save = l => {
-    const r = addTracksToList(l, tracks);
-    podToast(r.added ? `${plural(r.added, 'canción añadida', 'canciones añadidas')} a «${l.name}»${r.already ? ` · ${r.already} ya estaban` : ''}` : `Ya estaba${tracks.length > 1 ? 'n' : ''} en «${l.name}»`, {
-      action: 'Abrir',
-      onAction: () => openMusicScreen('list:' + l.id)
+  const save = l =>
+    confirmListAdd(l, tracks, (sel, o) => {
+      const r = addTracksToList(l, sel, o);
+      podToast(r.added ? `${plural(r.added, 'canción añadida', 'canciones añadidas')} a «${l.name}»${r.already ? ` · ${r.already} ya estaban` : ''}` : `Ya estaba${tracks.length > 1 ? 'n' : ''} en «${l.name}»`, {
+        action: 'Abrir',
+        onAction: () => openMusicScreen('list:' + l.id)
+      });
     });
-  };
   const createNew = async () => {
     const name = await podPromptText({ title: 'Nueva lista', label: 'Nombre de la lista', placeholder: 'Para correr, para el coche…', ok: 'Crear y añadir' });
-    if (name) save(createMusicList(name));
+    if (name) confirmListAdd(null, tracks, (sel, o) => {
+      const l = createMusicList(name, []);
+      addTracksToList(l, sel, o);
+      podToast(`Lista «${l.name}»: ${plural(l.items.length, 'canción', 'canciones')}`, { action: 'Abrir', onAction: () => openMusicScreen('list:' + l.id) });
+    }, { listName: name });
   };
   const lists = musicState.lists.filter(l => l.type === 'manual');
   if (!lists.length) return createNew();
@@ -1394,9 +1401,16 @@ function importMusicListFile() {
           const { tracks, missing } = tracksFromM3u(text);
           if (!tracks.length) throw Error('Ninguna canción de esa lista está en tu música.');
           const name = (text.match(/^#PLAYLIST:(.+)$/m)?.[1] || stripExt(f.name)).trim();
-          const l = createMusicList(name, tracks);
-          podToast(`Lista «${l.name}»: ${plural(tracks.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`);
-          return openMusicScreen('list:' + l.id);
+          return confirmListAdd(
+            null,
+            tracks,
+            sel => {
+              const l = createMusicList(name, sel);
+              podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`);
+              openMusicScreen('list:' + l.id);
+            },
+            { listName: name }
+          );
         }
         const d = JSON.parse(text);
         const raw = d?.type === 'radios-viferor-music-playlist' ? [d.list] : Array.isArray(d?.lists) ? d.lists : [];
@@ -1608,6 +1622,7 @@ function renderMusicScreen() {
   if (kind === 'queue') return renderMusicQueue(root);
   if (kind === 'fmanage') return renderFolderManager(root);
   if (kind === 'short') return renderShortTracks(root, Number(key) || 30);
+  if (kind === 'dups') return renderDuplicates(root, key);
   renderMusicTab(root, musicState.tab);
 }
 
@@ -2022,6 +2037,10 @@ function renderShortTracks(root, secs) {
   other.type = 'button';
   other.onclick = async () => (n => n && openShortTracks(n, true))(await askShortSecs());
   chips.append(other);
+  const dupB = musEl('button', '', '👯 Duplicadas');
+  dupB.type = 'button';
+  dupB.onclick = () => openDuplicates(undefined, true);
+  chips.append(dupB);
   root.append(chips);
   if (!songs.length) {
     root.append(musEl('div', 'pod-empty pod-empty-small', `<p>No hay ninguna canción de menos de ${pEsc(fmtSecsLabel(secs))}. 👍</p>`));
@@ -2080,6 +2099,275 @@ function rerenderKeepScroll() {
     sc = c?.scrollTop || 0;
   renderMusicScreen();
   if (c) c.scrollTop = sc;
+}
+
+/* ===========================================================================
+   Duplicadas: en la biblioteca y al crear o llenar listas
+=========================================================================== */
+// «Canción (feat. X) [Remastered 2011]» → «cancion». Directo/acústica se tratan como otra versión.
+function dupTitle(t) {
+  return mNorm(
+    String(t.title || '')
+      .replace(/^\d{1,3}\s*[-._]\s+/, '')
+      .replace(/\s*[([](feat\.?|ft\.?|with|con)\s[^)\]]*[)\]]/gi, '')
+      .replace(/\s+(feat\.?|ft\.?)\s.*$/i, '')
+      .replace(/\s*[([][^)\]]*\b(remaster(ed|izad[oa])?|explicit|clean|album version|single version|bonus track)\b[^)\]]*[)\]]/gi, '')
+      .replace(/\s+-\s+(\d{4}\s+)?(remaster(ed)?|remasterizad[oa]|single version|album version)(\s+\d{4})?\s*$/i, '')
+      .replace(/\s*[([]\d{4}[)\]]\s*$/, '')
+  );
+}
+function dupArtist(t) {
+  const a = String(t.artist || t.albumArtist || '').split(/\s*(?:,|;|&|\/|\bfeat\.?|\bft\.?|\bfeaturing\b|\bx\b)\s*/i)[0];
+  const k = mNorm(a);
+  return k === mNorm(MUS_UNKNOWN_ARTIST) ? '' : k;
+}
+function songKey(t) {
+  const ti = dupTitle(t);
+  return ti ? dupArtist(t) + '|' + ti : '';
+}
+const DUP_TOL = 3; // segundos de diferencia que se toleran
+function sameSong(a, b) {
+  if (!a || !b) return false;
+  if (a.id === b.id) return true;
+  const k = songKey(a);
+  return !!k && k === songKey(b) && (!(a.dur > 0) || !(b.dur > 0) || Math.abs(a.dur - b.dur) <= DUP_TOL);
+}
+function dupKbps(t) {
+  return t.size > 0 && t.dur > 0 ? Math.round((t.size * 8) / t.dur / 1000) : 0;
+}
+// La copia que conviene conservar: más calidad, etiquetas completas, carátula, fuera de «Descargas»…
+function bestCopy(group) {
+  const favIds = new Set((musicFavs().tracks || []).map(x => x.id));
+  const score = t =>
+    Math.min(dupKbps(t), 1500) / 4 +
+    (t.art ? 20 : 0) +
+    (t.album ? 15 : 0) +
+    (t.artist ? 15 : 0) +
+    (t.year ? 5 : 0) +
+    (t.track ? 5 : 0) +
+    (/(^|\/)(download|downloads|descargas|whatsapp|telegram|bluetooth|tmp|temp|cache)(\/|$)/i.test(t.folder || '') ? -60 : 0) +
+    Math.min(30, trackPlays(t)) +
+    (favIds.has(t.id) ? 40 : 0);
+  return group.reduce((best, t) => (score(t) > score(best) ? t : best), group[0]);
+}
+function dupSignature(group) {
+  return group.map(pathKey).sort().join('\n');
+}
+const MUS_DUP_MODES = {
+  song: { label: 'Misma canción', hint: `Mismo título y artista, duración parecida (±${DUP_TOL} s)` },
+  exact: { label: 'Copias exactas', hint: 'Mismo tamaño y duración' },
+  title: { label: 'Mismo título y artista', hint: 'Aunque dure distinto (versiones, directos…)' }
+};
+function findDuplicateGroups(mode = 'song', tracks = musicState.tracks) {
+  const ignored = new Set(lsGet(MUS_KEYS.dupIgnore, []));
+  const buckets = new Map();
+  for (const t of tracks) {
+    const k = mode === 'exact' ? (t.size > 0 && t.dur > 0 ? `${t.size}|${Math.round(t.dur * 2)}` : '') : songKey(t);
+    if (!k) continue;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(t);
+  }
+  const groups = [];
+  buckets.forEach(list => {
+    if (list.length < 2) return;
+    if (mode !== 'song') return groups.push(list);
+    // Por duración: se agrupan las que se parecen (las sin duración van con todas).
+    const known = list.filter(t => t.dur > 0).sort((a, b) => a.dur - b.dur);
+    const unknown = list.filter(t => !(t.dur > 0));
+    const clusters = [];
+    known.forEach(t => {
+      const c = clusters.at(-1);
+      if (c && t.dur - c[0].dur <= DUP_TOL) c.push(t);
+      else clusters.push([t]);
+    });
+    if (unknown.length) {
+      if (clusters.length) clusters[0].push(...unknown);
+      else clusters.push(unknown);
+    }
+    clusters.filter(c => c.length > 1).forEach(c => groups.push(c));
+  });
+  return groups
+    .filter(g => !ignored.has(dupSignature(g)))
+    .map(g => {
+      const best = bestCopy(g);
+      return { tracks: [best, ...g.filter(t => t !== best)], best };
+    })
+    .sort((a, b) => musCollator.compare(a.best.title, b.best.title));
+}
+function openDuplicates(mode = lsGet(MUS_KEYS.ui, {})?.dupMode || 'song', replace = false) {
+  saveMusicUi({ dupMode: mode });
+  openMusicScreen('dups:' + mode, { replace });
+}
+function renderDuplicates(root, mode) {
+  if (!MUS_DUP_MODES[mode]) mode = 'song';
+  const groups = findDuplicateGroups(mode);
+  const extra = groups.reduce((n, g) => n + g.tracks.length - 1, 0);
+  root.append(detailHead('👯 Canciones duplicadas', groups.length ? `${plural(groups.length, 'grupo', 'grupos')} · ${plural(extra, 'copia sobrante', 'copias sobrantes')}` : 'Ninguna', null));
+  const chips = musEl('div', 'mus-chips');
+  Object.entries(MUS_DUP_MODES).forEach(([k, m]) => {
+    const b = musEl('button', k === mode ? 'on' : '', pEsc(m.label));
+    b.type = 'button';
+    b.title = m.hint;
+    b.onclick = () => openDuplicates(k, true);
+    chips.append(b);
+  });
+  const sh = musEl('button', '', '⏱ Cortas o rotas');
+  sh.type = 'button';
+  sh.onclick = () => openShortTracks(lsGet(MUS_KEYS.shortSecs, 30), true);
+  chips.append(sh);
+  root.append(chips);
+  root.append(musEl('p', 'mus-hint', `${pEsc(MUS_DUP_MODES[mode].hint)}. En cada grupo, la primera (⭐) es la que conviene conservar: más calidad, etiquetas y carátula.`));
+  const ign = lsGet(MUS_KEYS.dupIgnore, []).length;
+  if (!groups.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', '<p>No hay canciones duplicadas. 👍</p>'));
+  } else {
+    const spare = groups.flatMap(g => g.tracks.slice(1));
+    root.append(
+      actionBar([
+        [`🗑 Eliminar las ${spare.length} sobrantes…`, () => deleteTracksFlow(spare), 'primary'],
+        ['📄 Exportar informe (.txt)', () => downloadText(`duplicadas-${mode}.txt`, groups.map(g => g.tracks.map((t, i) => `${i ? '  ✕' : '⭐'} ${fmtDur(t.dur || 0)}  ${dupKbps(t) ? dupKbps(t) + ' kbps  ' : ''}${[t.folder, t.file].filter(Boolean).join('/') || t.title}`).join('\n')).join('\n\n') + '\n', 'text/plain')]
+      ])
+    );
+    const box = musEl('div', 'mus-dups');
+    root.append(box);
+    appendRowsChunked(box, groups, g => dupGroupEl(g), 40);
+  }
+  if (ign) {
+    const b = musEl('button', 'mus-link', `${plural(ign, 'grupo marcado', 'grupos marcados')} como «no son duplicadas» · volver a mostrarlos`);
+    b.type = 'button';
+    b.onclick = () => (lsSet(MUS_KEYS.dupIgnore, []), rerenderKeepScroll());
+    root.append(b);
+  }
+}
+function dupGroupEl(g) {
+  const el = musEl('section', 'mus-dup-group');
+  const b = g.best;
+  el.append(musEl('h4', '', `${pEsc(b.title)} <small>${pEsc(trackArtist(b))} · ${plural(g.tracks.length, 'copia', 'copias')}</small>`));
+  const box = musEl('div', 'pod-queue');
+  g.tracks.forEach((t, i) => {
+    const info = [i === 0 ? '⭐ conservar' : '', dupKbps(t) ? dupKbps(t) + ' kbps' : '', t.size ? (t.size / 1048576).toFixed(1).replace('.', ',') + ' MB' : '', [t.folder, t.file].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+    box.append(trackRow(t, i, { sub: info, onPlay: () => playTrackNow(t), onRemove: () => deleteTracksFlow([t]) }));
+  });
+  el.append(box);
+  el.append(
+    actionBar([
+      [g.tracks.length === 2 ? '🗑 Eliminar la sobrante…' : `🗑 Eliminar las ${g.tracks.length - 1} sobrantes…`, () => deleteTracksFlow(g.tracks.slice(1))],
+      [
+        '✋ No son duplicadas',
+        () => {
+          const sig = dupSignature(g.tracks);
+          lsSet(MUS_KEYS.dupIgnore, [...lsGet(MUS_KEYS.dupIgnore, []), sig].slice(-2000));
+          rerenderKeepScroll();
+          podToast('No volverán a salir juntas', { action: 'Deshacer', onAction: () => (lsSet(MUS_KEYS.dupIgnore, lsGet(MUS_KEYS.dupIgnore, []).filter(x => x !== sig)), rerenderKeepScroll()) });
+        }
+      ]
+    ])
+  );
+  return el;
+}
+
+// Una sola versión de cada canción (la mejor), en el orden de la primera aparición.
+function dedupeSongs(tracks) {
+  const groups = new Map();
+  const order = [];
+  tracks.forEach(t => {
+    const k = songKey(t) || 'id:' + t.id;
+    let g = groups.get(k)?.find(c => sameSong(c[0], t));
+    if (!g) {
+      g = [t];
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(g);
+      order.push(g);
+    } else if (!g.some(x => x.id === t.id)) g.push(t);
+  });
+  return order.map(g => (g.length > 1 ? bestCopy(g) : g[0]));
+}
+// Clasifica lo que se va a añadir a una lista: nuevas, ya en la lista, otra copia de una
+// que ya está, o repetidas entre sí.
+function listDupAnalysis(existing, incoming) {
+  const r = { fresh: [], sameTrack: [], sameSong: [], inBatch: [] };
+  const haveIds = new Set(existing.map(t => t.id));
+  const byKey = new Map();
+  const index = t => {
+    const k = songKey(t);
+    if (!k) return;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(t);
+  };
+  existing.forEach(index);
+  const batchIds = new Set();
+  const batchKey = new Map();
+  incoming.forEach(t => {
+    if (!t) return;
+    const k = songKey(t);
+    if (haveIds.has(t.id)) return r.sameTrack.push(t);
+    if (k && (byKey.get(k) || []).some(x => sameSong(x, t))) return r.sameSong.push(t);
+    if (batchIds.has(t.id) || (k && (batchKey.get(k) || []).some(x => sameSong(x, t)))) return r.inBatch.push(t);
+    r.fresh.push(t);
+    batchIds.add(t.id);
+    if (k) (batchKey.get(k) || batchKey.set(k, []).get(k)).push(t);
+  });
+  return r;
+}
+// Antes de crear o llenar una lista: si hay repetidas, se pregunta qué hacer.
+// done(tracks, { allowSame }) recibe las que hay que añadir.
+function confirmListAdd(list, tracks, done, { listName = '' } = {}) {
+  tracks = tracks.filter(Boolean);
+  const existing = list ? manualListTracks(list).tracks : [];
+  const r = listDupAnalysis(existing, tracks);
+  const dups = r.sameTrack.length + r.sameSong.length + r.inBatch.length;
+  if (!dups) return done(tracks, {});
+  const name = list?.name || listName;
+  const parts = [
+    r.sameTrack.length && `${plural(r.sameTrack.length, 'ya está', 'ya están')} en ${name ? `«${name}»` : 'la lista'}`,
+    r.sameSong.length && `${plural(r.sameSong.length, 'es otra copia', 'son otra copia')} de una que ya está`,
+    r.inBatch.length && `${plural(r.inBatch.length, 'está repetida', 'están repetidas')} entre las que añades`
+  ].filter(Boolean);
+  const show = () =>
+    podSheet({
+      title: '👯 Repetidas',
+      subtitle: 'Estas no se añadirían con «solo las nuevas»:',
+      items: [
+        ...[...r.sameTrack.map(t => [t, 'ya en la lista']), ...r.sameSong.map(t => [t, 'otra copia ya en la lista']), ...r.inBatch.map(t => [t, 'repetida'])]
+          .slice(0, 60)
+          .map(([t, why]) => ({ icon: '🎵', label: t.title, hint: `${trackArtist(t)} · ${why} · ${[t.folder, t.file].filter(Boolean).join('/')}`, on: ask })),
+        { sep: true },
+        { icon: '←', label: 'Volver', on: ask }
+      ]
+    });
+  function ask() {
+    podSheet({
+      title: '👯 Canciones repetidas',
+      subtitle: parts.join(' · ') + '.',
+      items: [
+        r.fresh.length && { icon: '✅', label: `Añadir solo las nuevas (${r.fresh.length})`, hint: 'Sin repetir canciones', on: () => done(r.fresh, {}) },
+        { icon: '➕', label: r.fresh.length ? `Añadir todas (${tracks.length})` : 'Añadir igualmente', hint: 'Con las repetidas', on: () => done(tracks, { allowSame: true }) },
+        { icon: '👁', label: 'Ver cuáles son', on: show }
+      ]
+    });
+  }
+  ask();
+}
+// Repetidas dentro de una lista normal: índices de las que sobran (se conserva la primera).
+function listInternalDups(l) {
+  const seen = [];
+  const out = [];
+  l.items.forEach((x, i) => {
+    const t = resolveTrack(x);
+    if (!t) return;
+    if (seen.some(s => sameSong(s, t))) out.push(i);
+    else seen.push(t);
+  });
+  return out;
+}
+function removeListDups(l) {
+  const idx = new Set(listInternalDups(l));
+  if (!idx.size) return podToast('No hay repetidas en esta lista');
+  const before = [...l.items];
+  l.items = l.items.filter((x, i) => !idx.has(i));
+  l.updatedAt = Date.now();
+  saveMusicLists();
+  podToast(`${plural(idx.size, 'repetida quitada', 'repetidas quitadas')} de «${l.name}»`, { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
 }
 
 /* ---------------------------------------------------------------------------
@@ -2325,11 +2613,11 @@ function musicListMenu(l, inside = false) {
         label: 'Convertir en lista normal',
         hint: 'Fija las canciones de ahora',
         on: () => {
-          const c = createMusicList(l.name + ' (fija)', tracks());
-          openMusicScreen('list:' + c.id);
+          confirmListAdd(null, tracks(), sel => openMusicScreen('list:' + createMusicList(l.name + ' (fija)', sel).id), { listName: l.name + ' (fija)' });
         }
       },
       manual && l.items.length > 1 && { icon: '⇅', label: 'Ordenar…', on: () => sortMusicListMenu(l) },
+      manual && l.items.length > 1 && { icon: '👯', label: 'Quitar repetidas', hint: (n => (n ? plural(n, 'repetida', 'repetidas') : 'No hay ninguna'))(listInternalDups(l).length), on: () => removeListDups(l) },
       { icon: '📤', label: 'Exportar como M3U', hint: 'Para VLC, Poweramp, foobar2000…', on: () => exportMusicList(l, 'm3u') },
       { icon: '💾', label: 'Exportar (copia de Radios Viferor)', on: () => exportMusicList(l, 'json') },
       {
@@ -2408,6 +2696,12 @@ function renderMusicList(root, id) {
     ])
   );
   if (missing) root.append(musEl('p', 'mus-note', `⚠️ ${plural(missing, 'canción de esta lista ya no está', 'canciones de esta lista ya no están')} en tu música.`));
+  const nd = smart ? 0 : listInternalDups(l).length;
+  if (nd) {
+    const note = musEl('p', 'mus-note mus-dup-note', `👯 ${plural(nd, 'canción repetida', 'canciones repetidas')} en esta lista. <button type="button">Quitar repetidas</button>`);
+    note.querySelector('button').onclick = () => removeListDups(l);
+    root.append(note);
+  }
   if (!tracks.length) {
     root.append(musEl('div', 'pod-empty pod-empty-small', smart ? '<p>Ahora mismo ninguna canción cumple estas reglas.</p>' : '<p>La lista está vacía. Usa <b>⋯ → Añadir a una lista…</b> en cualquier canción, álbum, artista o carpeta.</p>'));
     return;
@@ -2627,8 +2921,15 @@ async function saveMusicQueueAsList() {
   const tracks = [musicState.current, ...musicState.queue].filter(Boolean);
   const name = await podPromptText({ title: 'Guardar la cola como lista', label: 'Nombre de la lista', value: 'Cola del ' + new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long' }) });
   if (!name) return;
-  const l = createMusicList(name, tracks);
-  podToast(`Lista «${l.name}» creada`, { action: 'Abrir', onAction: () => openMusicScreen('list:' + l.id) });
+  confirmListAdd(
+    null,
+    tracks,
+    sel => {
+      const l = createMusicList(name, sel);
+      podToast(`Lista «${l.name}» creada`, { action: 'Abrir', onAction: () => openMusicScreen('list:' + l.id) });
+    },
+    { listName: name }
+  );
 }
 
 /* ===========================================================================
@@ -2820,6 +3121,7 @@ function initMusic() {
         { icon: '📃', label: 'Listas', on: () => setMusicTab('lists') },
         { icon: '🎚️', label: 'Sonido y ecualizador', hint: 'Corrección de auriculares, fundidos, nivelador…', on: () => window.openFxPanel?.() },
         { icon: '⏱', label: 'Buscar canciones cortas o rotas…', hint: 'Las que duran menos de lo que elijas', disabled: !musicState.tracks.length, on: chooseShortTracks },
+        { icon: '👯', label: 'Buscar canciones duplicadas', hint: 'Copias de la misma canción', disabled: !musicState.tracks.length, on: () => openDuplicates() },
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
         Object.keys(musicHiddenMap()).length && { icon: '🙈', label: 'Canciones quitadas de la biblioteca', hint: plural(Object.keys(musicHiddenMap()).length, 'canción', 'canciones'), on: openHiddenTracks },
