@@ -13,6 +13,6 @@ let v = fs.readFileSync('version.js', 'utf8');
 v = v.replace(/window\.RV_VERSION = Object\.freeze\(\{[^}]*\}\);/, `window.RV_VERSION = Object.freeze({ version: '${version}', build: '${build}', releasedAt: '${today}' });`);
 fs.writeFileSync('version.js', v);
 let h = fs.readFileSync('index.html', 'utf8');
-h = h.replace(/(href|src)="(styles\.css|stations-data\.js|buscador-radios\.js|app\.js|podcasts\.js|podcast-listas\.js|musica\.js|diagnostics\.js|version\.js)(\?v=\d+)?"/g, `$1="$2?v=${build}"`);
+h = h.replace(/(href|src)="(styles\.css|stations-data\.js|buscador-radios\.js|app\.js|podcasts\.js|podcast-listas\.js|musica\.js|letras\.js|diagnostics\.js|version\.js)(\?v=\d+)?"/g, `$1="$2?v=${build}"`);
 fs.writeFileSync('index.html', h);
 console.log(`Versión ${version} (${build}) aplicada.`);

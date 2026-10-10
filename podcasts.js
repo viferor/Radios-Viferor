@@ -2039,7 +2039,8 @@ window.handleAndroidBack = function () {
       closePodcastExpanded();
       return true;
     }
-    // «Mi música»: reproductor ampliado o pantalla anterior.
+    // «Mi música»: letra abierta, reproductor ampliado o pantalla anterior.
+    if (window.closeLyricsPanel?.()) return true;
     const musExp = document.getElementById('musExpanded');
     if (musExp && !musExp.hidden) {
       window.closeMusicExpanded?.();

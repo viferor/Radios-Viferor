@@ -1,6 +1,28 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.18.0 — Letras: sincronizadas, traducidas y su significado
+
+En «Mi música», botón **🎤 Letra** (reproductor ampliado o ⋯ de cualquier canción).
+
+**De dónde sale.** Por orden: tu versión (pegada, elegida o sincronizada; se guarda en
+`radios_viferor_lyrics_user_v1`, entra en el backup), la incrustada en el archivo (USLT/©lyr;
+en el móvil se lee solo la etiqueta ID3 del principio con Range), un `.lrc` con el mismo nombre
+al lado de la canción (navegador) y LRCLIB vía `/api/lyrics` (caché en IndexedDB).
+
+**Sincronizada:** la línea que suena se ilumina y se centra; tocar una línea salta a ella.
+«Ajustar desfase» la adelanta o retrasa. **Sin sincronizar:** «⏱ Sincronizar» pone la canción
+desde el principio y se toca **MARCAR** al empezar cada línea (descuenta 0,2 s de reacción,
+«Deshacer», barra espaciadora en el PC) y se guarda como LRC; o «Buscar versión sincronizada»
+elige entre las de LRCLIB. También: editar o pegar la letra (texto o .lrc), exportar .lrc.
+
+**Original + español:** traducción automática línea a línea (`/api/translate`, Google, sin
+clave), debajo de cada línea. Ahí está **💡 Significado de la canción** (`/api/song-meaning`):
+qué quiso transmitir el autor, temas e imágenes y contexto, explicado por IA. Necesita una
+clave: `GEMINI_API_KEY` (gratis en aistudio.google.com/apikey) o `ANTHROPIC_API_KEY` en las
+variables de Vercel, o pegarla en la app (se guarda solo en el dispositivo). Modelos:
+`GEMINI_MODEL` (por defecto gemini-3.6-flash) y `ANTHROPIC_MODEL` (claude-haiku-5-5).
+
 ## 1.17.0 — Mi música (web) · APK 1.10.0
 
 Tercera pestaña, **🎵 Música**: reproductor de la música guardada en el dispositivo.

@@ -44,6 +44,7 @@ const musicState = {
   tab: 'songs',
   search: '',
   files: new Map(), // navegador: id → FileSystemFileHandle | File
+  lrcFiles: new Map(), // navegador: ruta sin extensión → .lrc
   folderName: ''
 };
 window.musicState = musicState;
@@ -156,12 +157,13 @@ async function loadAndroidLibrary() {
 const MUS_DB = 'radios-viferor-music';
 function musDb() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open(MUS_DB, 1);
+    const req = indexedDB.open(MUS_DB, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
       if (!db.objectStoreNames.contains('art')) db.createObjectStore('art');
+      if (!db.objectStoreNames.contains('lyrics')) db.createObjectStore('lyrics');
     };
     req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
@@ -204,6 +206,8 @@ async function walkDir(dir, prefix = '', out = []) {
   for await (const entry of dir.values()) {
     if (entry.kind === 'directory') await walkDir(entry, prefix ? `${prefix}/${entry.name}` : entry.name, out);
     else if (MUS_AUDIO_EXT.test(entry.name)) out.push({ path: prefix ? `${prefix}/${entry.name}` : entry.name, folder: prefix, file: entry.name, handle: entry });
+    // Letras .lrc al lado de las canciones (las usa letras.js).
+    else if (/\.lrc$/i.test(entry.name)) musicState.lrcFiles.set(mNorm(stripExt(prefix ? `${prefix}/${entry.name}` : entry.name)), entry);
   }
   return out;
 }
@@ -310,6 +314,8 @@ async function pickMusicFolder() {
   input.multiple = true;
   input.webkitdirectory = true;
   input.onchange = async () => {
+    musicState.lrcFiles = new Map();
+    [...(input.files || [])].filter(f => /\.lrc$/i.test(f.name)).forEach(f => musicState.lrcFiles.set(mNorm(stripExt(f.webkitRelativePath || f.name)), f));
     const files = [...(input.files || [])].filter(f => MUS_AUDIO_EXT.test(f.name));
     if (!files.length) return podToast('No hay archivos de música en esa carpeta');
     const items = files.map(f => {
@@ -332,6 +338,7 @@ async function scanFolderHandle(dir) {
   musicState.loading = true;
   musicState.folderName = dir.name;
   setMusicLoading(`Buscando canciones en «${dir.name}»…`);
+  musicState.lrcFiles = new Map();
   try {
     const items = await walkDir(dir);
     if (!items.length) {
@@ -1573,6 +1580,7 @@ function openTrackMenu(t, { extra = [] } = {}) {
         }
       },
       { icon: '📃', label: 'Añadir a una lista…', on: () => chooseMusicListFor([t]) },
+      { icon: '🎤', label: 'Letra', hint: 'Ver, sincronizar, traducir y su significado', on: () => window.openTrackLyrics?.(t) },
       t.albumKey && musicState.albums.has(t.albumKey) && { icon: '💿', label: `Ir al álbum «${musicState.albums.get(t.albumKey).name}»`, on: () => openMusicScreen('album:' + t.albumKey) },
       ar && { icon: '🎤', label: `Ir a ${ar.name}`, on: () => openMusicScreen('artist:' + ar.key) },
       t.folder && { icon: '📁', label: 'Ir a la carpeta', hint: t.folder, on: () => openMusicScreen('folder:' + t.folder) },
@@ -2015,6 +2023,7 @@ function updateMusicNowUI() {
   }
   document.querySelectorAll('#musicContent .mus-row').forEach(r => r.classList.toggle('is-current', !!t && r.dataset.id === t.id));
   updateMusicPlayerUI();
+  document.dispatchEvent(new CustomEvent('music:now'));
 }
 function updateMusicPlayerUI() {
   const a = musicAudio();
