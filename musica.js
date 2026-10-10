@@ -27,7 +27,8 @@ const MUS_KEYS = {
   shortSecs: 'radios_viferor_music_short_secs',
   hidden: 'radios_viferor_music_hidden_v1',
   shortOk: 'radios_viferor_music_short_ok_v1',
-  dupIgnore: 'radios_viferor_music_dup_ignore_v1'
+  dupIgnore: 'radios_viferor_music_dup_ignore_v1',
+  playingList: 'radios_viferor_music_playing_list_v1'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -633,6 +634,8 @@ function restoreMusicSession() {
   musicState.queue = ids(lsGet(MUS_KEYS.queue, []));
   musicState.history = ids(lsGet(MUS_KEYS.history, []));
   musicState.context = ids(lsGet(MUS_KEYS.context, []));
+  musicState.listId = lsGet(MUS_KEYS.playingList, null);
+  musicState.listSig = playingListSig(musicState.listId && musicListById(musicState.listId));
   if (!musicState.current) {
     const r = lsGet(MUS_KEYS.resume, null);
     const t = r && resolveTrack(r.id);
@@ -823,7 +826,7 @@ function toggleMusicPlay() {
 }
 // Reproducir una colección (álbum, carpeta, lista…) desde una canción.
 // how: replace | next | end. Con aleatorio, el resto se baraja.
-function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', label = '' } = {}) {
+function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', label = '', listId = null } = {}) {
   tracks = (tracks || []).filter(Boolean);
   if (!tracks.length) return podToast('No hay canciones');
   if (how !== 'replace') return queueTracks(tracks, how);
@@ -835,14 +838,21 @@ function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', la
     first = all[0];
     rest = all.slice(1);
   } else {
-    first = tracks[Math.max(0, Math.min(start, tracks.length - 1))];
-    rest = sh ? shuffled(tracks.filter(t => t !== first)) : tracks.slice(tracks.indexOf(first) + 1);
+    // Por posición, no por canción: en una lista con canciones repetidas se
+    // sigue desde la que has tocado y no desde su primera aparición.
+    const i = Math.max(0, Math.min(Number(start) || 0, tracks.length - 1));
+    first = tracks[i];
+    rest = sh ? shuffled(tracks.filter((t, k) => k !== i)) : tracks.slice(i + 1);
   }
   const before = [...musicState.queue];
   musicState.radio = null;
+  setPlayingList(listId);
   musicState.context = [...tracks];
   musicState.queue = rest;
-  playTrackNow(first);
+  // Como playTrackNow, pero sin quitar de la cola las repeticiones de la lista.
+  if (musicState.current && musicState.current.id !== first.id) pushMusicHistory(musicState.current);
+  saveMusicQueue();
+  startTrack(first);
   if (before.length > 3)
     podToast(label ? `Reproduciendo ${label}` : 'La cola se ha sustituido', {
       action: 'Deshacer',
@@ -851,6 +861,44 @@ function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', la
         saveMusicQueue();
       }
     });
+}
+/* ---------------------------------------------------------------------------
+   Lista que está sonando: si la cambias (ordenar, arrastrar, mezclar, añadir o
+   quitar canciones), la cola sigue el nuevo orden de la lista.
+--------------------------------------------------------------------------- */
+const playingListSig = l => (l && l.type === 'manual' ? JSON.stringify((l.items || []).map(x => x?.id)) : '');
+function setPlayingList(id) {
+  musicState.listId = id || null;
+  musicState.listSig = playingListSig(id && musicListById(id));
+  lsSet(MUS_KEYS.playingList, musicState.listId);
+}
+function syncPlayingListQueue() {
+  const l = musicState.listId && musicListById(musicState.listId);
+  // Solo listas normales (las inteligentes en orden aleatorio cambiarían solas)
+  // y solo si esa lista ha cambiado de verdad: guardar otra lista no toca la cola.
+  if (!l || l.type !== 'manual') return;
+  const sig = playingListSig(l);
+  if (sig === musicState.listSig) return;
+  musicState.listSig = sig;
+  const cur = musicState.current;
+  if (!cur || musicState.radio || musicOpts().shuffle) return;
+  const tracks = musicListTracks(l, { fresh: true });
+  const inList = new Set(tracks.map(t => t.id));
+  const q = musicState.queue;
+  const listLeft = q.filter(t => inList.has(t.id)).length;
+  // Dónde va la canción que suena (si se repite en la lista, la que mejor
+  // encaja con lo que quedaba por escuchar).
+  let pos = -1;
+  tracks.forEach((t, k) => {
+    if (t.id === cur.id && (pos < 0 || Math.abs(tracks.length - k - 1 - listLeft) < Math.abs(tracks.length - pos - 1 - listLeft))) pos = k;
+  });
+  if (pos < 0) return; // la que suena ya no está en la lista: la cola se deja como estaba
+  const firstList = q.findIndex(t => inList.has(t.id));
+  const front = firstList < 0 ? q.filter(t => !inList.has(t.id)) : q.slice(0, firstList); // «a continuación» puestas a mano
+  const back = firstList < 0 ? [] : q.slice(firstList).filter(t => !inList.has(t.id)); // añadidas al final de la cola
+  musicState.context = [...tracks];
+  musicState.queue = [...front, ...tracks.slice(pos + 1), ...back];
+  saveMusicQueue();
 }
 function queueTracks(tracks, how = 'end', { toast = true } = {}) {
   let items = tracks.filter(t => t && t.id !== musicState.current?.id);
@@ -1000,6 +1048,7 @@ async function startSongRadio(seed) {
   musicState.context = [seed, ...list];
   musicState.queue = list;
   musicState.radio = { seed: seed.id, title: seed.title };
+  setPlayingList(null);
   if (musicState.current?.id === seed.id) {
     saveMusicQueue();
     if (musicAudio().paused) toggleMusicPlay();
@@ -1198,6 +1247,9 @@ function normMusicList(l) {
 }
 function saveMusicLists() {
   if (!lsSet(MUS_KEYS.lists, musicState.lists)) podToast('⚠️ No se pudo guardar: el almacenamiento está lleno');
+  try {
+    syncPlayingListQueue();
+  } catch {}
   document.dispatchEvent(new CustomEvent('music:lists'));
 }
 function musicListById(id) {
@@ -2404,7 +2456,7 @@ async function openExternalAudio(info) {
       sel => {
         const l = createMusicList(name, sel);
         openMusicScreen('list:' + l.id);
-        podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`, { action: '▶ Reproducir', onAction: () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»` }) });
+        podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`, { action: '▶ Reproducir', onAction: () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }) });
       },
       { listName: name }
     );
@@ -2772,7 +2824,7 @@ function renderMusicListsTab(root) {
     const n = l.type === 'smart' ? musicListTracks(l).length : manualListTracks(l).tracks.length;
     c.innerHTML = `<button class="pod-list-open" type="button"><span class="ic">${l.type === 'smart' ? '✨' : '📃'}</span><span class="tx"><strong>${pEsc(l.name)}</strong><small>${pEsc(l.type === 'smart' ? `${plural(n, 'canción', 'canciones')} · ${musicSmartSummary(l.rules)}` : plural(n, 'canción', 'canciones'))}</small></span></button><button class="pod-list-play" type="button" aria-label="Reproducir">▶</button><button class="pod-list-more" type="button" aria-label="Más opciones">⋯</button>`;
     c.querySelector('.pod-list-open').onclick = () => openMusicScreen('list:' + l.id);
-    c.querySelector('.pod-list-play').onclick = () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»` });
+    c.querySelector('.pod-list-play').onclick = () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id });
     c.querySelector('.pod-list-more').onclick = () => musicListMenu(l);
     box.append(c);
   });
@@ -2807,8 +2859,8 @@ function musicListMenu(l, inside = false) {
     title: l.name,
     subtitle: manual ? plural(l.items.length, 'canción', 'canciones') : musicSmartSummary(l.rules),
     items: [
-      { icon: '▶', label: 'Reproducir', on: () => playCollection(tracks(), 0, { shuffle: false, label: `«${l.name}»` }) },
-      { icon: '🔀', label: 'Reproducir en aleatorio', on: () => playCollection(tracks(), 0, { shuffle: true, label: `«${l.name}»` }) },
+      { icon: '▶', label: 'Reproducir', on: () => playCollection(tracks(), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }) },
+      { icon: '🔀', label: 'Reproducir en aleatorio', on: () => playCollection(tracks(), 0, { shuffle: true, label: `«${l.name}»`, listId: l.id }) },
       { icon: '⏭', label: 'Reproducir a continuación', on: () => queueTracks(tracks(), 'next') },
       { icon: '➕', label: 'Añadir al final de la cola', on: () => queueTracks(tracks(), 'end') },
       { sep: true },
@@ -2912,8 +2964,8 @@ function renderMusicList(root, id) {
   if (smart) root.append(musEl('p', 'pod-list-rules', pEsc(musicSmartSummary(l.rules))));
   root.append(
     actionBar([
-      ['▶ Reproducir', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»` }), 'primary', !tracks.length],
-      ['🔀 Aleatorio', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: true, label: `«${l.name}»` }), '', !tracks.length],
+      ['▶ Reproducir', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»`, listId: l.id }), 'primary', !tracks.length],
+      ['🔀 Aleatorio', () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: true, label: `«${l.name}»`, listId: l.id }), '', !tracks.length],
       ['⏭ A continuación', () => queueTracks(tracks, 'next'), '', !tracks.length],
       ['➕ A la cola', () => queueTracks(tracks, 'end'), '', !tracks.length],
       smart && ['⚙️ Reglas', () => openMusicSmartEditor(l)],
@@ -2935,18 +2987,20 @@ function renderMusicList(root, id) {
   const box = musEl('div', 'pod-queue' + (smart ? '' : ' pod-qlist'));
   root.append(box);
   if (smart) {
-    appendRowsChunked(box, tracks, (t, i) => trackRow(t, i, { num: i + 1, onPlay: k => playCollection(tracks, k) }));
+    appendRowsChunked(box, tracks, (t, i) => trackRow(t, i, { num: i + 1, onPlay: k => playCollection(tracks, k, { listId: l.id }) }));
     return;
   }
   root.insertBefore(musEl('h3', 'pod-list-h', '<small>Arrastra ⠿ para cambiar el orden · toca una canción para empezar desde ahí</small>'), box);
   const idx = l.items.map(x => resolveTrack(x));
+  let played = 0; // posición en «tracks» (las que faltan no cuentan)
   l.items.forEach((x, i) => {
     const t = idx[i];
     if (!t) return;
+    const at = played++;
     box.append(
       trackRow(t, i, {
         handle: true,
-        onPlay: () => playCollection(tracks, tracks.indexOf(t)),
+        onPlay: () => playCollection(tracks, tracks[at] === t ? at : tracks.indexOf(t), { listId: l.id }),
         onRemove: k => removeFromMusicList(l, k),
         menuExtra: () => [
           i > 0 && { icon: '⤒', label: 'Subir al principio', on: () => moveMusicListItem(l, i, 0) },
