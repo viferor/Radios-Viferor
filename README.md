@@ -1,6 +1,35 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.17.0 — Mi música (web) · APK 1.10.0
+
+Tercera pestaña, **🎵 Música**: reproductor de la música guardada en el dispositivo.
+
+**De dónde sale la música.** En la app Android (APK 1.10.0 o posterior) se pide el permiso
+«Música y audio» y se leen las canciones registradas en el móvil (MediaStore). El WebView
+intercepta tres rutas de la app: `/__music/library.json`, `/__music/track/{id}` (con Range,
+para poder saltar) y `/__music/art/{álbum}` (`LocalMusic.java`). Nada sale del móvil. En el
+navegador del PC se elige una carpeta: en Chrome/Edge se recuerda; las etiquetas y carátulas
+se leen con jsmediatags (`vendor/`) y se guardan en IndexedDB. Con un APK antiguo, la pestaña
+pide actualizar la app.
+
+**Ver por** canciones, álbumes, artistas, carpetas (con migas de pan) y géneros, con búsqueda
+por palabras. En cada álbum, artista, carpeta o género: reproducir, aleatorio, a continuación,
+a la cola, guardar en lista o crear una lista inteligente. Menú ⋯ en cada canción (ir al álbum,
+artista o carpeta, información, veces escuchada).
+
+**Reproductor.** Mini y ampliado, aleatorio, repetir (todo / una), cola reordenable,
+historial, temporizador, volumen. Notificación y pantalla de bloqueo con anterior/siguiente
+(sección «music» en la parte nativa); en el PC, teclas multimedia. Solo suena una cosa a la
+vez: radio, podcast o música.
+
+**Listas.** Normales (reordenar, quitar, ordenar) e inteligentes (artistas, álbumes,
+carpetas o géneros; nunca escuchadas, más escuchadas, olvidadas; añadidas hace poco;
+duración; años; orden y máximo) con plantillas. Exportar e importar en M3U (VLC, Poweramp…)
+o JSON. Se cuentan las escuchas (a los 30 s o a la mitad).
+
+Claves: `radios_viferor_music_*` (cola, historial, opciones, listas, estadísticas, posición).
+
 ## 1.16.1 — «Mis listas»
 
 Debajo de «Mis podcasts» hay un botón «Mis listas» que despliega el orden de las

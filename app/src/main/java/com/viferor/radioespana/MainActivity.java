@@ -22,6 +22,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.graphics.Bitmap;
 import org.json.JSONObject;
 import android.view.Window;
@@ -33,6 +34,8 @@ public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int FILE_SAVE_REQUEST = 1002;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1003;
+    private static final int MUSIC_PERMISSION_REQUEST = 1004;
+    private static final String PREF_MUSIC_PERMISSION_ASKED = "music_permission_asked";
     private static final String NOTIFICATION_CHANNEL_ID = "general";
     private static final String PREFS_NAME = "radio_viferor_prefs";
     private static final String PREF_PODCAST_SUBS = "podcast_subscriptions_json";
@@ -161,6 +164,17 @@ public class MainActivity extends Activity {
             return true;
         }
 
+        /** «Mi música»: biblioteca, audio y carátulas del móvil (ver LocalMusic). */
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            Uri u = request == null ? null : request.getUrl();
+            if (u != null && "https".equalsIgnoreCase(u.getScheme()) && APP_HOST.equalsIgnoreCase(u.getHost())
+                    && u.getPath() != null && u.getPath().startsWith(LocalMusic.PREFIX)) {
+                return LocalMusic.handle(MainActivity.this, u, request.getRequestHeaders());
+            }
+            return super.shouldInterceptRequest(view, request);
+        }
+
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             bridgeTrusted = isAppUrl(url);
@@ -252,6 +266,8 @@ public class MainActivity extends Activity {
         }
         final String js = "podcast".equalsIgnoreCase(section)
                 ? "window.switchToPodcasts&&window.switchToPodcasts();"
+                : "music".equalsIgnoreCase(section)
+                ? "window.switchToMusic&&window.switchToMusic();"
                 : "window.switchToRadios&&window.switchToRadios();";
         webView.postDelayed(() -> webView.evaluateJavascript(js, null), 1800);
         webView.postDelayed(() -> webView.evaluateJavascript(js, null), 3500);
@@ -342,24 +358,45 @@ public class MainActivity extends Activity {
 
     public void handleMediaControlAction(String action) {
         if (action == null) return;
-        boolean podcast = "podcast".equalsIgnoreCase(getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio"));
+        String section = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
+        // Podcasts y música comparten controles; cambia el nombre de las funciones web.
+        String p = "music".equalsIgnoreCase(section) ? "Music" : "podcast".equalsIgnoreCase(section) ? "Podcast" : null;
         switch (action) {
             case PodcastMediaController.ACTION_WIDGET_PLAY:
-                evalPodcastJavascript(podcast ? "window.viferorNativePodcastPlay&&window.viferorNativePodcastPlay();" : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); break;
+                evalPodcastJavascript(p != null ? fn(p, "Play", "") : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); break;
             case PodcastMediaController.ACTION_WIDGET_PAUSE:
-                evalPodcastJavascript(podcast ? "window.viferorNativePodcastPause&&window.viferorNativePodcastPause();" : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); break;
-            case PodcastMediaController.ACTION_WIDGET_BACK: if (podcast) evalPodcastJavascript("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(-15);"); break;
-            case PodcastMediaController.ACTION_WIDGET_FORWARD: if (podcast) evalPodcastJavascript("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(30);"); break;
-            case PodcastMediaController.ACTION_WIDGET_PREV: if (podcast) evalPodcastJavascript("window.viferorNativePodcastPrevious&&window.viferorNativePodcastPrevious();"); break;
-            case PodcastMediaController.ACTION_WIDGET_NEXT: if (podcast) evalPodcastJavascript("window.viferorNativePodcastNext&&window.viferorNativePodcastNext();"); break;
+                evalPodcastJavascript(p != null ? fn(p, "Pause", "") : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); break;
+            case PodcastMediaController.ACTION_WIDGET_BACK: if (p != null) evalPodcastJavascript(fn(p, "Seek", "-15")); break;
+            case PodcastMediaController.ACTION_WIDGET_FORWARD: if (p != null) evalPodcastJavascript(fn(p, "Seek", "30")); break;
+            case PodcastMediaController.ACTION_WIDGET_PREV: if (p != null) evalPodcastJavascript(fn(p, "Previous", "")); break;
+            case PodcastMediaController.ACTION_WIDGET_NEXT: if (p != null) evalPodcastJavascript(fn(p, "Next", "")); break;
         }
+    }
+
+    static String fn(String section, String name, String arg) {
+        String f = "window.viferorNative" + section + name;
+        return f + "&&" + f + "(" + arg + ");";
+    }
+
+    private void notifyWebMusicPermission(boolean granted) {
+        if (webView == null) return;
+        String js = "window.onAndroidMusicPermission && window.onAndroidMusicPermission(" + (granted ? "true" : "false") + ");";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void openAppSettingsNative() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception ignored) {}
     }
 
     private class AndroidBridge {
         @JavascriptInterface
         public void setPlaybackSection(String section) {
             if (!bridgeTrusted) return;
-            String safe = "podcast".equalsIgnoreCase(section) ? "podcast" : "radio";
+            String safe = "podcast".equalsIgnoreCase(section) ? "podcast" : "music".equalsIgnoreCase(section) ? "music" : "radio";
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, safe).apply();
         }
 
@@ -402,6 +439,57 @@ public class MainActivity extends Activity {
                     requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
                 }
                 if (podcastMediaController != null) podcastMediaController.start(title, subtitle, artwork, (long)Math.max(0,durationSec*1000), (long)Math.max(0,positionSec*1000), playing);
+            });
+        }
+
+        // ---- «Mi música» (APK 1.10+) ----
+        @JavascriptInterface
+        public int musicApiVersion() {
+            return bridgeTrusted ? LocalMusic.API_VERSION : 0;
+        }
+
+        /** "granted", "ask" o "blocked" (denegado con «no volver a preguntar»). */
+        @JavascriptInterface
+        public String musicPermissionStatus() {
+            if (!bridgeTrusted) return "ask";
+            if (LocalMusic.hasPermission(MainActivity.this)) return "granted";
+            boolean asked = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_MUSIC_PERMISSION_ASKED, false);
+            if (asked && !shouldShowRequestPermissionRationale(LocalMusic.permissionName())) return "blocked";
+            return "ask";
+        }
+
+        @JavascriptInterface
+        public void requestMusicPermission() {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (LocalMusic.hasPermission(MainActivity.this)) {
+                    notifyWebMusicPermission(true);
+                    return;
+                }
+                if ("blocked".equals(musicPermissionStatus())) {
+                    Toast.makeText(MainActivity.this, "Activa el permiso «Música y audio» en los ajustes de la app", Toast.LENGTH_LONG).show();
+                    openAppSettingsNative();
+                    return;
+                }
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_MUSIC_PERMISSION_ASKED, true).apply();
+                requestPermissions(new String[]{LocalMusic.permissionName()}, MUSIC_PERMISSION_REQUEST);
+            });
+        }
+
+        @JavascriptInterface
+        public void openAppSettings() {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> openAppSettingsNative());
+        }
+
+        @JavascriptInterface
+        public void startMusicMedia(String title, String subtitle, String artwork, double durationSec, double positionSec, boolean playing) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+                }
+                if (podcastMediaController != null) podcastMediaController.start(title, subtitle, artwork, (long)Math.max(0,durationSec*1000), (long)Math.max(0,positionSec*1000), playing, "music");
             });
         }
 
@@ -522,6 +610,10 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == MUSIC_PERMISSION_REQUEST) {
+            notifyWebMusicPermission(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+            return;
+        }
         if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
             boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);

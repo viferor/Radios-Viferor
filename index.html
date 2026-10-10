@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11610" />
+<link rel="stylesheet" href="styles.css?v=11700" />
 </head>
 <body>
 <header class="app-header">
@@ -14,6 +14,7 @@
 <div class="view-toggle">
 <button class="toggle-btn active" id="btnViewRadios" type="button">📻 Radios</button>
 <button class="toggle-btn" id="btnViewPodcasts" type="button">🎙️ Podcasts</button>
+<button class="toggle-btn" id="btnViewMusic" type="button">🎵 Música</button>
 </div>
 <div class="settings-menu" id="settingsMenu" hidden>
   <div class="settings-menu-title">⚙️ Ajustes</div>
@@ -162,6 +163,43 @@
   </div>
 </section>
 
+<section class="view view-music" id="viewMusic">
+  <div class="mus-toolbar">
+    <div class="mus-searchbar"><input id="musSearch" type="search" placeholder="🔎 Canción, artista, álbum, carpeta…" autocomplete="off" enterkeyhint="search" aria-label="Buscar en mi música"><button id="musMenu" type="button" aria-label="Opciones de mi música">⋯</button></div>
+    <div class="mus-tabs" id="musTabs" role="tablist" aria-label="Ver por">
+      <button type="button" data-tab="songs">🎵 Canciones</button><button type="button" data-tab="albums">💿 Álbumes</button><button type="button" data-tab="artists">🎤 Artistas</button><button type="button" data-tab="folders">📁 Carpetas</button><button type="button" data-tab="genres">🏷️ Géneros</button><button type="button" data-tab="lists">📃 Listas</button>
+    </div>
+  </div>
+  <main id="musicContent" class="music-content"></main>
+  <div class="pod-player mus-player is-empty" id="musPlayerMini">
+    <div class="pod-mini-art" id="musMiniArt" aria-hidden="true">🎵</div>
+    <div class="pod-mini-info" id="musMiniOpen" role="button" tabindex="0" aria-label="Abrir reproductor de música"><strong id="musNow">Sin canción</strong><span id="musNowSub"></span></div>
+    <button id="musPrev" class="pod-mini-btn" type="button" aria-label="Canción anterior">⏮</button>
+    <button id="musPlay" class="pod-mini-btn pod-mini-main" type="button" aria-label="Reproducir o pausar">▶</button>
+    <button id="musNext" class="pod-mini-btn" type="button" aria-label="Canción siguiente">⏭</button>
+    <div class="pod-mini-progress" aria-hidden="true"><i id="musMiniBar"></i></div>
+    <audio id="musicAudio" preload="none"></audio>
+  </div>
+  <div class="pod-expanded mus-expanded" id="musExpanded" hidden>
+    <div class="pod-expanded-card">
+      <div class="pod-expanded-head"><button id="musExpClose" type="button" aria-label="Cerrar">←</button><span>Reproductor de música</span><button id="musExpMore" class="mus-exp-more" type="button" aria-label="Opciones de la canción">⋯</button></div>
+      <div class="pod-expanded-art" id="musExpArt">🎵</div>
+      <h2 id="musExpTitle">Sin canción</h2><p id="musExpSub"></p>
+      <div class="pod-progress"><span id="musCur">0:00</span><input id="musRange" type="range" min="0" max="100" step="0.1" value="0" aria-label="Progreso"><span id="musDurEl">0:00</span></div>
+      <div class="pod-expanded-controls">
+        <button id="musExpShuffle" class="mus-mode" type="button" aria-label="Aleatorio" aria-pressed="false">🔀</button>
+        <button id="musExpPrev" type="button" aria-label="Anterior">⏮</button>
+        <button id="musExpPlay" class="main" type="button" aria-label="Reproducir o pausar">▶</button>
+        <button id="musExpNext" type="button" aria-label="Siguiente">⏭</button>
+        <button id="musExpRepeat" class="mus-mode" type="button" aria-label="Repetir">🔁</button>
+      </div>
+      <div class="pod-expanded-volume volume-control" aria-label="Volumen de la música"><button id="musExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="musExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="musExpVolumeValue">80%</output></div>
+      <div class="pod-exp-extra"><button id="musExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="musExpQueueCount">0</b></button><button id="musExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
+      <p class="pod-up-next" id="musUpNext" hidden></p>
+    </div>
+  </div>
+</section>
+
 <footer class="app-version-footer" id="appVersionFooter">Versión <strong id="appVersionText"></strong> · Compilación <strong id="appBuildText"></strong></footer>
 
 <div class="error-modal" id="errorModal" hidden>
@@ -200,13 +238,14 @@
   </div>
 </div>
 
-<script src="version.js?v=11610"></script>
+<script src="version.js?v=11700"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11610"></script>
-<script src="buscador-radios.js?v=11610"></script>
-<script src="app.js?v=11610"></script>
-<script src="podcasts.js?v=11610"></script>
-<script src="podcast-listas.js?v=11610"></script>
-<script src="diagnostics.js?v=11610"></script>
+<script src="stations-data.js?v=11700"></script>
+<script src="buscador-radios.js?v=11700"></script>
+<script src="app.js?v=11700"></script>
+<script src="podcasts.js?v=11700"></script>
+<script src="podcast-listas.js?v=11700"></script>
+<script src="musica.js?v=11700"></script>
+<script src="diagnostics.js?v=11700"></script>
 </body>
 </html>

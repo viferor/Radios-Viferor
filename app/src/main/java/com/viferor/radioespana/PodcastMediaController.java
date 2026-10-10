@@ -84,16 +84,18 @@ public final class PodcastMediaController {
         session = new MediaSession(activity, "Radios Viferor Podcasts");
         session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
         session.setCallback(new MediaSession.Callback() {
-            private boolean isPodcast() {
-                return "podcast".equalsIgnoreCase(activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio"));
+            // Podcasts y música usan los mismos controles; cambia el nombre de las funciones web.
+            private String prefix() {
+                String s = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
+                return "music".equalsIgnoreCase(s) ? "Music" : "podcast".equalsIgnoreCase(s) ? "Podcast" : null;
             }
-            @Override public void onPlay() { sendToWeb(isPodcast() ? "window.viferorNativePodcastPlay&&window.viferorNativePodcastPlay();" : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); }
-            @Override public void onPause() { sendToWeb(isPodcast() ? "window.viferorNativePodcastPause&&window.viferorNativePodcastPause();" : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); }
-            @Override public void onSkipToNext() { if (isPodcast()) sendToWeb("window.viferorNativePodcastNext&&window.viferorNativePodcastNext();"); }
-            @Override public void onSkipToPrevious() { if (isPodcast()) sendToWeb("window.viferorNativePodcastPrevious&&window.viferorNativePodcastPrevious();"); }
-            @Override public void onFastForward() { if (isPodcast()) sendToWeb("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(30);"); }
-            @Override public void onRewind() { if (isPodcast()) sendToWeb("window.viferorNativePodcastSeek&&window.viferorNativePodcastSeek(-15);"); }
-            @Override public void onSeekTo(long pos) { if (isPodcast()) sendToWeb("window.viferorNativePodcastSetPosition&&window.viferorNativePodcastSetPosition(" + Math.max(0,pos) + ");"); }
+            @Override public void onPlay() { String p = prefix(); sendToWeb(p != null ? MainActivity.fn(p, "Play", "") : "window.viferorNativeRadioPlay&&window.viferorNativeRadioPlay();"); }
+            @Override public void onPause() { String p = prefix(); sendToWeb(p != null ? MainActivity.fn(p, "Pause", "") : "window.viferorNativeRadioPause&&window.viferorNativeRadioPause();"); }
+            @Override public void onSkipToNext() { String p = prefix(); if (p != null) sendToWeb(MainActivity.fn(p, "Next", "")); }
+            @Override public void onSkipToPrevious() { String p = prefix(); if (p != null) sendToWeb(MainActivity.fn(p, "Previous", "")); }
+            @Override public void onFastForward() { String p = prefix(); if (p != null) sendToWeb(MainActivity.fn(p, "Seek", "30")); }
+            @Override public void onRewind() { String p = prefix(); if (p != null) sendToWeb(MainActivity.fn(p, "Seek", "-15")); }
+            @Override public void onSeekTo(long pos) { String p = prefix(); if (p != null) sendToWeb(MainActivity.fn(p, "SetPosition", String.valueOf(Math.max(0,pos)))); }
         });
     }
 
@@ -107,7 +109,13 @@ public final class PodcastMediaController {
     }
 
     public void start(String title, String subtitle, String artworkUrl, long durationMs, long positionMs, boolean playing) {
-        activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, "podcast").apply();
+        start(title, subtitle, artworkUrl, durationMs, positionMs, playing, "podcast");
+    }
+
+    /** section: "podcast" o "music" (mismos controles: anterior, reproducir, siguiente). */
+    public void start(String title, String subtitle, String artworkUrl, long durationMs, long positionMs, boolean playing, String section) {
+        String sec = "music".equalsIgnoreCase(section) ? "music" : "podcast";
+        activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, sec).apply();
         this.title = TextUtils.isEmpty(title) ? "Podcast" : title;
         this.subtitle = TextUtils.isEmpty(subtitle) ? "Radios Viferor" : subtitle;
         this.artworkUrl = artworkUrl == null ? "" : artworkUrl;
@@ -122,7 +130,7 @@ public final class PodcastMediaController {
     }
 
     public void update(long durationMs, long positionMs, boolean playing) {
-        if (!isPlaybackSection("podcast")) return;
+        if (!isPlaybackSection("podcast") && !isPlaybackSection("music")) return;
         this.durationMs = Math.max(0, durationMs);
         this.positionMs = Math.max(0, Math.min(this.durationMs > 0 ? this.durationMs : Long.MAX_VALUE, positionMs));
         this.playing = playing;
@@ -231,7 +239,7 @@ public final class PodcastMediaController {
         widgetTitle = title;
         widgetSubtitle = subtitle;
         widgetPlaying = playing;
-        widgetType = isPlaybackSection("podcast") ? "podcast" : "radio";
+        widgetType = isPlaybackSection("podcast") ? "podcast" : isPlaybackSection("music") ? "music" : "radio";
         activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                 .putString(PREF_WIDGET_TITLE, widgetTitle)
                 .putString(PREF_WIDGET_SUBTITLE, widgetSubtitle)
@@ -258,7 +266,7 @@ public final class PodcastMediaController {
     public static boolean getWidgetPlaying() { return widgetPlaying; }
 
     public void stop() {
-        if (!isPlaybackSection("podcast")) return;
+        if (!isPlaybackSection("podcast") && !isPlaybackSection("music")) return;
         playing = false; persistWidgetState();
         session.setPlaybackState(new PlaybackState.Builder().setState(PlaybackState.STATE_NONE, positionMs, 0f).build());
         session.setActive(false);
@@ -294,7 +302,7 @@ public final class PodcastMediaController {
         boolean canShow = Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         Intent open = new Intent(activity, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         String section = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
-        boolean podcast = "podcast".equalsIgnoreCase(section);
+        boolean podcast = "podcast".equalsIgnoreCase(section) || "music".equalsIgnoreCase(section);
         open.putExtra("openSection", section);
         PendingIntent content = PendingIntent.getActivity(activity, 490520, open, PendingIntent.FLAG_UPDATE_CURRENT | immutable());
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(activity, CHANNEL_ID) : new Notification.Builder(activity);
@@ -353,13 +361,18 @@ public final class PodcastMediaController {
         imageExecutor.execute(() -> {
             try {
                 Bitmap bmp;
-                java.net.HttpURLConnection c = (java.net.HttpURLConnection) new URL(u).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(10000);
-                try (java.io.InputStream in = c.getInputStream()) {
-                    bmp = BitmapFactory.decodeStream(in);
-                } finally {
-                    c.disconnect();
+                if (LocalMusic.isMusicUrl(u)) {
+                    // Carátula de «Mi música»: se lee del móvil, no de internet.
+                    bmp = LocalMusic.artBitmapFromUrl(activity, u);
+                } else {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new URL(u).openConnection();
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(10000);
+                    try (java.io.InputStream in = c.getInputStream()) {
+                        bmp = BitmapFactory.decodeStream(in);
+                    } finally {
+                        c.disconnect();
+                    }
                 }
                 if (bmp != null) {
                     int max = 512;

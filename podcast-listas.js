@@ -783,7 +783,7 @@ function epRow(e, { num = null, handle = false, current = false, onPlay = null, 
 }
 let podDragging = false;
 // Reordenar arrastrando el asa ⠿ (dedo o ratón); desplaza la pantalla cerca de los bordes.
-function makeSortable(list, onMove) {
+function makeSortable(list, onMove, scrollerEl = null) {
   list.addEventListener('pointerdown', ev => {
     const h = ev.target.closest('.pod-qhandle');
     if (!h || !list.contains(h) || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
@@ -792,7 +792,7 @@ function makeSortable(list, onMove) {
     const from = rows.indexOf(row);
     if (from < 0) return;
     ev.preventDefault();
-    const scroller = $p('podcastContent');
+    const scroller = scrollerEl || $p('podcastContent');
     const rects = rows.map(r => r.getBoundingClientRect());
     const gap = rows.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 5;
     const shift = rects[from].height + gap;

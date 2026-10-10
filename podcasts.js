@@ -802,6 +802,7 @@ function setPodcastLayout(detail) {
 function pushPodcastState(screen, replace = false) {
   podcastNavToken++;
   const st = { ...(history.state || {}), podcastScreen: screen };
+  delete st.musicScreen;
   if (replace) history.replaceState(st, '');
   else history.pushState(st, '');
   podcastState.screen = screen;
@@ -1734,6 +1735,8 @@ function switchToPodcasts() {
   fav?.classList.remove('active');
   search?.classList.remove('active');
   pods?.classList.add('active');
+  document.getElementById('viewMusic')?.classList.remove('active');
+  document.body.classList.remove('music-active', 'mus-detail');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
   renderPodcastLanding(false);
@@ -1751,6 +1754,8 @@ function switchToRadios() {
     btn = $p('btnViewRadios');
   pods?.classList.remove('active');
   search?.classList.remove('active');
+  document.getElementById('viewMusic')?.classList.remove('active');
+  document.body.classList.remove('music-active', 'mus-detail');
   fav?.classList.add('active');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
@@ -2034,6 +2039,16 @@ window.handleAndroidBack = function () {
       closePodcastExpanded();
       return true;
     }
+    // «Mi música»: reproductor ampliado o pantalla anterior.
+    const musExp = document.getElementById('musExpanded');
+    if (musExp && !musExp.hidden) {
+      window.closeMusicExpanded?.();
+      return true;
+    }
+    if (document.getElementById('viewMusic')?.classList.contains('active') && window.backFromMusic) {
+      window.backFromMusic();
+      return true;
+    }
     const pods = document.getElementById('viewPodcasts');
     const search = document.getElementById('viewSearch');
     if (search?.classList.contains('active')) {
@@ -2293,7 +2308,8 @@ function initPodcasts() {
   $p('btnViewPodcasts').onclick = switchToPodcasts;
   $p('btnViewRadios').onclick = switchToRadios;
   window.addEventListener('popstate', () => {
-    if (history.state?.podcastScreen) restorePodcastHistory(history.state);
+    if (history.state?.musicScreen) window.restoreMusicHistory?.(history.state);
+    else if (history.state?.podcastScreen) restorePodcastHistory(history.state);
     else switchToRadios();
   });
   const pa = $p('podcastAudio');
