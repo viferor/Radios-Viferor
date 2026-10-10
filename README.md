@@ -1,6 +1,12 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.21.1 — Deslizar para cambiar de canción
+
+En el reproductor de música ampliado, deslizar el dedo a la **izquierda** pone la canción
+**anterior** y a la **derecha**, la **siguiente**. La carátula sigue al dedo; un gesto corto
+o vertical no hace nada, y tocar la carátula sigue abriendo la letra.
+
 ## 1.21.0 — Radio de una canción, ajustar la letra arrastrando y carátula → letra
 
 - **📻 Radio de esta canción** (menú ⋯ de cualquier canción, también en el reproductor):

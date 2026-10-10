@@ -758,11 +758,11 @@ async function nextTrack(auto = false) {
   saveMusicQueue();
   return startTrack(next);
 }
-function prevTrack() {
+function prevTrack(force = false) {
   stopOtherDeck();
   const a = musicAudio();
   const cur = musicState.current;
-  if (a && cur && a.currentTime > 3) {
+  if (a && cur && a.currentTime > 3 && force !== true) {
     a.currentTime = 0;
     return;
   }
@@ -2362,6 +2362,63 @@ async function saveMusicQueueAsList() {
 /* ===========================================================================
    Reproductor (mini y ampliado)
 =========================================================================== */
+/* ---------------------------------------------------------------------------
+   Gesto en el reproductor ampliado: deslizar a la izquierda → canción anterior,
+   a la derecha → siguiente. La carátula sigue al dedo.
+--------------------------------------------------------------------------- */
+function initMusicSwipe() {
+  const card = document.querySelector('#musExpanded .pod-expanded-card');
+  const art = $m('musExpArt');
+  if (!card || !art) return;
+  let g = null;
+  const setArt = (x, anim = false) => {
+    art.style.transition = anim ? 'transform .22s ease, opacity .22s ease' : 'none';
+    art.style.transform = x ? `translateX(${x}px) rotate(${x / 40}deg)` : '';
+    art.style.opacity = x ? String(Math.max(0.35, 1 - Math.abs(x) / 500)) : '';
+  };
+  card.addEventListener('pointerdown', e => {
+    if (e.button > 0 || e.target.closest('input, select, textarea, .pod-sheet')) return;
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, on: false, t: performance.now() };
+  });
+  card.addEventListener('pointermove', e => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x,
+      dy = e.clientY - g.y;
+    if (!g.on) {
+      if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) return (g = null); // desplazamiento vertical
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      g.on = true;
+      card.setPointerCapture?.(e.pointerId);
+    }
+    g.dx = dx;
+    setArt(dx);
+  });
+  const end = e => {
+    if (!g || (e && e.pointerId !== g.id)) return;
+    const { dx, on, t } = g;
+    g = null;
+    if (!on) return;
+    // Que el gesto no cuente además como pulsación (abrir la letra, botones…).
+    const block = ev => (ev.stopPropagation(), ev.preventDefault());
+    window.addEventListener('click', block, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', block, { capture: true }), 350);
+    const fast = Math.abs(dx) > 40 && Math.abs(dx) / Math.max(1, performance.now() - t) > 0.5;
+    if (!musicState.current || (Math.abs(dx) < Math.min(110, card.clientWidth * 0.25) && !fast)) return setArt(0, true);
+    const dir = dx < 0 ? -1 : 1;
+    setArt(dir * card.clientWidth, true);
+    setTimeout(() => {
+      if (dir < 0) prevTrack(true);
+      else nextTrack(false);
+      setArt(-dir * card.clientWidth * 0.6);
+      requestAnimationFrame(() => requestAnimationFrame(() => setArt(0, true)));
+    }, 180);
+  };
+  card.addEventListener('pointerup', end);
+  card.addEventListener('pointercancel', () => {
+    if (g?.on) setArt(0, true);
+    g = null;
+  });
+}
 function updateMusicNowUI() {
   const t = musicState.current;
   $m('musPlayerMini')?.classList.toggle('is-empty', !t);
@@ -2595,7 +2652,8 @@ function initMusic() {
   $m('musExpClose').onclick = closeMusicExpanded;
   $m('musExpanded').addEventListener('click', e => e.target.id === 'musExpanded' && closeMusicExpanded());
   $m('musExpPlay').onclick = toggleMusicPlay;
-  $m('musExpPrev').onclick = prevTrack;
+  $m('musExpPrev').onclick = () => prevTrack();
+  initMusicSwipe();
   $m('musExpNext').onclick = () => nextTrack(false);
   $m('musExpShuffle').onclick = toggleMusicShuffle;
   $m('musExpRepeat').onclick = cycleMusicRepeat;
