@@ -2229,8 +2229,11 @@ function initPodcasts() {
   // Antes abría un desplegable que quedaba recortado e invisible dentro de la barra.
   // «Mis podcasts» despliega un menú con el orden de las suscripciones y los cuatro
   // modos. Va en una capa fija (no dentro de la barra) para que nunca quede recortado.
+  // «Mis listas» despliega el orden de las suscripciones, los modos de escucha, la
+  // cola y las listas; «Mis podcasts» abre directamente tus suscripciones con ese orden.
   const mineMenu = $p('podMineMenu'),
-    mineBtn = $p('podMine');
+    mineBtn = $p('podListsMenu') || $p('podMine'),
+    subsBtn = $p('podMine');
   const setMineMenu = open => {
     if (!mineMenu || !mineBtn) return;
     if (open) {
@@ -2243,6 +2246,13 @@ function initPodcasts() {
     mineBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
   window.closePodcastMineMenu = () => setMineMenu(false);
+  if (subsBtn && subsBtn !== mineBtn)
+    subsBtn.onclick = e => {
+      e.preventDefault();
+      setMineMenu(false);
+      closePodcastSearchDrawer();
+      renderPodcastHome(podcastState.screen === 'subs');
+    };
   mineBtn.onclick = e => {
     e.preventDefault();
     e.stopPropagation();

@@ -1532,7 +1532,16 @@ function openSleepMenu() {
     ]
   });
 }
+// Texto bajo «Mis listas»: cuántas listas y qué hay en la cola.
+function updateListsMenuCount() {
+  const el = $p('podListsCount');
+  if (!el) return;
+  const n = podcastState.lists.length,
+    q = podcastState.queue.length;
+  el.textContent = `${n ? plural(n, 'lista', 'listas') : 'Sin listas'} · ${q ? `cola: ${q}` : 'cola vacía'}`;
+}
 function updatePlayerExtras() {
+  updateListsMenuCount();
   const q = podcastState.queue;
   if ($p('podExpQueueCount')) $p('podExpQueueCount').textContent = q.length;
   if ($p('podExpSpeed')) {
@@ -1576,6 +1585,7 @@ document.addEventListener('podcasts:queue-changed', () => {
   else if (s === 'landing') refreshListsStrip();
 });
 document.addEventListener('podcasts:lists-changed', () => {
+  updateListsMenuCount();
   if (podDragging) return;
   const s = podcastState.screen || '';
   if (s === 'lists' || s.startsWith('list:')) refreshPodcastScreen();

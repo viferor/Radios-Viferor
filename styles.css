@@ -1400,3 +1400,14 @@ html.dark-mode .pod-exp-extra b,html.dark-mode .pod-history summary span{backgro
 html.dark-mode .pod-q-opts-wrap{background:#15191e;color:#f5f7f9;border-color:#353c44}
 html.dark-mode .pod-q-opts-wrap .pod-q-opts{border-color:#2c333a;background:transparent}
 html.dark-mode .pod-list-head h2 span{background:#2b333b;color:#c3ccd4}
+
+/* 1.16.1 · «Mis podcasts» y «Mis listas» apilados */
+.pod-mine-wrap{display:flex;flex-direction:column;gap:6px}
+.pod-mine-wrap .pod-my-subs{padding:9px 12px;border-radius:14px;gap:10px}
+.pod-mine-wrap .pod-my-subs-icon{width:36px;height:36px;min-width:36px;font-size:1.2rem;border-radius:10px}
+.pod-mine-wrap .pod-my-subs strong{font-size:.95rem}
+.pod-mine-wrap .pod-my-subs small{margin-top:2px}
+.pod-my-lists .pod-my-subs-icon{background:#fff3e0}
+html.dark-mode .pod-my-lists .pod-my-subs-icon{background:#3a2c14}
+.pod-toolbar{align-items:flex-start}
+.pod-toolbar .pod-search-open{margin-top:6px}

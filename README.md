@@ -1,6 +1,12 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.16.1 — «Mis listas»
+
+Debajo de «Mis podcasts» hay un botón «Mis listas» que despliega el orden de las
+suscripciones, los modos (Últimos de todas, Mezclar, Continuar, Populares) y los accesos a la
+Cola y a las Listas. «Mis podcasts» abre directamente tus suscripciones en el orden elegido.
+
 ## 1.16.0 — Cola y listas de reproducción de podcasts
 
 **Cola.** Lo que suena después del episodio actual. Se guarda al cerrar la app y se ve en

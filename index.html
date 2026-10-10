@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11600" />
+<link rel="stylesheet" href="styles.css?v=11610" />
 </head>
 <body>
 <header class="app-header">
@@ -81,7 +81,8 @@
 <section class="view view-podcasts" id="viewPodcasts">
   <div class="pod-toolbar">
   <div class="pod-mine-wrap">
-    <button id="podMine" class="pod-my-subs" type="button" aria-label="Mis podcasts: ordenar y listas" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 favoritos</small></span><span class="pod-my-subs-arrow" aria-hidden="true">▾</span></button>
+    <button id="podMine" class="pod-my-subs" type="button" aria-label="Mis podcasts: ver tus suscripciones"><span class="pod-my-subs-icon">⭐</span><span><strong>Mis podcasts</strong><small id="podMineCount">0 favoritos</small></span><span class="pod-my-subs-arrow" aria-hidden="true">›</span></button>
+    <button id="podListsMenu" class="pod-my-subs pod-my-lists" type="button" aria-label="Mis listas: orden, modos de escucha, cola y listas" aria-haspopup="true" aria-expanded="false"><span class="pod-my-subs-icon">📃</span><span><strong>Mis listas</strong><small id="podListsCount">Cola y listas</small></span><span class="pod-my-subs-arrow" aria-hidden="true">▾</span></button>
   </div>
   <div class="pod-mine-menu pod-mine-panel" id="podMineMenu" hidden>
     <label class="pod-mine-sort"><span>Ordenar suscripciones</span><select id="podMineSort" aria-label="Ordenar suscripciones"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option><option value="category">Por categoría</option></select></label>
@@ -199,13 +200,13 @@
   </div>
 </div>
 
-<script src="version.js?v=11600"></script>
+<script src="version.js?v=11610"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11600"></script>
-<script src="buscador-radios.js?v=11600"></script>
-<script src="app.js?v=11600"></script>
-<script src="podcasts.js?v=11600"></script>
-<script src="podcast-listas.js?v=11600"></script>
-<script src="diagnostics.js?v=11600"></script>
+<script src="stations-data.js?v=11610"></script>
+<script src="buscador-radios.js?v=11610"></script>
+<script src="app.js?v=11610"></script>
+<script src="podcasts.js?v=11610"></script>
+<script src="podcast-listas.js?v=11610"></script>
+<script src="diagnostics.js?v=11610"></script>
 </body>
 </html>
