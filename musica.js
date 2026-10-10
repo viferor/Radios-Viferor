@@ -3216,8 +3216,9 @@ async function saveMusicQueueAsList() {
    Reproductor (mini y ampliado)
 =========================================================================== */
 /* ---------------------------------------------------------------------------
-   Gesto en el reproductor ampliado: deslizar a la izquierda → canción anterior,
-   a la derecha → siguiente. La carátula sigue al dedo.
+   Gesto en el reproductor ampliado (como en las demás apps de música):
+   deslizar a la izquierda → siguiente, a la derecha → anterior. La carátula
+   sigue al dedo.
 --------------------------------------------------------------------------- */
 function initMusicSwipe() {
   const card = document.querySelector('#musExpanded .pod-expanded-card');
@@ -3260,8 +3261,8 @@ function initMusicSwipe() {
     const dir = dx < 0 ? -1 : 1;
     setArt(dir * card.clientWidth, true);
     setTimeout(() => {
-      if (dir < 0) prevTrack(true);
-      else nextTrack(false);
+      if (dir < 0) nextTrack(false);
+      else prevTrack(true);
       setArt(-dir * card.clientWidth * 0.6);
       requestAnimationFrame(() => requestAnimationFrame(() => setArt(0, true)));
     }, 180);
