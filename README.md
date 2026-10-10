@@ -5,7 +5,7 @@ Radios y podcast
 
 - **📻 Radio de esta canción** (menú ⋯ de cualquier canción, también en el reproductor):
   crea una cola con música parecida de tu biblioteca: mismo artista, artistas parecidos
-  (según Deezer, vía `/api/similar`), mismo género y época, con más peso para tus
+  (según ListenBrainz/MusicBrainz, vía `/api/similar`), mismo género y época, con más peso para tus
   favoritas y las más escuchadas, y sin repetir artista seguido. Es una radio sin fin:
   cuando quedan pocas canciones añade más. Reproducir otra colección la desactiva.
 - **↕️ Ajustar arrastrando** (letra sincronizada): mientras suena, arrastra la letra hasta

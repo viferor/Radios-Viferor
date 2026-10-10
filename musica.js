@@ -865,9 +865,9 @@ function queueTracks(tracks, how = 'end', { toast = true } = {}) {
 }
 /* ===========================================================================
    Radio de una canción: cola con música parecida de tu biblioteca
-   (mismo artista, artistas parecidos según Deezer, género y época)
+   (mismo artista, artistas parecidos según ListenBrainz, género y época)
 =========================================================================== */
-const MUS_SIMILAR_KEY = 'radios_viferor_music_similar_v1';
+const MUS_SIMILAR_KEY = 'radios_viferor_music_similar_v2';
 function artistParts(t) {
   const set = new Set();
   [t.artist, t.albumArtist].forEach(v =>
@@ -892,7 +892,7 @@ async function similarArtistNames(name) {
   if (!key || key === mNorm(MUS_UNKNOWN_ARTIST)) return [];
   const all = lsGet(MUS_SIMILAR_KEY, {});
   const c = all[key];
-  if (c && Date.now() - c.at < 14 * 86400000) return c.names;
+  if (c && Date.now() - c.at < (c.names.length ? 14 : 1) * 86400000) return c.names;
   try {
     const ctl = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined;
     const r = await fetch('/api/similar?artist=' + encodeURIComponent(name), { signal: ctl });
