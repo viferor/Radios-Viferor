@@ -1502,7 +1502,7 @@ html.dark-mode .mus-player #musPrev,html.dark-mode .mus-player #musNext{color:#f
 .lyr-modes[hidden]{display:none}
 .lyr-modes button{flex:1;border:1px solid rgba(255,255,255,.18);background:transparent;color:#e3e8ed;border-radius:999px;padding:8px 10px;font-weight:800;font-size:.82rem;cursor:pointer}
 .lyr-modes button.on{background:#fff;color:#1b1e22;border-color:#fff}
-.lyr-body{flex:1;min-height:0;overflow-y:auto;padding:8px 18px 40vh;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.lyr-body{position:relative;flex:1;min-height:0;overflow-y:auto;padding:8px 18px 40vh;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .lyr-lines{display:flex;flex-direction:column;gap:14px}
 .lyr-line{font-size:1.32rem;font-weight:800;line-height:1.28;color:rgba(255,255,255,.88);overflow-wrap:anywhere;transition:color .25s,opacity .25s,transform .25s;transform-origin:left center}
 .lyr-line.gap{height:10px}
@@ -1646,3 +1646,13 @@ html.dark-mode .fx-foot a{color:#8ab4f8}
 html.dark-mode .fx-switch input{background:#4a525a!important;border:0!important}
 html.dark-mode .fx-switch input:checked{background:var(--primary)!important}
 .fx-switch input{border:0;padding:0}
+
+/* Letra: ajustar arrastrando */
+.lyr-panel .lyr-body.lyr-adjusting{cursor:grab;touch-action:pan-y}
+.lyr-body.lyr-adjusting .lyr-lines::before{content:'';display:block;height:36vh;flex:0 0 auto;margin-bottom:-14px}
+.lyr-body.lyr-adjusting .lyr-line{transition:color .15s}
+.lyr-body.lyr-adjusting .lyr-lines.synced .lyr-line.now{transform:none}
+.lyr-guide{position:absolute;left:10px;right:10px;height:0;border-top:2px dashed rgba(255,207,138,.75);pointer-events:none;z-index:3}
+.lyr-guide span{position:absolute;left:-4px;top:-12px;font-size:.85rem;color:#ffcf8a}
+.lyr-adj-help{flex-basis:100%;margin:0 0 6px;font-size:.85rem;color:rgba(255,255,255,.75)}
+.mus-expanded .pod-expanded-art{cursor:pointer}

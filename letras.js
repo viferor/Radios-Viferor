@@ -285,7 +285,7 @@ async function loadLyrics(t, { force = false } = {}) {
 /* ---------------------------------------------------------------------------
    Estado y panel
 --------------------------------------------------------------------------- */
-const lyr = { track: null, data: null, loading: false, error: '', mode: 'orig', trans: null, transLoading: false, transError: '', meaning: null, meaningOpen: false, meaningLoading: false, meaningError: '', sync: null, cur: -1, userScrollAt: 0, raf: 0, token: 0 };
+const lyr = { track: null, data: null, loading: false, error: '', mode: 'orig', trans: null, transLoading: false, transError: '', meaning: null, meaningOpen: false, meaningLoading: false, meaningError: '', sync: null, adj: null, cur: -1, userScrollAt: 0, raf: 0, token: 0 };
 function lyrUi() {
   return { mode: 'orig', ...lsGet(LYR_UI_KEY, {}) };
 }
@@ -297,6 +297,7 @@ function buildLyricsPanel() {
     `<div class="lyr-head"><button type="button" class="lyr-close" aria-label="Cerrar la letra">←</button><div class="lyr-title"><strong id="lyrTitle"></strong><small id="lyrSub"></small></div><button type="button" class="lyr-more" aria-label="Opciones de la letra">⋯</button></div>
      <div class="lyr-modes" role="tablist"><button type="button" data-mode="orig">🎤 Letra</button><button type="button" data-mode="trans">🌐 Original + español</button><button type="button" data-mode="meaning">💡 Significado</button></div>
      <div class="lyr-body" id="lyrBody"></div>
+     <div class="lyr-guide" id="lyrGuide" hidden><span>▶</span></div>
      <div class="lyr-foot" id="lyrFoot"></div>`
   );
   p.id = 'lyrPanel';
@@ -309,6 +310,7 @@ function buildLyricsPanel() {
   p.querySelectorAll('[data-mode]').forEach(b => (b.onclick = () => setLyricsMode(b.dataset.mode)));
   const body = $m('lyrBody');
   ['wheel', 'touchmove'].forEach(ev => body.addEventListener(ev, () => (lyr.userScrollAt = Date.now()), { passive: true }));
+  initDragAdjust(body);
   document.addEventListener('keydown', e => {
     if (p.hidden || !lyr.sync) return;
     if ((e.key === ' ' || e.key === 'Enter') && !e.target.closest('input,textarea,select')) {
@@ -339,7 +341,13 @@ function closeLyricsPanel() {
   const p = $m('lyrPanel');
   if (!p || p.hidden) return false;
   if (lyr.sync && lyr.sync.marked > 0 && !confirm('¿Salir sin guardar la sincronización?')) return true;
+  // Atrás durante el ajuste: se guarda y se vuelve a la letra normal.
+  if (lyr.adj) {
+    finishDragAdjust(true);
+    return true;
+  }
   lyr.sync = null;
+  lyr.adj = null;
   p.hidden = true;
   document.body.classList.remove('lyr-open');
   cancelAnimationFrame(lyr.raf);
@@ -348,7 +356,7 @@ function closeLyricsPanel() {
 window.closeLyricsPanel = closeLyricsPanel;
 async function loadLyricsFor(t, opts = {}) {
   const tok = ++lyr.token;
-  Object.assign(lyr, { track: t, data: null, loading: true, error: '', trans: null, transError: '', meaning: null, meaningOpen: false, meaningError: '', sync: null, cur: -1 });
+  Object.assign(lyr, { track: t, data: null, adj: null, loading: true, error: '', trans: null, transError: '', meaning: null, meaningOpen: false, meaningError: '', sync: null, cur: -1 });
   renderLyrics();
   try {
     const d = await loadLyrics(t, opts);
@@ -365,6 +373,7 @@ async function loadLyricsFor(t, opts = {}) {
 }
 function setLyricsMode(mode) {
   lyr.mode = mode;
+  if (mode === 'meaning') lyr.adj = null;
   lsSet(LYR_UI_KEY, { ...lyrUi(), mode });
   renderLyrics();
   if (mode === 'trans') ensureTranslation();
@@ -390,6 +399,10 @@ function renderLyrics() {
   body.replaceChildren();
   foot.replaceChildren();
   lyr.cur = -1;
+  const adjusting = !!(lyr.adj && !lyr.sync && lyr.mode !== 'meaning' && lyr.data?.synced && lyr.data.lines.length);
+  if (!adjusting) lyr.adj = null;
+  body.classList.toggle('lyr-adjusting', adjusting);
+  $m('lyrGuide').hidden = !adjusting;
   if (lyr.sync) return renderSyncEditor(body, foot);
   if (lyr.loading) return body.append(musEl('div', 'lyr-msg', '<div class="lyr-spin"></div>Buscando la letra…'));
   // El significado no depende de tener la letra: con título y artista basta.
@@ -432,13 +445,19 @@ function renderLyrics() {
     list.append(row);
   });
   body.append(list);
+  if (adjusting) {
+    renderAdjustFoot(foot);
+    placeLyrGuide();
+    lyr.adj.progTop = -1;
+    return;
+  }
   // Pie: de dónde viene y sincronización.
   foot.append(musEl('span', 'lyr-src', pEsc(d.label + (d.synced ? ' · ⏱ sincronizada' : ' · sin sincronizar') + (d.offset ? ` · desfase ${d.offset > 0 ? '+' : ''}${d.offset.toFixed(1).replace('.', ',')} s` : ''))));
   const mine = d.source === 'user' && !lyrUserGet(lyr.track)?.published;
   foot.append(
     lyrButtons(
       d.synced
-        ? [['⇆ Ajustar desfase', offsetMenu], ['⏱ Volver a sincronizar', startSync], ...(mine ? [['📤 Compartir', () => shareToLrclib(lyr.track)]] : [])]
+        ? [['↕️ Ajustar arrastrando', startDragAdjust, 'primary'], ['⇆ Desfase', offsetMenu], ['⏱ Volver a sincronizar', startSync], ...(mine ? [['📤 Compartir', () => shareToLrclib(lyr.track)]] : [])]
         : [['⏱ Sincronizar', startSync, 'primary'], ['🔎 Buscar versión sincronizada', searchOtherLyrics]]
     )
   );
@@ -481,7 +500,10 @@ function startLyricsLoop() {
   const tick = () => {
     if ($m('lyrPanel')?.hidden) return;
     if (lyr.sync) updateSyncClock();
-    else updateLyricsHighlight(false);
+    else {
+      updateLyricsHighlight(false);
+      if (lyr.adj) adjustTick();
+    }
     lyr.raf = requestAnimationFrame(tick);
   };
   lyr.raf = requestAnimationFrame(tick);
@@ -504,11 +526,11 @@ function updateLyricsHighlight(force) {
     r.classList.toggle('past', k < i);
   });
   // Con el significado abierto no se desplaza sola (si no, lo sacaría de la vista).
-  if (i >= 0 && lyr.mode !== 'meaning' && Date.now() - lyr.userScrollAt > 4000) rows[i]?.scrollIntoView({ block: 'center', behavior: force ? 'auto' : 'smooth' });
+  if (i >= 0 && !lyr.adj && lyr.mode !== 'meaning' && Date.now() - lyr.userScrollAt > 4000) rows[i]?.scrollIntoView({ block: 'center', behavior: force ? 'auto' : 'smooth' });
 }
 function seekToLine(i) {
   const d = lyr.data;
-  if (!d?.synced) return;
+  if (!d?.synced || lyr.adj) return;
   if (!isLyrTrackPlaying()) {
     playTrackNow(lyr.track);
     return;
@@ -517,6 +539,175 @@ function seekToLine(i) {
   a.currentTime = Math.max(0, d.lines[i].t - (d.offset || 0) + 0.01);
   if (a.paused) toggleMusicPlay();
   lyr.userScrollAt = 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Ajustar arrastrando: mientras suena, se arrastra la letra hasta que la línea
+   que queda junto a la guía (▶) sea la que se oye. Cambia el desfase en vivo.
+--------------------------------------------------------------------------- */
+function startDragAdjust() {
+  const d = lyr.data;
+  if (!d?.synced || !d.lines.length) return podToast('Primero hace falta una letra sincronizada');
+  if (lyr.mode === 'meaning') {
+    lyr.mode = 'orig';
+    lsSet(LYR_UI_KEY, { ...lyrUi(), mode: 'orig' });
+  }
+  if (!isLyrTrackPlaying()) playTrackNow(lyr.track);
+  else if (musicAudio().paused) toggleMusicPlay();
+  lyr.adj = { start: d.offset || 0, saved: d.offset || 0, userAt: 0, touching: false, progTop: -1, dirty: false };
+  renderLyrics();
+}
+function finishDragAdjust(keep = true) {
+  const a = lyr.adj,
+    d = lyr.data;
+  if (!a) return;
+  if (!keep && d) {
+    d.offset = a.start;
+    lyrUserSet(lyr.track, { offset: a.start });
+  } else saveAdjOffset();
+  lyr.adj = null;
+  renderLyrics();
+  if (keep && d && Math.abs((d.offset || 0) - a.start) >= 0.05) podToast(`Letra ajustada (${fmtOffset(d.offset || 0)})`);
+}
+function fmtOffset(v) {
+  return `${v > 0 ? '+' : ''}${v.toFixed(1).replace('.', ',')} s`;
+}
+function saveAdjOffset() {
+  const a = lyr.adj,
+    d = lyr.data;
+  if (!a || !d) return;
+  const v = Math.round((d.offset || 0) * 20) / 20;
+  d.offset = v;
+  if (v !== a.saved) {
+    lyrUserSet(lyr.track, { offset: v });
+    a.saved = v;
+  }
+  a.dirty = false;
+}
+function renderAdjustFoot(foot) {
+  foot.append(musEl('p', 'lyr-adj-help', 'Arrastra la letra hasta que la línea junto a <b>▶</b> sea la que se oye. Se guarda sola.'));
+  foot.append(musEl('span', 'lyr-src', `Desfase <b id="lyrAdjVal">${pEsc(fmtOffset(lyr.data.offset || 0))}</b>`));
+  const nudge = v => () => {
+    lyr.data.offset = Math.round(((lyr.data.offset || 0) + v) * 20) / 20;
+    saveAdjOffset();
+    updateAdjValue();
+  };
+  foot.append(
+    lyrButtons([
+      ['−0,1 s', nudge(-0.1)],
+      ['+0,1 s', nudge(0.1)],
+      ['↺ Deshacer', () => finishDragAdjust(false)],
+      ['✓ Listo', () => finishDragAdjust(true), 'primary']
+    ])
+  );
+}
+function updateAdjValue() {
+  const el = $m('lyrAdjVal');
+  if (el) el.textContent = fmtOffset(lyr.data?.offset || 0);
+}
+function placeLyrGuide() {
+  const g = $m('lyrGuide'),
+    body = $m('lyrBody');
+  if (!g || !body) return;
+  g.style.top = body.offsetTop + body.clientHeight / 2 + 'px';
+}
+// Filas con su posición (sin las transformaciones de la línea actual).
+function adjRows() {
+  const rows = [...document.querySelectorAll('#lyrBody .lyr-lines .lyr-line')];
+  // Ancla: el centro de la línea (cuando empieza a sonar, la guía la atraviesa por el medio).
+  return rows.map(r => ({ top: r.offsetTop + r.offsetHeight / 2, h: r.offsetHeight }));
+}
+// Tiempo de la letra que queda en la guía, interpolando dentro de la línea.
+function adjTimeAtGuide() {
+  const body = $m('lyrBody'),
+    L = lyr.data.lines,
+    R = adjRows();
+  if (!R.length || R.length !== L.length) return null;
+  const y = body.scrollTop + body.clientHeight / 2;
+  let i = 0;
+  while (i + 1 < R.length && R[i + 1].top <= y) i++;
+  const span = (i + 1 < R.length ? R[i + 1].top : R[i].top + R[i].h + 14) - R[i].top || 1;
+  if (i === 0 && y < R[0].top) return L[0].t - Math.min(4, ((R[0].top - y) / span) * 3);
+  const dur = (i + 1 < L.length ? L[i + 1].t : L[i].t + 4) - L[i].t;
+  const f = Math.max(-1, Math.min(1, (y - R[i].top) / span));
+  return L[i].t + f * dur;
+}
+// Posición de desplazamiento que pone un tiempo de la letra en la guía.
+function adjScrollFor(time) {
+  const body = $m('lyrBody'),
+    L = lyr.data.lines,
+    R = adjRows();
+  if (!R.length || R.length !== L.length) return null;
+  let i = 0;
+  while (i + 1 < L.length && L[i + 1].t <= time) i++;
+  const span = (i + 1 < R.length ? R[i + 1].top : R[i].top + R[i].h + 14) - R[i].top;
+  const dur = (i + 1 < L.length ? L[i + 1].t : L[i].t + 4) - L[i].t || 1;
+  const f = Math.max(0, Math.min(1, (time - L[i].t) / dur));
+  return R[i].top + f * span - body.clientHeight / 2;
+}
+function adjustTick() {
+  const a = lyr.adj,
+    d = lyr.data;
+  if (!a || !d?.synced || !isLyrTrackPlaying()) return;
+  const body = $m('lyrBody');
+  if (a.touching || performance.now() - a.userAt < 220) return;
+  if (a.dirty) saveAdjOffset();
+  const top = adjScrollFor((Number(musicAudio().currentTime) || 0) + (d.offset || 0));
+  if (top == null) return;
+  if (Math.abs(body.scrollTop - top) >= 1) {
+    body.scrollTop = top;
+    a.progTop = body.scrollTop;
+  }
+}
+function adjFromUserScroll() {
+  const a = lyr.adj,
+    d = lyr.data;
+  if (!a || !d?.synced || !isLyrTrackPlaying()) return;
+  const t = adjTimeAtGuide();
+  if (t == null) return;
+  d.offset = Math.max(-600, Math.min(600, t - (Number(musicAudio().currentTime) || 0)));
+  a.dirty = true;
+  updateAdjValue();
+  updateLyricsHighlight(false);
+}
+function initDragAdjust(body) {
+  const mark = on => () => lyr.adj && ((lyr.adj.touching = on), (lyr.adj.userAt = performance.now()));
+  body.addEventListener('touchstart', mark(true), { passive: true });
+  body.addEventListener('touchend', mark(false), { passive: true });
+  body.addEventListener('touchcancel', mark(false), { passive: true });
+  body.addEventListener('wheel', mark(false), { passive: true });
+  body.addEventListener(
+    'scroll',
+    () => {
+      const a = lyr.adj;
+      if (!a) return;
+      if (a.progTop >= 0 && Math.abs(body.scrollTop - a.progTop) < 2 && !a.touching) return;
+      a.userAt = performance.now();
+      adjFromUserScroll();
+    },
+    { passive: true }
+  );
+  // Ratón: arrastrar con el botón pulsado.
+  let drag = null;
+  body.addEventListener('pointerdown', e => {
+    if (!lyr.adj || e.pointerType !== 'mouse' || e.button !== 0 || e.target.closest('button')) return;
+    drag = { y: e.clientY, top: body.scrollTop };
+    lyr.adj.touching = true;
+    body.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  body.addEventListener('pointermove', e => {
+    if (!drag || !lyr.adj) return;
+    body.scrollTop = drag.top - (e.clientY - drag.y);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    if (lyr.adj) (lyr.adj.touching = false), (lyr.adj.userAt = performance.now());
+  };
+  body.addEventListener('pointerup', end);
+  body.addEventListener('pointercancel', end);
+  window.addEventListener('resize', () => lyr.adj && placeLyrGuide());
 }
 
 /* ---------------------------------------------------------------------------
@@ -620,6 +811,7 @@ function lyricsMenu() {
     subtitle: lyr.track ? `${lyr.track.title} · ${trackArtist(lyr.track)}` : '',
     items: [
       d?.lines?.length && { icon: '⏱', label: d.synced ? 'Volver a sincronizar' : 'Sincronizar', on: startSync },
+      d?.synced && { icon: '↕️', label: 'Ajustar arrastrando la letra', hint: 'Mientras suena, arrastra hasta que coincida', on: startDragAdjust },
       d?.synced && { icon: '⇆', label: 'Ajustar desfase', on: offsetMenu },
       { icon: '🔎', label: 'Buscar otra versión', hint: 'En LRCLIB, con o sin tiempos', on: searchOtherLyrics },
       { icon: '🌐', label: 'Buscar la letra en internet', hint: 'Para copiarla y pegarla aquí', on: () => searchLyricsWeb(lyr.track) },

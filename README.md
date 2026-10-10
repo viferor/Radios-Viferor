@@ -1,6 +1,18 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.21.0 — Radio de una canción, ajustar la letra arrastrando y carátula → letra
+
+- **📻 Radio de esta canción** (menú ⋯ de cualquier canción, también en el reproductor):
+  crea una cola con música parecida de tu biblioteca: mismo artista, artistas parecidos
+  (según Deezer, vía `/api/similar`), mismo género y época, con más peso para tus
+  favoritas y las más escuchadas, y sin repetir artista seguido. Es una radio sin fin:
+  cuando quedan pocas canciones añade más. Reproducir otra colección la desactiva.
+- **↕️ Ajustar arrastrando** (letra sincronizada): mientras suena, arrastra la letra hasta
+  que la línea junto a la guía ▶ sea la que se oye; el desfase cambia en vivo y se guarda
+  solo. Botones ±0,1 s, «Deshacer» y «Listo»; Atrás también termina el ajuste.
+- Pulsar la **carátula** del reproductor ampliado abre la letra.
+
 ## 1.20.2 — Significado aunque no haya letra
 
 La pestaña 💡 Significado ya no depende de encontrar la letra: si no la hay (o LRCLIB

@@ -742,6 +742,7 @@ async function nextTrack(auto = false) {
   const o = musicOpts();
   const cur = musicState.current;
   if (auto && cur && o.repeat === 'one') return startTrack(cur);
+  if (musicState.radio && musicState.queue.length < 2) await topUpSongRadio();
   let next = musicState.queue.shift();
   if (!next && o.repeat === 'all' && musicState.context.length) {
     musicState.queue = o.shuffle ? shuffled(musicState.context) : [...musicState.context];
@@ -832,6 +833,7 @@ function playCollection(tracks, start = 0, { shuffle = null, how = 'replace', la
     rest = sh ? shuffled(tracks.filter(t => t !== first)) : tracks.slice(tracks.indexOf(first) + 1);
   }
   const before = [...musicState.queue];
+  musicState.radio = null;
   musicState.context = [...tracks];
   musicState.queue = rest;
   playTrackNow(first);
@@ -860,6 +862,170 @@ function queueTracks(tracks, how = 'end', { toast = true } = {}) {
   saveMusicQueue();
   if (!musicState.current) nextTrack(false);
   else if (toast) podToast(how === 'next' ? `${plural(items.length, 'canción', 'canciones')} a continuación` : `${plural(items.length, 'canción añadida', 'canciones añadidas')} a la cola`);
+}
+/* ===========================================================================
+   Radio de una canción: cola con música parecida de tu biblioteca
+   (mismo artista, artistas parecidos según Deezer, género y época)
+=========================================================================== */
+const MUS_SIMILAR_KEY = 'radios_viferor_music_similar_v1';
+function artistParts(t) {
+  const set = new Set();
+  [t.artist, t.albumArtist].forEach(v =>
+    String(v || '')
+      .split(/\s*(?:,|;|&|\/|\bfeat\.?|\bft\.?|\bfeaturing\b|\bcon\b|\bwith\b|\bx\b|\by\b)\s*/i)
+      .map(mNorm)
+      .filter(x => x && x !== mNorm(MUS_UNKNOWN_ARTIST))
+      .forEach(x => set.add(x))
+  );
+  return set;
+}
+function genreParts(t) {
+  return new Set(
+    String(t.genre || '')
+      .split(/\s*[;/,]\s*/)
+      .map(mNorm)
+      .filter(Boolean)
+  );
+}
+async function similarArtistNames(name) {
+  const key = mNorm(name);
+  if (!key || key === mNorm(MUS_UNKNOWN_ARTIST)) return [];
+  const all = lsGet(MUS_SIMILAR_KEY, {});
+  const c = all[key];
+  if (c && Date.now() - c.at < 14 * 86400000) return c.names;
+  try {
+    const ctl = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined;
+    const r = await fetch('/api/similar?artist=' + encodeURIComponent(name), { signal: ctl });
+    if (!r.ok) return c?.names || [];
+    const d = await r.json();
+    const names = (d.artists || []).slice(0, 60);
+    all[key] = { at: Date.now(), names };
+    const keys = Object.keys(all);
+    if (keys.length > 300) keys.sort((a, b) => all[a].at - all[b].at).slice(0, keys.length - 300).forEach(k => delete all[k]);
+    lsSet(MUS_SIMILAR_KEY, all);
+    return names;
+  } catch {
+    return c?.names || [];
+  }
+}
+async function buildSongRadio(seed, { exclude = new Set(), count = 50 } = {}) {
+  const seedArtists = artistParts(seed);
+  const seedGenres = genreParts(seed);
+  const related = new Map();
+  (await similarArtistNames(trackArtist(seed))).forEach((n, i) => {
+    const k = mNorm(n);
+    if (!related.has(k)) related.set(k, i);
+  });
+  const favArtists = new Set(musicFavs().artists || []);
+  const favIds = new Set((musicFavs().tracks || []).map(x => x.id));
+  const scored = [];
+  for (const t of musicState.tracks) {
+    if (t.id === seed.id || exclude.has(t.id)) continue;
+    const ta = artistParts(t);
+    const tg = genreParts(t);
+    let s = Math.random() * 14,
+      rel = false;
+    if ([...ta].some(a => seedArtists.has(a))) (s += 32), (rel = true);
+    else {
+      let best = Infinity;
+      ta.forEach(a => related.has(a) && (best = Math.min(best, related.get(a))));
+      if (best < Infinity) (s += 30 - Math.min(best, 30) * 0.5), (rel = true);
+    }
+    if (seedGenres.size && tg.size) {
+      if ([...tg].some(g => seedGenres.has(g))) (s += 22), (rel = true);
+      else s -= 6;
+    }
+    if (seed.year && t.year) {
+      const dy = Math.abs(seed.year - t.year);
+      s += dy <= 2 ? 8 : dy <= 5 ? 5 : dy <= 10 ? 1 : -4;
+      if (dy <= 3 && !seedGenres.size) rel = true;
+    }
+    if (seed.albumKey && t.albumKey === seed.albumKey) s += 6;
+    if (favIds.has(t.id)) s += 8;
+    if (favArtists.has(mNorm(trackArtist(t)))) s += 4;
+    s += Math.min(6, Math.log2(1 + trackPlays(t)) * 2);
+    if (!rel) s -= 25;
+    scored.push({ t, s, a: mNorm(trackArtist(t)) });
+  }
+  scored.sort((x, y) => y.s - x.s);
+  // Variedad: pocas del mismo artista y del mismo álbum.
+  const seedA = mNorm(trackArtist(seed));
+  const perArtist = new Map(),
+    perAlbum = new Map(),
+    picked = [];
+  const albumCap = Math.max(3, Math.round(count / 10));
+  const taken = new Set();
+  for (const x of scored) {
+    if (picked.length >= count || x.s <= 0) break;
+    const na = perArtist.get(x.a) || 0,
+      nb = perAlbum.get(x.t.albumKey) || 0;
+    if (na >= (x.a === seedA ? Math.max(4, Math.round(count / 8)) : Math.max(3, Math.round(count / 16))) || nb >= albumCap) continue;
+    perArtist.set(x.a, na + 1);
+    perAlbum.set(x.t.albumKey, nb + 1);
+    picked.push(x);
+    taken.add(x.t.id);
+  }
+  // Biblioteca pequeña: se completa con las más parecidas aunque se repita artista,
+  // y si aun así quedan pocas, con lo mejor del resto.
+  const minLen = Math.min(count, 15);
+  for (const x of scored) {
+    if (picked.length >= count || (x.s <= 0 && picked.length >= minLen)) break;
+    if (!taken.has(x.t.id)) picked.push(x), taken.add(x.t.id);
+  }
+  // Orden: que no suenen seguidas dos del mismo artista si se puede evitar.
+  const out = [];
+  let last = seedA;
+  while (picked.length) {
+    let k = picked.findIndex((x, i) => i < 6 && x.a !== last);
+    if (k < 0) k = 0;
+    const [x] = picked.splice(k, 1);
+    out.push(x.t);
+    last = x.a;
+  }
+  return out;
+}
+async function startSongRadio(seed) {
+  if (!seed) return;
+  if (musicState.tracks.length < 2) return podToast('Hace falta más música en la biblioteca');
+  podToast(`📻 Creando la radio de «${seed.title}»…`, { ms: 8000 });
+  const list = await buildSongRadio(seed);
+  if (!list.length) return podToast('No hay canciones parecidas en tu biblioteca');
+  const before = [...musicState.queue];
+  musicState.context = [seed, ...list];
+  musicState.queue = list;
+  musicState.radio = { seed: seed.id, title: seed.title };
+  if (musicState.current?.id === seed.id) {
+    saveMusicQueue();
+    if (musicAudio().paused) toggleMusicPlay();
+  } else playTrackNow(seed);
+  podToast(`📻 Radio de «${seed.title}»: ${plural(list.length, 'canción', 'canciones')} parecidas`, {
+    action: 'Deshacer',
+    onAction: () => {
+      musicState.queue = before;
+      musicState.radio = null;
+      saveMusicQueue();
+    }
+  });
+}
+// Radio sin fin: cuando quedan pocas en la cola se añaden más parecidas.
+let musRadioBusy = false;
+async function topUpSongRadio() {
+  const r = musicState.radio;
+  if (!r || musRadioBusy || musicState.queue.length > 3) return;
+  const seed = musicState.byId.get(r.seed);
+  if (!seed) return (musicState.radio = null);
+  musRadioBusy = true;
+  try {
+    const exclude = new Set([seed.id, musicState.current?.id, ...musicState.queue.map(t => t.id), ...musicState.history.slice(-80).map(t => t?.id)]);
+    let more = await buildSongRadio(seed, { exclude, count: 20 });
+    if (!more.length) more = await buildSongRadio(seed, { exclude: new Set([musicState.current?.id, ...musicState.queue.map(t => t.id)]), count: 20 });
+    if (musicState.radio !== r || !more.length) return;
+    musicState.queue.push(...more);
+    musicState.context.push(...more);
+    saveMusicQueue();
+  } finally {
+    musRadioBusy = false;
+  }
 }
 function toggleMusicShuffle() {
   const on = !musicOpts().shuffle;
@@ -1766,6 +1932,7 @@ function openTrackMenu(t, { extra = [] } = {}) {
       },
       { icon: isMusicFav('tracks', t.id) ? '★' : '☆', label: isMusicFav('tracks', t.id) ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleMusicFav('tracks', t.id, t.title, t) },
       { icon: '📃', label: 'Añadir a una lista…', on: () => chooseMusicListFor([t]) },
+      { icon: '📻', label: 'Radio de esta canción', hint: 'Una cola con música parecida de tu biblioteca', on: () => startSongRadio(t) },
       { icon: '🎤', label: 'Letra', hint: 'Ver, sincronizar, traducir y su significado', on: () => window.openTrackLyrics?.(t) },
       t.albumKey && musicState.albums.has(t.albumKey) && { icon: '💿', label: `Ir al álbum «${musicState.albums.get(t.albumKey).name}»`, on: () => openMusicScreen('album:' + t.albumKey) },
       ar && { icon: '🎤', label: `Ir a ${ar.name}`, on: () => openMusicScreen('artist:' + ar.key) },
@@ -2366,6 +2533,7 @@ function initMusic() {
     // Fundido entre canciones o precarga de la siguiente (sin pausas).
     const rem = a.duration - a.currentTime;
     const eng = musicEngineOpts();
+    if (musicState.radio && musicState.queue.length < 4 && !musRadioBusy) topUpSongRadio();
     if (!a.paused && Number.isFinite(rem) && !musicState.xf) {
       const nx = peekNextTrack();
       if (nx) {
@@ -2449,6 +2617,14 @@ function initMusic() {
     c.scrollTop = sc;
   });
   $m('musExpMore').onclick = () => musicState.current && openTrackMenu(musicState.current);
+  // Pulsar la carátula del reproductor abre la letra.
+  const expArt = $m('musExpArt');
+  expArt.setAttribute('role', 'button');
+  expArt.tabIndex = 0;
+  expArt.title = 'Ver la letra';
+  expArt.setAttribute('aria-label', 'Ver la letra');
+  expArt.onclick = () => musicState.current && window.openLyrics?.(musicState.current);
+  expArt.onkeydown = e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), expArt.click());
   $m('musExpMute').onclick = () => setMusicVolume(musUserVolume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
   $m('musExpVolume').addEventListener('input', e => setMusicVolume(e.target.value));
   $m('musRange').addEventListener('input', e => {

@@ -35,7 +35,7 @@
   },
   "rewrites": [
     {
-      "source": "/api/:fn(lyrics|translate|song-meaning|lyrics-publish|autoeq)",
+      "source": "/api/:fn(lyrics|translate|song-meaning|lyrics-publish|autoeq|similar)",
       "destination": "/api/music?fn=:fn"
     }
   ]
