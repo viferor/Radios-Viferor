@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11530" />
+<link rel="stylesheet" href="styles.css?v=11600" />
 </head>
 <body>
 <header class="app-header">
@@ -85,7 +85,7 @@
   </div>
   <div class="pod-mine-menu pod-mine-panel" id="podMineMenu" hidden>
     <label class="pod-mine-sort"><span>Ordenar suscripciones</span><select id="podMineSort" aria-label="Ordenar suscripciones"><option value="name">Nombre A-Z</option><option value="name-desc">Nombre Z-A</option><option value="listened">Más escuchados</option><option value="recent">Más recientes</option><option value="oldest">Más antiguos</option><option value="favs">Favoritos primero</option><option value="category">Por categoría</option></select></label>
-    <div class="pod-mine-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button></div>
+    <div class="pod-mine-modes"><button id="podLatestAll" type="button">🆕 Últimos de todas</button><button id="podMixRandom" type="button">🔀 Mezclar todas</button><button id="podContinue" type="button">▶️ Continuar</button><button id="podPopular" type="button">🔥 Populares</button><button id="podQueueOpen" type="button">☰ Cola</button><button id="podListsOpen" type="button">📃 Listas</button></div>
   </div>
   <button id="podSearchOpen" class="pod-search-open" type="button" aria-label="Añadir o buscar podcasts" title="Añadir podcast">＋</button>
   <input id="podcastFile" type="file" accept=".opml,.xml,text/xml,application/xml" hidden>
@@ -155,6 +155,8 @@
         <button id="podExpNext" type="button" aria-label="Siguiente">⏭</button>
       </div>
       <div class="pod-expanded-volume volume-control" aria-label="Volumen del podcast"><button id="podExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="podExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="podExpVolumeValue">80%</output></div>
+      <div class="pod-exp-extra"><button id="podExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="podExpQueueCount">0</b></button><button id="podExpSpeed" type="button" aria-label="Velocidad de reproducción">1×</button><button id="podExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
+      <p class="pod-up-next" id="podUpNext" hidden></p>
     </div>
   </div>
 </section>
@@ -197,12 +199,13 @@
   </div>
 </div>
 
-<script src="version.js?v=11530"></script>
+<script src="version.js?v=11600"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11530"></script>
-<script src="buscador-radios.js?v=11530"></script>
-<script src="app.js?v=11530"></script>
-<script src="podcasts.js?v=11530"></script>
-<script src="diagnostics.js?v=11530"></script>
+<script src="stations-data.js?v=11600"></script>
+<script src="buscador-radios.js?v=11600"></script>
+<script src="app.js?v=11600"></script>
+<script src="podcasts.js?v=11600"></script>
+<script src="podcast-listas.js?v=11600"></script>
+<script src="diagnostics.js?v=11600"></script>
 </body>
 </html>

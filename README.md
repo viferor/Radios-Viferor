@@ -1,6 +1,37 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.16.0 — Cola y listas de reproducción de podcasts
+
+**Cola.** Lo que suena después del episodio actual. Se guarda al cerrar la app y se ve en
+☰ Cola (portada, «Mis podcasts» o el reproductor ampliado). Se reordena arrastrando ⠿, se
+mezcla, se vacía, se guarda como lista y se quitan los escuchados (todo con «Deshacer»).
+Opciones: repetir (episodio o cola entera), pasar al siguiente solo, saltar escuchados y, al
+acabar la cola, seguir con novedades de tus suscripciones. ⏮ vuelve al principio si llevas
+más de 10 s; si no, al episodio anterior del historial.
+
+**Episodios.** Cada episodio tiene «＋ Cola» y un menú ⋯: reproducir ahora, a continuación,
+al final de la cola, añadir a una lista, marcar como escuchado o no, ir al podcast. En cada
+podcast, «☰ Cola y listas…» añade de golpe los sin escuchar (del más antiguo al más nuevo) o
+crea una lista inteligente solo con ese podcast. «Últimos de todas», «Mezclar» y «Continuar»
+ya no borran tu cola: si tienes una, preguntan si sustituirla, ponerlos a continuación o al
+final.
+
+**Listas.** Normales (eliges los episodios y el orden) e inteligentes (reglas: qué podcasts
+—suscripciones, favoritos, una categoría o los que elijas—, sin escuchar / sin terminar /
+empezados, fecha, duración mínima y máxima, cuántos por podcast, máximo y orden, incluido
+«alternando podcasts»). Plantillas: novedades de la semana, cortos, a medias, lo nuevo de
+favoritos, mezcla sorpresa. Se reproducen, se ponen a continuación o al final, se duplican,
+se ordenan, se exportan e importan (JSON) y una inteligente se puede fijar como lista normal.
+Las copias de seguridad completas ya las incluyen.
+
+**Reproductor.** Velocidad (0,75× a 2,5×, se recuerda) y temporizador para dormir (minutos o
+al terminar el episodio). Muestra cuál es el siguiente de la cola.
+
+Código: `podcast-listas.js` (pantallas, listas, menús) y el núcleo de la cola en `podcasts.js`.
+Claves nuevas: `radios_viferor_podcast_queue_v2`, `…_history_v1`, `…_queue_opts_v1`,
+`…_playlists_v1`, `radios_viferor_podcast_speed`.
+
 ## 1.7.0 — Correcciones generales
 
 **Versión.** Para publicar una versión nueva de la web: `node scripts/version.mjs 1.7.3 1730`
