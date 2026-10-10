@@ -392,19 +392,23 @@ function renderLyrics() {
   lyr.cur = -1;
   if (lyr.sync) return renderSyncEditor(body, foot);
   if (lyr.loading) return body.append(musEl('div', 'lyr-msg', '<div class="lyr-spin"></div>Buscando la letra…'));
+  // El significado no depende de tener la letra: con título y artista basta.
+  if (lyr.mode === 'meaning' && (lyr.error || !lyr.data?.lines?.length)) {
+    body.append(renderMeaningCard());
+    body.append(musEl('p', 'lyr-ai-note', lyr.data?.instrumental ? 'Es una pieza instrumental: la explicación se basa en lo que se sabe de ella.' : 'Sin letra: la explicación se basa en el título, el artista y lo que se sabe de la canción.'));
+    return;
+  }
   if (lyr.error) {
     body.append(musEl('div', 'lyr-msg', `⚠️ ${pEsc(lyr.error)}`));
-    return body.append(lyrButtons([['🔄 Reintentar', () => loadLyricsFor(t, { force: true }), 'primary']]));
+    return body.append(lyrButtons([['🔄 Reintentar', () => loadLyricsFor(t, { force: true }), 'primary'], ['💡 Ver el significado', () => setLyricsMode('meaning')]]));
   }
   const d = lyr.data;
   if (lyr.mode === 'meaning') {
-    body.append(renderMeaningCard());
-    if (!d?.lines?.length) body.append(musEl('p', 'lyr-ai-note', 'Sin letra, la explicación se basa solo en lo que se sabe de la canción.'));
-    return;
+    return body.append(renderMeaningCard());
   }
   if (d?.instrumental) {
     body.append(musEl('div', 'lyr-msg', '🎼 Es una pieza instrumental: no tiene letra.'));
-    return body.append(lyrButtons([['🔎 Buscar otra versión', searchOtherLyrics]]));
+    return body.append(lyrButtons([['🔎 Buscar otra versión', searchOtherLyrics], ['💡 Ver el significado', () => setLyricsMode('meaning')]]));
   }
   if (!d || !d.lines.length) {
     body.append(musEl('div', 'lyr-msg', 'No se ha encontrado la letra de esta canción.'));
@@ -412,7 +416,8 @@ function renderLyrics() {
       lyrButtons([
         ['🔎 Buscar otra versión', searchOtherLyrics, 'primary'],
         ['🌐 Buscar en internet', () => searchLyricsWeb(t)],
-        ['✏️ Escribir o pegar la letra', editLyrics]
+        ['✏️ Escribir o pegar la letra', editLyrics],
+        ['💡 Ver el significado', () => setLyricsMode('meaning')]
       ])
     );
   }

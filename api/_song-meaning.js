@@ -14,7 +14,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
 
 export const SYSTEM_PROMPT = `Eres un periodista musical que explica canciones en español de España, con un tono cercano y claro.
-Te paso los datos de una canción y su letra. Explica su significado con este formato (Markdown sencillo, sin tablas):
+Te paso los datos de una canción y, si la tengo, su letra. Explica su significado con este formato (Markdown sencillo, sin tablas):
 
 ### En pocas palabras
 Dos o tres frases con la idea central.
@@ -28,12 +28,13 @@ Los temas principales y las metáforas o imágenes más importantes, explicadas.
 ### Contexto
 Álbum, época, circunstancias o recepción, solo si lo sabes con seguridad.
 
-Reglas: no copies la letra; como mucho menciona fragmentos muy breves (menos de 8 palabras). Si la canción no te suena, basa el análisis solo en la letra y avísalo al principio. Entre 250 y 450 palabras.`;
+Reglas: no copies la letra; como mucho menciona fragmentos muy breves (menos de 8 palabras). Si no te paso la letra, explica la canción a partir del título, el artista y lo que sepas de ella (sin reconstruir ni citar la letra). Si la canción no te suena: con letra, basa el análisis en ella y avísalo al principio; sin letra, dilo claramente en dos o tres frases, cuenta solo lo que sepas con seguridad del artista o del álbum y no inventes nada. Entre 250 y 450 palabras.`;
 
 export function buildUserPrompt({ title, artist, album, year, lyrics }) {
   const meta = [`Título: ${title}`, artist && `Artista: ${artist}`, album && `Álbum: ${album}`, year && `Año: ${year}`].filter(Boolean).join('\n');
-  const text = String(lyrics || '').slice(0, 4000);
-  return `${meta}\n\nLetra (para tu análisis, no la reproduzcas):\n"""\n${text || '(sin letra disponible)'}\n"""`;
+  const text = String(lyrics || '').trim().slice(0, 4000);
+  if (!text) return `${meta}\n\nNo tengo la letra de esta canción: explícala por su título, su artista y lo que se sepa de ella.`;
+  return `${meta}\n\nLetra (para tu análisis, no la reproduzcas):\n"""\n${text}\n"""`;
 }
 
 async function callGemini(key, prompt, model = GEMINI_MODEL) {

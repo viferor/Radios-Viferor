@@ -1,6 +1,13 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.20.2 — Significado aunque no haya letra
+
+La pestaña 💡 Significado ya no depende de encontrar la letra: si no la hay (o LRCLIB
+falla), la IA explica la canción a partir del título, el artista y el álbum, y avisa si
+no la conoce en vez de inventar. Desde «No se ha encontrado la letra» hay un botón
+«💡 Ver el significado».
+
 ## 1.20.1 — Letras: LRCLIB más fiable
 
 Cuando LRCLIB tardaba o devolvía un error puntual, la búsqueda de letra fallaba con
