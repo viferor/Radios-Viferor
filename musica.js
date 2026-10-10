@@ -1958,6 +1958,7 @@ function openTrackMenu(t, { extra = [] } = {}) {
       ar && { icon: '🎤', label: `Ir a ${ar.name}`, on: () => openMusicScreen('artist:' + ar.key) },
       t.folder && { icon: '📁', label: 'Ir a la carpeta', hint: t.folder, on: () => openMusicScreen('folder:' + t.folder) },
       { icon: 'ℹ️', label: 'Información', on: () => trackInfo(t) },
+      { icon: '✏️', label: 'Editar nombre y etiquetas…', hint: canEditFiles() ? 'Nombre del archivo e ID3 (título, artista, álbum…)' : 'Solo en la app Android', on: () => editTrackFlow(t) },
       { icon: '🗑', label: 'Eliminar…', hint: 'Del móvil o solo de la biblioteca', on: () => deleteTracksFlow([t]) },
       ...(extra.length ? [{ sep: true }, ...extra] : [])
     ]
@@ -2368,6 +2369,154 @@ function removeListDups(l) {
   l.updatedAt = Date.now();
   saveMusicLists();
   podToast(`${plural(idx.size, 'repetida quitada', 'repetidas quitadas')} de «${l.name}»`, { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+}
+
+/* ---------------------------------------------------------------------------
+   Editar el nombre del archivo y las etiquetas ID3 (app Android 1.13+)
+--------------------------------------------------------------------------- */
+const MUS_TAG_FIELDS = [
+  ['title', 'Título'],
+  ['artist', 'Artista'],
+  ['album', 'Álbum'],
+  ['albumArtist', 'Artista del álbum'],
+  ['track', 'Pista', 'short'],
+  ['disc', 'Disco', 'short'],
+  ['year', 'Año', 'short'],
+  ['genre', 'Género']
+];
+function canEditFiles() {
+  return musicState.source === 'android' && typeof window.Android?.editMusicFile === 'function';
+}
+function trackExt(t) {
+  return (String(t.file || '').match(/\.[a-z0-9]{1,5}$/i) || [''])[0];
+}
+function trackTagValues(t) {
+  return { title: t.title || '', artist: t.artist || '', album: t.album || '', albumArtist: t.albumArtist || '', track: t.track ? String(t.track) : '', disc: t.disc ? String(t.disc) : '', year: t.year ? String(t.year) : '', genre: t.genre || '' };
+}
+const cleanFileName = v =>
+  String(v || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+function editTrackFlow(t) {
+  if (!t) return;
+  const ext = trackExt(t);
+  const base = String(t.file || '').slice(0, ext ? -ext.length : undefined);
+  const mp3 = /^\.mp3$/i.test(ext);
+  const can = canEditFiles();
+  const v = trackTagValues(t);
+  const form = document.createElement('form');
+  form.className = 'pod-sheet-form mus-edit';
+  form.innerHTML = `
+    ${can ? '' : `<p class="mus-hint">⚠️ ${musicState.source === 'android' ? 'Para cambiar el archivo hace falta la última versión de la app Android.' : 'Cambiar el archivo solo se puede en la app Android.'}</p>`}
+    <label><span>Nombre del archivo</span><div class="mus-edit-file"><input type="text" name="file" value="${pEsc(base)}" maxlength="190" autocomplete="off" spellcheck="false"><b>${pEsc(ext)}</b></div></label>
+    <div class="mus-edit-tools"><button type="button" data-do="fromTags">↓ Nombre desde las etiquetas</button><button type="button" data-do="fromFile">↑ Etiquetas desde el nombre</button></div>
+    <fieldset class="mus-edit-tags"${mp3 ? '' : ' disabled'}><legend>Etiquetas ID3 ${mp3 ? '' : '· solo en MP3'}</legend>
+      ${MUS_TAG_FIELDS.map(([k, label, cls]) => `<label class="${cls || ''}"><span>${label}</span><input type="text" name="${k}" value="${pEsc(v[k])}" maxlength="${k === 'year' ? 10 : k === 'track' || k === 'disc' ? 7 : 200}" autocomplete="off" ${k === 'track' || k === 'disc' || k === 'year' ? 'inputmode="numeric"' : ''}></label>`).join('')}
+    </fieldset>
+    <button type="submit" class="pod-sheet-ok"${can ? '' : ' disabled'}>💾 Guardar en el archivo</button>`;
+  const f = name => form.elements[name];
+  form.querySelector('[data-do=fromTags]').onclick = () => {
+    const a = f('artist').value.trim(),
+      ti = f('title').value.trim(),
+      n = parseInt(f('track').value, 10);
+    const name = [n > 0 ? String(n).padStart(2, '0') : '', [a, ti].filter(Boolean).join(' - ')].filter(Boolean).join(' ');
+    if (name) f('file').value = cleanFileName(name);
+  };
+  form.querySelector('[data-do=fromFile]').onclick = () => {
+    if (!mp3) return podToast('Las etiquetas solo se pueden cambiar en MP3');
+    let s2 = f('file').value.trim();
+    const m = s2.match(/^(\d{1,3})\s*[-._)]?\s+(.*)$/);
+    if (m) {
+      f('track').value = String(Number(m[1]));
+      s2 = m[2];
+    }
+    const parts = s2.split(/\s+[-–—]\s+/);
+    if (parts.length >= 2) {
+      f('artist').value = parts[0].trim();
+      f('title').value = parts.slice(1).join(' - ').trim();
+    } else f('title').value = s2;
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (!can) return;
+    const patch = {};
+    const nf = cleanFileName(f('file').value);
+    if (!nf) return f('file').focus();
+    if (nf !== base) patch.file = nf + ext;
+    if (mp3) {
+      const tags = {};
+      MUS_TAG_FIELDS.forEach(([k]) => {
+        const val = f(k).value.trim();
+        if (val !== v[k]) tags[k] = val;
+      });
+      if (tags.year && !/^\d{4}/.test(tags.year)) return podToast('El año tiene que empezar por 4 cifras'), f('year').focus();
+      if (Object.keys(tags).length) patch.tags = tags;
+    }
+    if (!patch.file && !patch.tags) return podSheetClose(false);
+    podSheetClose(false);
+    await saveTrackEdit(t, patch);
+  };
+  podSheet({ title: '✏️ Editar canción', subtitle: [t.folder, t.file].filter(Boolean).join('/'), body: form });
+}
+const musEditWaits = new Map();
+window.onAndroidMusicEdited = (reqId, res) => {
+  const w = musEditWaits.get(reqId);
+  if (!w) return;
+  musEditWaits.delete(reqId);
+  w(res || {});
+};
+async function saveTrackEdit(t, patch) {
+  // Si suena, se suelta mientras se reescribe el archivo y luego sigue donde iba.
+  const playingThis = musicState.current?.id === t.id;
+  const a = musicAudio();
+  const wasPlaying = playingThis && !a.paused;
+  const pos = playingThis ? a.currentTime || 0 : 0;
+  if (playingThis && patch.tags) {
+    try {
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+    } catch {}
+  }
+  podToast('Guardando en el archivo…', { ms: 20000 });
+  const reqId = 'e' + Date.now();
+  const res = await new Promise(resolve => {
+    musEditWaits.set(reqId, resolve);
+    window.Android.editMusicFile(reqId, t.id.replace(/^a/, ''), JSON.stringify(patch));
+    setTimeout(() => musEditWaits.has(reqId) && (musEditWaits.delete(reqId), resolve({ ok: false, error: 'timeout' })), 10 * 60 * 1000);
+  });
+  if (res.ok || res.tags) {
+    if (patch.tags && t.src) t.src = t.src.replace(/\?.*$/, '') + '?v=' + Date.now(); // que no use la copia en caché
+    if (patch.tags) {
+      const n = k => parseInt(patch.tags[k], 10) || 0;
+      Object.entries(patch.tags).forEach(([k, val]) => {
+        if (k === 'track') t.track = n('track');
+        else if (k === 'disc') t.disc = n('disc');
+        else if (k === 'year') t.year = n('year');
+        else t[k] = val;
+      });
+      if (!t.title) t.title = stripExt(t.file) || 'Sin título';
+    }
+    if (res.file) t.file = res.file;
+    applyFolderFilter();
+    if (playingThis) {
+      updateMusicNowUI();
+      if (patch.tags) {
+        await prepareTrack(t, pos);
+        if (wasPlaying) toggleMusicPlay();
+      }
+    }
+  } else if (playingThis && patch.tags) {
+    await prepareTrack(t, pos);
+    if (wasPlaying) toggleMusicPlay();
+  }
+  const err = res.error;
+  if (res.ok) podToast(patch.file && patch.tags ? 'Nombre y etiquetas guardados' : patch.file ? 'Nombre del archivo cambiado' : 'Etiquetas guardadas');
+  else if (err === 'cancelled') podToast('No se ha cambiado nada');
+  else if (err === 'permission') podToast('Android no ha dado permiso para modificar el archivo');
+  else if (err === 'timeout') podToast('No hubo respuesta al guardar');
+  else podToast((res.tags ? 'Etiquetas guardadas, pero el nombre no: ' : 'No se pudo guardar: ') + (err || 'error'));
 }
 
 /* ---------------------------------------------------------------------------

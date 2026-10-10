@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     private String pendingSaveMime;
     private MusicDeleter musicDeleter;
     private AudioOutputWatcher audioOutput;
+    private MusicEditor musicEditor;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,6 +66,7 @@ public class MainActivity extends Activity {
         musicDeleter = new MusicDeleter(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
         audioOutput = new AudioOutputWatcher(this, js -> { if (webView != null && bridgeTrusted) webView.post(() -> webView.evaluateJavascript(js, null)); });
         audioOutput.start();
+        musicEditor = new MusicEditor(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
         setupWebView(START_URL);
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
@@ -500,6 +502,13 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** Cambia el nombre del archivo y/o las etiquetas ID3: json {file, tags:{title, artist…}}. */
+        @JavascriptInterface
+        public void editMusicFile(String reqId, String id, String json) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> musicEditor.start(reqId, id, json));
+        }
+
         /** Por dónde suena ahora: JSON {type, name} (speaker | wired | usb | bluetooth | other). */
         @JavascriptInterface
         public String audioOutput() {
@@ -654,6 +663,7 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (musicDeleter != null && musicDeleter.onRequestPermissionsResult(requestCode, grantResults)) return;
+        if (musicEditor != null && musicEditor.onRequestPermissionsResult(requestCode, grantResults)) return;
         if (requestCode == MUSIC_PERMISSION_REQUEST) {
             notifyWebMusicPermission(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
             return;
@@ -670,6 +680,7 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (musicDeleter != null && musicDeleter.onActivityResult(requestCode, resultCode)) return;
+        if (musicEditor != null && musicEditor.onActivityResult(requestCode, resultCode)) return;
         if (requestCode == FILE_SAVE_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 try (OutputStream out = getContentResolver().openOutputStream(data.getData())) {

@@ -1,6 +1,21 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.26.0 · APK 1.13.0 — Editar nombre del archivo y etiquetas ID3
+
+Menú ⋯ de una canción → **✏️ Editar nombre y etiquetas…**: cambia el nombre del archivo
+(la extensión se conserva) y, en MP3, las etiquetas ID3 (título, artista, álbum, artista del
+álbum, pista, disco, año y género). Ayudas: «Etiquetas desde el nombre» (`07 - Artista -
+Título`) y «Nombre desde las etiquetas». Solo se envía lo que cambia.
+
+En la APK (`MusicEditor` + `Id3Editor`): Android 11+ pide permiso para modificar el archivo
+(`createWriteRequest`); Android 10 con `RecoverableSecurityException`; 9 o anterior con
+`WRITE_EXTERNAL_STORAGE`. Las etiquetas se reescriben conservando todo lo demás (carátula,
+letra, comentarios…) y la versión ID3 del archivo (2.3 en UTF-16 o 2.4 en UTF-8); si la nueva
+cabe en el hueco de la antigua se escribe encima y, si no, se reescribe el archivo copiando el
+audio tal cual. La ID3v1 del final, si existe, se pone al día. Después MediaStore vuelve a
+leer el archivo. Si la canción suena, se suelta mientras se guarda y sigue donde iba.
+
 ## 1.25.0 · APK 1.12.0 — Sonido según por dónde suena
 
 En 🎚️ Sonido, **🔀 Según por dónde suena** (activado por defecto en la app Android 1.12+):
