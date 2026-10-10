@@ -355,14 +355,15 @@ async function scanFolderHandle(dir) {
     musicState.loading = false;
   }
 }
-async function trackSrc(t) {
+async function trackSrc(t, deck = musicState.deck) {
   if (t.src) return t.src;
   const h = musicState.files.get(t.id);
   if (!h) return '';
   const f = h instanceof File ? h : await h.getFile();
-  if (musicState._objUrl) URL.revokeObjectURL(musicState._objUrl);
-  musicState._objUrl = URL.createObjectURL(f);
-  return musicState._objUrl;
+  musicState._objUrls = musicState._objUrls || [];
+  if (musicState._objUrls[deck]) URL.revokeObjectURL(musicState._objUrls[deck]);
+  musicState._objUrls[deck] = URL.createObjectURL(f);
+  return musicState._objUrls[deck];
 }
 
 /* ===========================================================================
@@ -462,8 +463,143 @@ function setMusicOpt(k, v) {
   updateMusicPlayerUI();
   document.dispatchEvent(new CustomEvent('music:queue'));
 }
+/* ---- Dos platinas: la que suena y la siguiente (fundidos y sin pausas) ---- */
+const musDecks = [];
+musicState.deck = 0;
 function musicAudio() {
-  return $m('musicAudio');
+  return musDecks[musicState.deck] || $m('musicAudio');
+}
+function otherDeckIndex() {
+  return 1 - musicState.deck;
+}
+function initMusicDecks() {
+  const a = $m('musicAudio');
+  if (!a || musDecks.length) return;
+  const b = document.createElement('audio');
+  b.id = 'musicAudio2';
+  b.preload = 'none';
+  a.after(b);
+  musDecks.push(a, b);
+}
+// Opciones del motor (las guarda ecualizador.js; aquí solo se leen).
+function musicEngineOpts() {
+  return { crossfade: 0, gapless: true, fadePause: true, ...(window.musicFx?.engineOpts?.() || {}) };
+}
+// Volumen del usuario y nivel de cada platina (0..1) para fundidos.
+let musUserVolume = 0.8;
+const musDeckLevel = [1, 1];
+const musDeckAnim = [0, 0];
+function applyDeckVolume(i) {
+  const el = musDecks[i];
+  if (!el) return;
+  if (window.musicFx?.active) el.volume = 1;
+  else el.volume = Math.max(0, Math.min(1, musUserVolume * musDeckLevel[i]));
+}
+function deckLevel(i, level, secs = 0) {
+  clearInterval(musDeckAnim[i]);
+  if (window.musicFx?.active) {
+    musDeckLevel[i] = level;
+    window.musicFx.setDeckGain(i, level, secs);
+    applyDeckVolume(i);
+    return;
+  }
+  if (!secs) {
+    musDeckLevel[i] = level;
+    return applyDeckVolume(i);
+  }
+  const from = musDeckLevel[i],
+    t0 = performance.now();
+  musDeckAnim[i] = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / (secs * 1000));
+    musDeckLevel[i] = from + (level - from) * k;
+    applyDeckVolume(i);
+    if (k >= 1) clearInterval(musDeckAnim[i]);
+  }, 30);
+}
+// Cancela un fundido o una precarga (al cambiar de canción a mano, saltar, etc.).
+function stopOtherDeck() {
+  const i = otherDeckIndex();
+  const el = musDecks[i];
+  if (musicState.xf) {
+    clearTimeout(musicState.xf.timer);
+    musicState.xf = null;
+  }
+  if (el && !el.paused) el.pause();
+  musicState.preload = null;
+  deckLevel(i, 1, 0);
+  deckLevel(musicState.deck, 1, 0);
+}
+function peekNextTrack() {
+  if (musicOpts().repeat === 'one' || musSleep.end) return null;
+  return musicState.queue[0] || null;
+}
+async function preloadNext(nx) {
+  const i = otherDeckIndex();
+  const el = musDecks[i];
+  if (!el || musicState.preload?.id === nx.id) return;
+  musicState.preload = { id: nx.id, deck: i, ready: false };
+  try {
+    const src = await trackSrc(nx, i);
+    if (musicState.preload?.id !== nx.id) return;
+    el.preload = 'auto';
+    el.src = src;
+    el.load();
+    musicState.preload.ready = true;
+  } catch {
+    musicState.preload = null;
+  }
+}
+// La siguiente canción pasa a sonar en la otra platina (fundido o sin pausa).
+async function switchToOtherDeck(nx, secs) {
+  const from = musicState.deck,
+    to = otherDeckIndex();
+  const b = musDecks[to];
+  if (!b) return false;
+  try {
+    if (!(musicState.preload?.id === nx.id && musicState.preload.ready)) {
+      b.src = await trackSrc(nx, to);
+      b.load();
+    }
+    b.currentTime = 0;
+    deckLevel(to, secs ? 0 : 1, 0);
+    window.musicFx?.resume?.();
+    await b.play();
+  } catch (e) {
+    musicState.preload = null;
+    return false;
+  }
+  const cur = musicState.current;
+  if (cur && !musicCounted) countMusicPlay(cur);
+  if (musicState.queue[0]?.id === nx.id) musicState.queue.shift();
+  else musicState.queue = musicState.queue.filter(x => x.id !== nx.id);
+  if (cur && cur.id !== nx.id) pushMusicHistory(cur);
+  musicState.deck = to;
+  musicState.current = nx;
+  musicState.preload = null;
+  musicCounted = false;
+  musicErrors = 0;
+  if (secs) {
+    deckLevel(to, 1, secs);
+    deckLevel(from, 0, secs);
+    musicState.xf = {
+      from,
+      timer: setTimeout(() => {
+        const f = musDecks[from];
+        if (f && !f.paused) f.pause();
+        deckLevel(from, 1, 0);
+        musicState.xf = null;
+      }, secs * 1000 + 150)
+    };
+  } else {
+    const f = musDecks[from];
+    if (f && !f.paused) f.pause();
+  }
+  saveMusicQueue();
+  saveMusicResume();
+  updateMusicNowUI();
+  syncMusicAndroid(true);
+  updateMediaSession();
+  return true;
 }
 let musicUserPaused = false,
   musicCounted = false,
@@ -552,6 +688,8 @@ async function prepareTrack(t, pos = 0) {
 async function startTrack(t, { pos = 0 } = {}) {
   const a = musicAudio();
   if (!a || !t) return;
+  stopOtherDeck();
+  window.musicFx?.resume?.();
   pauseOtherAudio();
   musicState.current = t;
   musicCounted = false;
@@ -563,6 +701,7 @@ async function startTrack(t, { pos = 0 } = {}) {
     src = await trackSrc(t);
   } catch {}
   if (!src) return musicTrackFailed(t);
+  if (musicState.current !== t) return; // otra canción pedida mientras tanto
   a.src = src;
   a.onloadedmetadata = () => {
     if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
@@ -619,6 +758,7 @@ async function nextTrack(auto = false) {
   return startTrack(next);
 }
 function prevTrack() {
+  stopOtherDeck();
   const a = musicAudio();
   const cur = musicState.current;
   if (a && cur && a.currentTime > 3) {
@@ -645,15 +785,33 @@ function toggleMusicPlay() {
     else if (musicState.tracks.length) playCollection(musicState.tracks, 0, { shuffle: true });
     return;
   }
+  const fade = musicEngineOpts().fadePause;
   if (a.paused) {
     pauseOtherAudio();
     musicUserPaused = false;
     finMusicInterrupt();
+    window.musicFx?.resume?.();
     if (!a.src) startTrack(musicState.current);
-    else a.play().catch(() => {});
+    else {
+      if (fade) deckLevel(musicState.deck, 0, 0);
+      a.play()
+        .then(() => fade && deckLevel(musicState.deck, 1, 0.35))
+        .catch(() => deckLevel(musicState.deck, 1, 0));
+    }
   } else {
     musicUserPaused = true;
-    a.pause();
+    if (fade && !musicState.xf) {
+      // Fundido corto para que no se oiga un chasquido al pausar.
+      const i = musicState.deck;
+      deckLevel(i, 0, 0.25);
+      setTimeout(() => {
+        if (musicUserPaused && musicState.deck === i) a.pause();
+        deckLevel(i, 1, 0);
+      }, 260);
+    } else {
+      stopOtherDeck();
+      a.pause();
+    }
   }
 }
 // Reproducir una colección (álbum, carpeta, lista…) desde una canción.
@@ -2125,9 +2283,10 @@ function openMusicSleepMenu() {
   });
 }
 function setMusicVolume(v) {
-  const a = musicAudio();
   v = Math.max(0, Math.min(100, Number(v) || 0));
-  if (a) a.volume = v / 100;
+  musUserVolume = v / 100;
+  if (window.musicFx?.active) window.musicFx.setVolume(musUserVolume);
+  [0, 1].forEach(applyDeckVolume);
   if ($m('musExpVolume')) $m('musExpVolume').value = v;
   if ($m('musExpVolumeValue')) $m('musExpVolumeValue').value = v + '%';
   if ($m('musExpMute')) $m('musExpMute').textContent = v === 0 ? '🔇' : v < 40 ? '🔉' : '🔊';
@@ -2163,6 +2322,7 @@ function initMusic() {
       items: [
         { icon: '☰', label: 'Cola', hint: plural(musicState.queue.length, 'canción', 'canciones'), on: () => openMusicScreen('queue') },
         { icon: '📃', label: 'Listas', on: () => setMusicTab('lists') },
+        { icon: '🎚️', label: 'Sonido y ecualizador', hint: 'Corrección de auriculares, fundidos, nivelador…', on: () => window.openFxPanel?.() },
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
         { icon: '🔄', label: isAndroidApp() ? 'Volver a buscar música en el móvil' : 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
@@ -2170,19 +2330,21 @@ function initMusic() {
       ]
     })
   );
-  const a = musicAudio();
-  a.volume = (lsGet(MUS_KEYS.volume, 80) || 80) / 100;
-  setMusicVolume(Math.round(a.volume * 100));
-  a.addEventListener('play', () => {
+  initMusicDecks();
+  // Cada evento se escucha en las dos platinas, pero solo cuenta el de la que suena.
+  const on = (ev, fn) => musDecks.forEach(el => el.addEventListener(ev, e => el === musicAudio() && fn(el, e)));
+  setMusicVolume(lsGet(MUS_KEYS.volume, 80) || 80);
+  on('play', () => {
     pauseOtherAudio();
+    window.musicFx?.resume?.();
     syncMusicAndroid(true);
     updateMusicPlayerUI();
   });
-  a.addEventListener('playing', () => {
+  on('playing', () => {
     finMusicInterrupt();
     musicUserPaused = false;
   });
-  a.addEventListener('pause', () => {
+  on('pause', a => {
     saveMusicResume();
     if (musicState.current && !a.ended && !musicUserPaused && !(window.rvPausaDelUsuario?.() ?? true)) {
       // Pausa del sistema (notificación, llamada…): se reanuda sola.
@@ -2190,14 +2352,27 @@ function initMusic() {
       updateMusicPlayerUI();
       return;
     }
+    // Al terminar la canción también llega «pause»: ahí no se cancela la precarga.
+    if (!a.ended) stopOtherDeck();
     syncMusicAndroid(false);
     updateMusicPlayerUI();
   });
-  a.addEventListener('timeupdate', () => {
+  on('timeupdate', a => {
     const t = musicState.current;
     if (t && !musicCounted && (a.currentTime >= 30 || (a.duration && a.currentTime >= a.duration * 0.5))) {
       musicCounted = true;
       countMusicPlay(t);
+    }
+    // Fundido entre canciones o precarga de la siguiente (sin pausas).
+    const rem = a.duration - a.currentTime;
+    const eng = musicEngineOpts();
+    if (!a.paused && Number.isFinite(rem) && !musicState.xf) {
+      const nx = peekNextTrack();
+      if (nx) {
+        const xf = Number(eng.crossfade) || 0;
+        if (xf > 0 && a.duration > xf * 2 + 5 && rem <= xf) switchToOtherDeck(nx, Math.max(1, Math.min(xf, rem)));
+        else if ((eng.gapless || xf > 0) && rem <= 15) preloadNext(nx);
+      }
     }
     const now = Date.now();
     if (now - musicLastSave > 5000) {
@@ -2210,8 +2385,8 @@ function initMusic() {
     }
     updateMusicPlayerUI();
   });
-  a.addEventListener('loadedmetadata', updateMusicPlayerUI);
-  a.addEventListener('ended', () => {
+  on('loadedmetadata', updateMusicPlayerUI);
+  on('ended', async () => {
     const t = musicState.current;
     if (t && !musicCounted) countMusicPlay(t);
     musicCounted = true;
@@ -2222,17 +2397,22 @@ function initMusic() {
       podToast('🌙 Temporizador: fin de la canción');
       return;
     }
+    // Sin pausas: la siguiente ya está cargada en la otra platina.
+    const nx = peekNextTrack();
+    if (nx && musicState.preload?.id === nx.id && musicState.preload.ready && (await switchToOtherDeck(nx, 0))) return;
     nextTrack(true);
   });
-  a.addEventListener('error', () => {
+  on('error', a => {
     if (a.src && musicState.current) musicTrackFailed(musicState.current);
   });
   // Si empieza la radio o un podcast, la música se pausa (como pausa del usuario).
   ['audioPlayer', 'podcastAudio'].forEach(id =>
     document.getElementById(id)?.addEventListener('play', () => {
+      const a = musicAudio();
       if (!a.paused || musicInterrupted) {
         finMusicInterrupt();
         musicUserPaused = true;
+        stopOtherDeck();
         a.pause();
       }
     })
@@ -2269,9 +2449,11 @@ function initMusic() {
     c.scrollTop = sc;
   });
   $m('musExpMore').onclick = () => musicState.current && openTrackMenu(musicState.current);
-  $m('musExpMute').onclick = () => setMusicVolume(a.volume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
+  $m('musExpMute').onclick = () => setMusicVolume(musUserVolume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
   $m('musExpVolume').addEventListener('input', e => setMusicVolume(e.target.value));
   $m('musRange').addEventListener('input', e => {
+    const a = musicAudio();
+    stopOtherDeck();
     if (Number.isFinite(a.duration)) a.currentTime = Number(e.target.value);
     updateMusicPlayerUI();
   });

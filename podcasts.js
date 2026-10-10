@@ -2040,6 +2040,7 @@ window.handleAndroidBack = function () {
       return true;
     }
     // «Mi música»: letra abierta, reproductor ampliado o pantalla anterior.
+    if (window.closeFxPanel?.()) return true;
     if (window.closeLyricsPanel?.()) return true;
     const musExp = document.getElementById('musExpanded');
     if (musExp && !musExp.hidden) {

@@ -1,6 +1,25 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.20.0 — Sonido: ecualizador, corrección de auriculares y motor de dos platinas
+
+Botón **🎚️ Sonido** en el reproductor de música (y en el ⋯ de Mi música).
+
+**Motor.** Dos `<audio>` (platinas): la siguiente canción se precarga 15 s antes y entra sin
+pausa al acabar la actual, o con **fundido entre canciones** (2–12 s). Fundido corto al pausar
+y reanudar (sin chasquidos). Los eventos solo cuentan para la platina que suena.
+
+**Cadena de Web Audio** (`ecualizador.js`, solo se crea al activar algo, tras un toque):
+mono → preamp → corrección de auriculares (hasta 20 filtros) → ecualizador de 10 bandas →
+nivelador (compresión suave) → balance → limitador (−1 dB) → volumen. Preamp automático para no
+saturar y curva de respuesta.
+
+**Ecualizador**: 16 presets (graves, voz, rock, electrónica, flamenco y acústica, volumen bajo…)
+y presets propios. **Auriculares**: correcciones de [AutoEq](https://github.com/jaakkopasanen/AutoEq)
+(MIT, curva Harman). Incluidos los Realme Buds Air 7 Pro con y sin cancelación de ruido
+(medición de Regan Cipher); el resto, unos 9.000 modelos, con `/api/autoeq` (índice y
+ParametricEQ.txt de GitHub). Ajustes en `radios_viferor_music_audio_v1`.
+
 ## 1.19.0 — Favoritos y carpetas incluidas/excluidas en Mi música
 
 **Favoritos** (`radios_viferor_music_favs_v1`): canciones (menú ⋯ o «☆ Favorita» en el
