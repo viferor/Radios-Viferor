@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=11810" />
+<link rel="stylesheet" href="styles.css?v=11900" />
 </head>
 <body>
 <header class="app-header">
@@ -167,7 +167,7 @@
   <div class="mus-toolbar">
     <div class="mus-searchbar"><input id="musSearch" type="search" placeholder="🔎 Canción, artista, álbum, carpeta…" autocomplete="off" enterkeyhint="search" aria-label="Buscar en mi música"><button id="musMenu" type="button" aria-label="Opciones de mi música">⋯</button></div>
     <div class="mus-tabs" id="musTabs" role="tablist" aria-label="Ver por">
-      <button type="button" data-tab="songs">🎵 Canciones</button><button type="button" data-tab="albums">💿 Álbumes</button><button type="button" data-tab="artists">🎤 Artistas</button><button type="button" data-tab="folders">📁 Carpetas</button><button type="button" data-tab="genres">🏷️ Géneros</button><button type="button" data-tab="lists">📃 Listas</button>
+      <button type="button" data-tab="favs">⭐ Favoritos</button><button type="button" data-tab="songs">🎵 Canciones</button><button type="button" data-tab="albums">💿 Álbumes</button><button type="button" data-tab="artists">🎤 Artistas</button><button type="button" data-tab="folders">📁 Carpetas</button><button type="button" data-tab="genres">🏷️ Géneros</button><button type="button" data-tab="lists">📃 Listas</button>
     </div>
   </div>
   <main id="musicContent" class="music-content"></main>
@@ -194,7 +194,7 @@
         <button id="musExpRepeat" class="mus-mode" type="button" aria-label="Repetir">🔁</button>
       </div>
       <div class="pod-expanded-volume volume-control" aria-label="Volumen de la música"><button id="musExpMute" class="volume-btn" type="button" aria-label="Silenciar">🔊</button><input id="musExpVolume" type="range" min="0" max="100" step="1" value="80" aria-label="Volumen"><output id="musExpVolumeValue">80%</output></div>
-      <div class="pod-exp-extra"><button id="musExpLyrics" type="button" aria-label="Ver la letra">🎤 Letra</button><button id="musExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="musExpQueueCount">0</b></button><button id="musExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
+      <div class="pod-exp-extra"><button id="musExpFav" type="button" aria-label="Favorita">☆ Favorita</button><button id="musExpLyrics" type="button" aria-label="Ver la letra">🎤 Letra</button><button id="musExpQueue" type="button" aria-label="Ver la cola">☰ Cola <b id="musExpQueueCount">0</b></button><button id="musExpSleep" type="button" aria-label="Temporizador para dormir">🌙 Temporizador</button></div>
       <p class="pod-up-next" id="musUpNext" hidden></p>
     </div>
   </div>
@@ -238,15 +238,15 @@
   </div>
 </div>
 
-<script src="version.js?v=11810"></script>
+<script src="version.js?v=11900"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=11810"></script>
-<script src="buscador-radios.js?v=11810"></script>
-<script src="app.js?v=11810"></script>
-<script src="podcasts.js?v=11810"></script>
-<script src="podcast-listas.js?v=11810"></script>
-<script src="musica.js?v=11810"></script>
-<script src="letras.js?v=11810"></script>
-<script src="diagnostics.js?v=11810"></script>
+<script src="stations-data.js?v=11900"></script>
+<script src="buscador-radios.js?v=11900"></script>
+<script src="app.js?v=11900"></script>
+<script src="podcasts.js?v=11900"></script>
+<script src="podcast-listas.js?v=11900"></script>
+<script src="musica.js?v=11900"></script>
+<script src="letras.js?v=11900"></script>
+<script src="diagnostics.js?v=11900"></script>
 </body>
 </html>

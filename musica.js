@@ -21,7 +21,9 @@ const MUS_KEYS = {
   stats: 'radios_viferor_music_stats_v1',
   resume: 'radios_viferor_music_resume_v1',
   ui: 'radios_viferor_music_ui_v1',
-  volume: 'radios_viferor_music_volume'
+  volume: 'radios_viferor_music_volume',
+  favs: 'radios_viferor_music_favs_v1',
+  folders: 'radios_viferor_music_folders_v1'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -115,9 +117,9 @@ function pathKey(t) {
 function resolveTrack(x) {
   if (!x) return null;
   const id = typeof x === 'string' ? x : x.id;
-  const byId = musicState.byId.get(id);
+  const byId = musicState.byId.get(id) || musicState.allById?.get(id);
   if (byId) return byId;
-  if (typeof x === 'object' && x.file) return musicState.byPath?.get(pathKey(x)) || null;
+  if (typeof x === 'object' && x.file) return musicState.byPath?.get(pathKey(x)) || musicState.allByPath?.get(pathKey(x)) || null;
   return null;
 }
 
@@ -371,6 +373,12 @@ function albumKeyOf(t) {
   return mNorm(t.album) + '|' + (t.albumArtist ? mNorm(t.albumArtist) : mNorm(t.folder));
 }
 function finishLibrary(tracks, source) {
+  // Se guardan todas y se muestran solo las de las carpetas permitidas.
+  musicState.allTracks = tracks;
+  musicState.allById = new Map(tracks.map(t => [t.id, t]));
+  musicState.allByPath = new Map(tracks.map(t => [pathKey(t), t]));
+  const ff = musicFolderFilter();
+  tracks = tracks.filter(t => folderVisible(t.folder, ff));
   musicState.source = source;
   musicState.tracks = tracks;
   musicState.byId = new Map(tracks.map(t => [t.id, t]));
@@ -817,7 +825,7 @@ const MUS_SMART_DEFAULTS = {
   limit: 100
 };
 const MUS_SMART_LABELS = {
-  source: { all: 'Toda mi música', artists: 'Artistas elegidos', albums: 'Álbumes elegidos', folders: 'Carpetas elegidas', genres: 'Géneros elegidos' },
+  source: { all: 'Toda mi música', favs: 'Mis favoritos (canciones, álbumes, artistas…)', artists: 'Artistas elegidos', albums: 'Álbumes elegidos', folders: 'Carpetas elegidas', genres: 'Géneros elegidos' },
   state: {
     all: 'Todas',
     never: 'Nunca escuchadas',
@@ -901,6 +909,8 @@ function smartPool(r) {
       return musicState.tracks.filter(t => String(t.genre || '').split(/\s*[;/,]\s*/).some(g => picked.has(mNorm(g))));
     case 'folders':
       return musicState.tracks.filter(t => [...picked].some(p => t.folder === p || t.folder.startsWith(p + '/')));
+    case 'favs':
+      return favPool();
     default:
       return musicState.tracks;
   }
@@ -955,7 +965,7 @@ function musicListTracks(l, { fresh = false } = {}) {
 }
 function musicSmartSummary(r) {
   r = { ...MUS_SMART_DEFAULTS, ...r };
-  const parts = [r.source === 'all' ? 'Toda mi música' : `${(r.picked || []).length} ${{ artists: 'artistas', albums: 'álbumes', folders: 'carpetas', genres: 'géneros' }[r.source]}`];
+  const parts = [r.source === 'all' ? 'Toda mi música' : r.source === 'favs' ? 'Mis favoritos' : `${(r.picked || []).length} ${{ artists: 'artistas', albums: 'álbumes', folders: 'carpetas', genres: 'géneros' }[r.source]}`];
   if (r.state !== 'all') parts.push(MUS_SMART_LABELS.state[r.state].toLowerCase());
   if (r.addedDays) parts.push(`añadidas en ${r.addedDays} días`);
   if (r.minMin) parts.push(`más de ${r.minMin} min`);
@@ -1254,7 +1264,7 @@ function renderMusicScreen() {
     else if (!musicState.loading) setMusicLoading('Cargando…');
     return;
   }
-  if (!musicState.tracks.length) return renderMusicSetup('empty');
+  if (!musicState.tracks.length && musicState.screen !== 'fmanage') return musicState.allTracks?.length ? renderAllExcluded(root) : renderMusicSetup('empty');
   const s = musicState.screen || 'tab';
   root.replaceChildren();
   document.body.classList.toggle('mus-detail', s !== 'tab' && !musicState.search);
@@ -1268,6 +1278,7 @@ function renderMusicScreen() {
   if (kind === 'genre') return renderGenre(root, key);
   if (kind === 'list') return renderMusicList(root, key);
   if (kind === 'queue') return renderMusicQueue(root);
+  if (kind === 'fmanage') return renderFolderManager(root);
   renderMusicTab(root, musicState.tab);
 }
 
@@ -1282,7 +1293,7 @@ function trackRow(t, i, o = {}) {
   const lead = o.handle ? '<button class="pod-qhandle" type="button" aria-label="Arrastrar para cambiar el orden">⠿</button>' : '';
   const num = o.num != null ? `<span class="qnum">${o.num}</span>` : '';
   const art = o.noArt ? '' : musArtHtml(t.art, t.album || t.title, 'mus-art-s');
-  row.innerHTML = `${lead}${num}${art}<div class="pod-qinfo"><strong>${pEsc(t.title)}</strong><small>${pEsc(o.sub != null ? o.sub : trackSub(t))}</small></div><span class="mus-dur">${pEsc(fmtDur(t.dur))}</span><div class="pod-qbtns">${o.onRemove ? '<button class="pod-qdel" type="button" aria-label="Quitar">✕</button>' : ''}<button class="pod-qmenu" type="button" aria-label="Más opciones">⋯</button></div>`;
+  row.innerHTML = `${lead}${num}${art}<div class="pod-qinfo"><strong>${isMusicFav('tracks', t.id) ? '<span class="mus-favmark" aria-label="Favorita">★</span>' : ''}${pEsc(t.title)}</strong><small>${pEsc(o.sub != null ? o.sub : trackSub(t))}</small></div><span class="mus-dur">${pEsc(fmtDur(t.dur))}</span><div class="pod-qbtns">${o.onRemove ? '<button class="pod-qdel" type="button" aria-label="Quitar">✕</button>' : ''}<button class="pod-qmenu" type="button" aria-label="Más opciones">⋯</button></div>`;
   row.querySelector('.pod-qinfo').onclick = () => (o.onPlay ? o.onPlay(i) : playTrackNow(t));
   const art2 = row.querySelector('.mus-art');
   if (art2) art2.onclick = row.querySelector('.pod-qinfo').onclick;
@@ -1323,6 +1334,10 @@ function collectionActions(tracks, { label = '', smart = null, more = null } = {
   ]);
 }
 function collectionMenu(title, tracks, { smart = null } = {}) {
+  const one = smart && smart.picked?.length === 1 ? smart.picked[0] : null;
+  const favKind = one != null && ['albums', 'artists', 'folders', 'genres'].includes(smart.source) ? smart.source : null;
+  const fav = favKind && isMusicFav(favKind, one);
+  const folder = smart?.source === 'folders' ? one : null;
   podSheet({
     title,
     subtitle: tracksSummary(tracks),
@@ -1332,15 +1347,25 @@ function collectionMenu(title, tracks, { smart = null } = {}) {
       { icon: '⏭', label: 'Reproducir a continuación', on: () => queueTracks(tracks, 'next') },
       { icon: '➕', label: 'Añadir al final de la cola', on: () => queueTracks(tracks, 'end') },
       { icon: '📃', label: 'Guardar en una lista…', on: () => chooseMusicListFor(tracks) },
-      smart && { icon: '✨', label: 'Crear lista inteligente con esto', hint: 'Por ejemplo: solo lo no escuchado, al azar', on: () => openMusicSmartEditor(null, { name: title, rules: smart }) }
+      smart && { icon: '✨', label: 'Crear lista inteligente con esto', hint: 'Por ejemplo: solo lo no escuchado, al azar', on: () => openMusicSmartEditor(null, { name: title, rules: smart }) },
+      favKind && { icon: fav ? '★' : '☆', label: fav ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleMusicFav(favKind, one, title) },
+      folder && { sep: true },
+      folder && { icon: '🚫', label: 'Excluir esta carpeta', hint: 'Desaparece de canciones, álbumes, artistas, búsqueda…', on: () => setFolderRule(folder, 'exclude', true) },
+      folder && { icon: '✅', label: 'Incluir solo esta carpeta', hint: 'Oculta todo lo que no esté dentro (se pueden incluir varias)', on: () => setFolderRule(folder, 'include', true) }
     ]
   });
 }
-function detailHead(title, sub, art, { round = false, onMore = null } = {}) {
+function detailHead(title, sub, art, { round = false, onMore = null, fav = null } = {}) {
   const h = musEl('div', 'pod-section-title pod-detail-head mus-head');
-  h.innerHTML = `<button class="pod-back-btn" type="button">← Volver</button><div class="mus-head-top">${art !== null ? musArtHtml(art, title, 'mus-art-l' + (round ? ' round' : '')) : ''}<div class="pod-detail-title"><h2>${pEsc(title)}</h2>${sub ? `<p class="pod-list-sub">${pEsc(sub)}</p>` : ''}</div>${onMore ? '<button class="mus-head-more" type="button" aria-label="Más opciones">⋯</button>' : ''}</div>`;
+  h.innerHTML = `<button class="pod-back-btn" type="button">← Volver</button><div class="mus-head-top">${art !== null ? musArtHtml(art, title, 'mus-art-l' + (round ? ' round' : '')) : ''}<div class="pod-detail-title"><h2>${pEsc(title)}</h2>${sub ? `<p class="pod-list-sub">${pEsc(sub)}</p>` : ''}</div>${fav ? `<button class="mus-head-more mus-head-fav${isMusicFav(fav[0], fav[1]) ? ' on' : ''}" type="button" aria-label="Favorito">${isMusicFav(fav[0], fav[1]) ? '★' : '☆'}</button>` : ''}${onMore ? '<button class="mus-head-more" type="button" aria-label="Más opciones">⋯</button>' : ''}</div>`;
   h.querySelector('.pod-back-btn').onclick = backFromMusic;
-  if (onMore) h.querySelector('.mus-head-more').onclick = onMore;
+  if (fav)
+    h.querySelector('.mus-head-fav').onclick = e => {
+      const on = toggleMusicFav(fav[0], fav[1], title);
+      e.currentTarget.classList.toggle('on', on);
+      e.currentTarget.textContent = on ? '★' : '☆';
+    };
+  if (onMore) h.querySelector('.mus-head-more:not(.mus-head-fav)').onclick = onMore;
   return h;
 }
 function tabHead(title, count, extraHtml = '') {
@@ -1367,6 +1392,7 @@ function sortedSongs(sort) {
 }
 function renderMusicTab(root, tab) {
   const ui = musicUi();
+  if (tab === 'favs') return renderFavsTab(root);
   if (tab === 'songs') {
     const list = sortedSongs(ui.songSort);
     root.append(
@@ -1427,7 +1453,7 @@ function albumGrid(albums) {
   appendRowsChunked(g, albums, al => {
     const b = musEl('button', 'pod-tile mus-album');
     b.type = 'button';
-    b.innerHTML = `${musArtHtml(al.art, al.name, 'mus-art-tile')}<span class="pod-tile-title">${pEsc(al.name)}</span><small class="mus-tile-sub">${pEsc([al.artist, al.year || ''].filter(Boolean).join(' · '))}</small>`;
+    b.innerHTML = `${musArtHtml(al.art, al.name, 'mus-art-tile')}${isMusicFav('albums', al.key) ? '<span class="mus-tile-fav" aria-label="Favorito">★</span>' : ''}<span class="pod-tile-title">${pEsc(al.name)}</span><small class="mus-tile-sub">${pEsc([al.artist, al.year || ''].filter(Boolean).join(' · '))}</small>`;
     b.onclick = () => openMusicScreen('album:' + al.key);
     return b;
   }, 60);
@@ -1444,7 +1470,7 @@ function renderAlbum(root, key) {
   const al = musicState.albums.get(key);
   if (!al) return renderMusicTab(root, musicState.tab);
   const tr = al.tracks;
-  root.append(detailHead(al.name, [al.artist, al.year || '', tracksSummary(tr)].filter(Boolean).join(' · '), al.art, { onMore: () => collectionMenu(al.name, tr, { smart: { source: 'albums', picked: [al.key] } }) }));
+  root.append(detailHead(al.name, [al.artist, al.year || '', tracksSummary(tr)].filter(Boolean).join(' · '), al.art, { fav: ['albums', al.key], onMore: () => collectionMenu(al.name, tr, { smart: { source: 'albums', picked: [al.key] } }) }));
   root.append(collectionActions(tr, { label: `«${al.name}»` }));
   const box = musEl('div', 'pod-queue');
   const multiArtist = al.artists.size > 1;
@@ -1458,7 +1484,7 @@ function renderArtist(root, key) {
   const ar = musicState.artists.get(key);
   if (!ar) return renderMusicTab(root, musicState.tab);
   const tr = artistTracks(ar);
-  root.append(detailHead(ar.name, `${plural(ar.albums.size, 'álbum', 'álbumes')} · ${tracksSummary(tr)}`, ar.art, { round: true, onMore: () => collectionMenu(ar.name, tr, { smart: { source: 'artists', picked: [ar.key] } }) }));
+  root.append(detailHead(ar.name, `${plural(ar.albums.size, 'álbum', 'álbumes')} · ${tracksSummary(tr)}`, ar.art, { round: true, fav: ['artists', ar.key], onMore: () => collectionMenu(ar.name, tr, { smart: { source: 'artists', picked: [ar.key] } }) }));
   root.append(collectionActions(tr, { label: ar.name }));
   const albums = [...ar.albums].map(k => musicState.albums.get(k)).filter(Boolean).sort((a, b) => (b.year || 0) - (a.year || 0));
   if (albums.length > 1 || albums[0]?.tracks.length !== tr.length) {
@@ -1473,7 +1499,7 @@ function renderArtist(root, key) {
 function renderGenre(root, key) {
   const g = musicState.genres.get(key);
   if (!g) return renderMusicTab(root, musicState.tab);
-  root.append(detailHead(g.name, tracksSummary(g.tracks), null, { onMore: () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } }) }));
+  root.append(detailHead(g.name, tracksSummary(g.tracks), null, { fav: ['genres', g.key], onMore: () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } }) }));
   root.append(collectionActions(g.tracks, { label: g.name }));
   const box = musEl('div', 'pod-queue');
   root.append(box);
@@ -1491,8 +1517,9 @@ function renderFolder(root, path, pushed) {
   if (!node) return renderMusicTab(root, 'songs');
   const all = folderTracks(path);
   const crumbs = path ? path.split('/') : [];
-  if (pushed) root.append(detailHead(node.name, tracksSummary(all), null, { onMore: () => collectionMenu(node.name, all, { smart: path ? { source: 'folders', picked: [path] } : null }) }));
+  if (pushed) root.append(detailHead(node.name, tracksSummary(all), null, { fav: path ? ['folders', path] : null, onMore: () => collectionMenu(node.name, all, { smart: path ? { source: 'folders', picked: [path] } : null }) }));
   else root.append(tabHead('📁 Carpetas', node.count));
+  root.append(folderFilterBar());
   if (crumbs.length) {
     const bc = musEl('nav', 'mus-crumbs');
     bc.setAttribute('aria-label', 'Ruta');
@@ -1579,6 +1606,7 @@ function openTrackMenu(t, { extra = [] } = {}) {
           saveMusicQueue();
         }
       },
+      { icon: isMusicFav('tracks', t.id) ? '★' : '☆', label: isMusicFav('tracks', t.id) ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleMusicFav('tracks', t.id, t.title, t) },
       { icon: '📃', label: 'Añadir a una lista…', on: () => chooseMusicListFor([t]) },
       { icon: '🎤', label: 'Letra', hint: 'Ver, sincronizar, traducir y su significado', on: () => window.openTrackLyrics?.(t) },
       t.albumKey && musicState.albums.has(t.albumKey) && { icon: '💿', label: `Ir al álbum «${musicState.albums.get(t.albumKey).name}»`, on: () => openMusicScreen('album:' + t.albumKey) },
@@ -1856,8 +1884,8 @@ function openMusicSmartEditor(list, preset = {}) {
   const fillPick = () => {
     const src = $f('source').value;
     const fs = form.querySelector('.if-pick');
-    fs.hidden = src === 'all';
-    if (src === 'all' || src === shownSource) return;
+    fs.hidden = src === 'all' || src === 'favs';
+    if (src === 'all' || src === 'favs' || src === shownSource) return;
     if (shownSource) picked = new Set();
     shownSource = src;
     fs.querySelector('legend').firstChild.textContent = { artists: 'Elige artistas ', albums: 'Elige álbumes ', folders: 'Elige carpetas ', genres: 'Elige géneros ' }[src];
@@ -1880,7 +1908,7 @@ function openMusicSmartEditor(list, preset = {}) {
   });
   const preview = () => {
     const rr = read();
-    const n = rr.source !== 'all' && !rr.picked.length ? 0 : resolveMusicSmart({ ...rr, limit: 0, order: 'title' }).length;
+    const n = !['all', 'favs'].includes(rr.source) && !rr.picked.length ? 0 : resolveMusicSmart({ ...rr, limit: 0, order: 'title' }).length;
     form.querySelector('[data-pick-count]').textContent = rr.picked.length ? `(${rr.picked.length})` : '';
     form.querySelector('[data-preview]').textContent = `Ahora mismo cumplen las reglas ${plural(n, 'canción', 'canciones')}${rr.limit && n > rr.limit ? ` (la lista tendrá ${rr.limit})` : ''}.`;
   };
@@ -1902,7 +1930,7 @@ function openMusicSmartEditor(list, preset = {}) {
     const nm = $f('name').value.trim();
     if (!nm) return $f('name').focus();
     const rules = read();
-    if (rules.source !== 'all' && !rules.picked.length) return podToast('Elige al menos uno');
+    if (!['all', 'favs'].includes(rules.source) && !rules.picked.length) return podToast('Elige al menos uno');
     if (rules.minMin && rules.maxMin && rules.minMin >= rules.maxMin) return podToast('La duración mínima debe ser menor que la máxima');
     let l = list;
     if (editing) Object.assign(l, { name: nm, rules, updatedAt: Date.now() });
@@ -2023,6 +2051,7 @@ function updateMusicNowUI() {
   }
   document.querySelectorAll('#musicContent .mus-row').forEach(r => r.classList.toggle('is-current', !!t && r.dataset.id === t.id));
   updateMusicPlayerUI();
+  updateMusicFavButton();
   document.dispatchEvent(new CustomEvent('music:now'));
 }
 function updateMusicPlayerUI() {
@@ -2227,6 +2256,18 @@ function initMusic() {
     openMusicScreen('queue');
   };
   $m('musExpSleep').onclick = openMusicSleepMenu;
+  $m('musExpFav')?.addEventListener('click', () => {
+    const t = musicState.current;
+    if (t) toggleMusicFav('tracks', t.id, t.title, t);
+  });
+  document.addEventListener('music:favs', () => {
+    updateMusicFavButton();
+    if (!musicViewActive() || podDragging) return;
+    const c = $m('musicContent'),
+      sc = c.scrollTop;
+    renderMusicScreen();
+    c.scrollTop = sc;
+  });
   $m('musExpMore').onclick = () => musicState.current && openTrackMenu(musicState.current);
   $m('musExpMute').onclick = () => setMusicVolume(a.volume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
   $m('musExpVolume').addEventListener('input', e => setMusicVolume(e.target.value));
@@ -2261,6 +2302,241 @@ function initMusic() {
   window.addEventListener('pagehide', saveMusicResume);
   updateMusicPlayerUI();
 }
+
+/* ===========================================================================
+   Favoritos (canciones, álbumes, artistas, carpetas y géneros)
+=========================================================================== */
+const MUS_FAV_KINDS = ['tracks', 'albums', 'artists', 'folders', 'genres'];
+function musicFavs() {
+  if (!musicState._favs) {
+    const f = lsGet(MUS_KEYS.favs, {});
+    musicState._favs = {};
+    MUS_FAV_KINDS.forEach(k => (musicState._favs[k] = Array.isArray(f[k]) ? f[k] : []));
+  }
+  return musicState._favs;
+}
+function isMusicFav(kind, key) {
+  const f = musicFavs()[kind] || [];
+  return kind === 'tracks' ? f.some(x => x.id === key) : f.includes(key);
+}
+// Devuelve si queda como favorito.
+function toggleMusicFav(kind, key, label = '', obj = null) {
+  const f = musicFavs();
+  const on = !isMusicFav(kind, key);
+  if (kind === 'tracks') f.tracks = on ? [...f.tracks, minimalTrack(obj || resolveTrack(key))].filter(Boolean) : f.tracks.filter(x => x.id !== key);
+  else f[kind] = on ? [...f[kind], key] : f[kind].filter(x => x !== key);
+  lsSet(MUS_KEYS.favs, f);
+  podToast(on ? `★ ${label ? `«${label}» ` : ''}en favoritos` : `Quitado de favoritos`, on ? { action: 'Ver', onAction: () => setMusicTab('favs') } : {});
+  document.dispatchEvent(new CustomEvent('music:favs'));
+  return on;
+}
+function favTracks() {
+  return musicFavs().tracks.map(resolveTrack).filter(Boolean);
+}
+// Todo lo marcado: canciones y lo que hay dentro de álbumes, artistas, carpetas y géneros favoritos.
+function favPool() {
+  const f = musicFavs();
+  const out = new Map();
+  favTracks().forEach(t => out.set(t.id, t));
+  f.albums.forEach(k => musicState.albums.get(k)?.tracks.forEach(t => out.set(t.id, t)));
+  f.artists.forEach(k => {
+    const ar = musicState.artists.get(k);
+    if (ar) artistTracks(ar).forEach(t => out.set(t.id, t));
+  });
+  f.folders.forEach(p => folderTracks(p).forEach(t => out.set(t.id, t)));
+  f.genres.forEach(k => musicState.genres.get(k)?.tracks.forEach(t => out.set(t.id, t)));
+  return [...out.values()];
+}
+function renderFavsTab(root) {
+  const f = musicFavs();
+  const songs = favTracks();
+  const albums = f.albums.map(k => musicState.albums.get(k)).filter(Boolean);
+  const artists = f.artists.map(k => musicState.artists.get(k)).filter(Boolean);
+  const folders = f.folders.map(p => musicState.folders.get(p)).filter(Boolean);
+  const genres = f.genres.map(k => musicState.genres.get(k)).filter(Boolean);
+  const total = songs.length + albums.length + artists.length + folders.length + genres.length;
+  root.append(tabHead('⭐ Favoritos', total));
+  if (!total) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', '<p>Marca con <b>☆</b> tus canciones (menú ⋯ o el reproductor), álbumes, artistas, carpetas y géneros (botón ☆ arriba en cada uno o su menú ⋯). Aparecerán aquí, y podrás escucharlo todo junto o crear una lista inteligente «Mis favoritos».</p>'));
+    return;
+  }
+  const pool = favPool();
+  root.append(musEl('p', 'pod-list-sub mus-fav-sum', `En total, ${tracksSummary(pool)} entre todo lo que has marcado.`));
+  root.append(collectionActions(pool, { label: 'tus favoritos' }));
+  if (songs.length) {
+    root.append(musEl('h3', 'pod-list-h', `Canciones <small>${songs.length}</small>`));
+    const box = musEl('div', 'pod-queue');
+    songs.forEach((t, i) => box.append(trackRow(t, i, { onPlay: k => playCollection(songs, k) })));
+    root.append(box);
+  }
+  if (albums.length) {
+    root.append(musEl('h3', 'pod-list-h', `Álbumes <small>${albums.length}</small>`));
+    root.append(albumGrid(albums));
+  }
+  const listSection = (title, items, make) => {
+    if (!items.length) return;
+    root.append(musEl('h3', 'pod-list-h', `${title} <small>${items.length}</small>`));
+    const box = musEl('div', 'mus-list');
+    items.forEach(x => box.append(make(x)));
+    root.append(box);
+  };
+  listSection('Artistas', artists, ar => listRow(musArtHtml(ar.art, ar.name, 'mus-art-s round'), ar.name, plural(ar.tracks.length, 'canción', 'canciones'), () => openMusicScreen('artist:' + ar.key), () => collectionMenu(ar.name, artistTracks(ar), { smart: { source: 'artists', picked: [ar.key] } })));
+  listSection('Carpetas', folders, fo => listRow('<span class="mus-ic">📁</span>', fo.name, `${fo.path} · ${plural(fo.count, 'canción', 'canciones')}`, () => openMusicScreen('folder:' + fo.path), () => collectionMenu(fo.name, folderTracks(fo.path), { smart: { source: 'folders', picked: [fo.path] } })));
+  listSection('Géneros', genres, g => listRow('<span class="mus-ic">🏷️</span>', g.name, plural(g.tracks.length, 'canción', 'canciones'), () => openMusicScreen('genre:' + g.key), () => collectionMenu(g.name, g.tracks, { smart: { source: 'genres', picked: [g.key] } })));
+}
+function updateMusicFavButton() {
+  const b = $m('musExpFav');
+  const t = musicState.current;
+  if (!b) return;
+  const on = !!t && isMusicFav('tracks', t.id);
+  b.textContent = on ? '★ Favorita' : '☆ Favorita';
+  b.classList.toggle('on', on);
+}
+
+/* ===========================================================================
+   Carpetas incluidas y excluidas
+=========================================================================== */
+function musicFolderFilter() {
+  const f = lsGet(MUS_KEYS.folders, {});
+  return { include: Array.isArray(f.include) ? f.include : [], exclude: Array.isArray(f.exclude) ? f.exclude : [] };
+}
+function underFolder(folder, p) {
+  return !p || folder === p || folder.startsWith(p + '/');
+}
+// Visible si está dentro de alguna incluida (o no hay ninguna) y fuera de todas las excluidas.
+function folderVisible(folder, ff) {
+  if (ff.include.length && !ff.include.some(p => underFolder(folder, p))) return false;
+  return !ff.exclude.some(p => underFolder(folder, p));
+}
+function setFolderRule(path, kind, on, { toast = true } = {}) {
+  const ff = musicFolderFilter();
+  const other = kind === 'include' ? 'exclude' : 'include';
+  ff[kind] = ff[kind].filter(p => p !== path);
+  if (on) {
+    ff[kind].push(path);
+    ff[other] = ff[other].filter(p => p !== path);
+  }
+  lsSet(MUS_KEYS.folders, ff);
+  applyFolderFilter();
+  if (toast)
+    podToast(on ? (kind === 'exclude' ? `🚫 «${path.split('/').at(-1)}» excluida` : `✅ «${path.split('/').at(-1)}» incluida`) : 'Filtro quitado', {
+      action: 'Carpetas',
+      onAction: () => openMusicScreen('fmanage')
+    });
+}
+function clearFolderRules() {
+  lsSet(MUS_KEYS.folders, { include: [], exclude: [] });
+  applyFolderFilter();
+  podToast('Se muestran todas las carpetas');
+}
+// Vuelve a montar la biblioteca con el filtro nuevo (sin volver a leer el móvil o la carpeta).
+function applyFolderFilter() {
+  if (!musicState.allTracks) return;
+  const c = $m('musicContent'),
+    sc = c?.scrollTop || 0;
+  finishLibrary(musicState.allTracks, musicState.source);
+  if (c && musicState.screen === 'fmanage') c.scrollTop = sc;
+}
+function folderFilterSummary(ff = musicFolderFilter()) {
+  const parts = [];
+  if (ff.include.length) parts.push(`solo ${plural(ff.include.length, 'carpeta incluida', 'carpetas incluidas')}`);
+  if (ff.exclude.length) parts.push(plural(ff.exclude.length, 'carpeta excluida', 'carpetas excluidas'));
+  return parts.join(' · ');
+}
+function folderFilterBar() {
+  const ff = musicFolderFilter();
+  const sum = folderFilterSummary(ff);
+  const hidden = (musicState.allTracks?.length || 0) - musicState.tracks.length;
+  const bar = musEl('div', 'mus-ffbar' + (sum ? ' on' : ''), `<span>${sum ? `🔎 ${pEsc(sum)}${hidden ? ` · ${plural(hidden, 'canción oculta', 'canciones ocultas')}` : ''}` : 'Se muestran todas las carpetas'}</span><button type="button">⚙️ Incluir / excluir carpetas</button>`);
+  bar.querySelector('button').onclick = () => openMusicScreen('fmanage');
+  return bar;
+}
+function renderAllExcluded(root) {
+  const box = musEl('div', 'pod-empty mus-setup', `<div>🙈</div><h3>Todo está oculto</h3><p>Con las carpetas que has incluido o excluido no queda ninguna canción a la vista (${pEsc(folderFilterSummary())}).</p>`);
+  box.append(lyrButtonsLike([['⚙️ Revisar carpetas', () => openMusicScreen('fmanage'), 'primary'], ['Mostrar todo', clearFolderRules]]));
+  root.replaceChildren(box);
+}
+function lyrButtonsLike(list) {
+  const acts = musEl('div', 'pod-empty-actions');
+  list.forEach(([label, fn, cls]) => {
+    const b = musEl('button', cls || '', pEsc(label));
+    b.type = 'button';
+    b.onclick = fn;
+    acts.append(b);
+  });
+  return acts;
+}
+const musFmOpen = new Set();
+// Árbol de TODAS las carpetas (también las ocultas) con su estado.
+function renderFolderManager(root) {
+  const all = musicState.allTracks || [];
+  const ff = musicFolderFilter();
+  const nodes = new Map();
+  const node = path => {
+    if (!nodes.has(path)) {
+      const parts = path ? path.split('/') : [];
+      nodes.set(path, { path, name: parts.at(-1) || '', depth: parts.length, children: new Set(), count: 0 });
+      if (parts.length) node(parts.slice(0, -1).join('/')).children.add(path);
+    }
+    return nodes.get(path);
+  };
+  node('');
+  all.forEach(t => {
+    let p = t.folder;
+    node(p);
+    for (;;) {
+      nodes.get(p).count++;
+      if (!p) break;
+      p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+    }
+  });
+  // Abiertas: el primer nivel y el camino hasta cada carpeta con regla.
+  if (!musFmOpen.size) {
+    musFmOpen.add('');
+    [...ff.include, ...ff.exclude].forEach(p => {
+      const parts = p.split('/');
+      for (let i = 0; i < parts.length; i++) musFmOpen.add(parts.slice(0, i).join('/'));
+    });
+  }
+  root.append(detailHead('📁 Carpetas que se muestran', `${tracksSummary(musicState.tracks)} a la vista de ${plural(all.length, 'canción', 'canciones')}`, null));
+  root.append(
+    musEl(
+      'p',
+      'mus-fm-help',
+      '<b>🚫 Excluir</b> oculta una carpeta (y lo que tiene dentro) en toda tu música: canciones, álbumes, artistas, búsqueda y listas inteligentes. <b>✅ Incluir</b> hace lo contrario: si incluyes alguna, solo se ve lo que está dentro de las incluidas. Puedes combinarlas (incluir «Music» y excluir «Music/Podcasts»).'
+    )
+  );
+  if (ff.include.length || ff.exclude.length) root.append(actionBar([['↺ Mostrar todas las carpetas', clearFolderRules, 'danger']]));
+  const list = musEl('div', 'mus-fm');
+  const walk = (p, ancestorsHidden) => {
+    const n = nodes.get(p);
+    [...n.children]
+      .map(c => nodes.get(c))
+      .sort((a, b) => musCollator.compare(a.name, b.name))
+      .forEach(c => {
+        const inc = ff.include.includes(c.path),
+          exc = ff.exclude.includes(c.path);
+        const visible = all.some(t => underFolder(t.folder, c.path) && folderVisible(t.folder, ff));
+        const row = musEl('div', 'mus-fm-row' + (visible ? '' : ' off') + (inc ? ' inc' : '') + (exc ? ' exc' : ''));
+        row.style.setProperty('--d', c.depth - 1);
+        const open = musFmOpen.has(c.path);
+        row.innerHTML = `<button type="button" class="mus-fm-tg" ${c.children.size ? '' : 'disabled'} aria-label="${open ? 'Cerrar' : 'Abrir'}">${c.children.size ? (open ? '▾' : '▸') : ''}</button><span class="mus-fm-name"><strong>📁 ${pEsc(c.name)}</strong><small>${plural(c.count, 'canción', 'canciones')}${visible ? '' : ' · oculta'}</small></span><button type="button" class="mus-fm-inc${inc ? ' on' : ''}" aria-pressed="${inc}">✅ Incluir</button><button type="button" class="mus-fm-exc${exc ? ' on' : ''}" aria-pressed="${exc}">🚫 Excluir</button>`;
+        row.querySelector('.mus-fm-tg').onclick = () => {
+          open ? musFmOpen.delete(c.path) : musFmOpen.add(c.path);
+          const sc = $m('musicContent').scrollTop;
+          renderMusicScreen();
+          $m('musicContent').scrollTop = sc;
+        };
+        row.querySelector('.mus-fm-inc').onclick = () => setFolderRule(c.path, 'include', !inc, { toast: false });
+        row.querySelector('.mus-fm-exc').onclick = () => setFolderRule(c.path, 'exclude', !exc, { toast: false });
+        list.append(row);
+        if (open) walk(c.path);
+      });
+  };
+  walk('');
+  root.append(list);
+}
+
 function updateMusicStrip() {}
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initMusic);
 else initMusic();

@@ -1,6 +1,20 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.19.0 — Favoritos y carpetas incluidas/excluidas en Mi música
+
+**Favoritos** (`radios_viferor_music_favs_v1`): canciones (menú ⋯ o «☆ Favorita» en el
+reproductor), álbumes, artistas, carpetas y géneros (botón ☆ en su cabecera o en su menú ⋯).
+Pestaña **⭐ Favoritos** con todo lo marcado y botones para escucharlo junto; las listas
+inteligentes tienen el origen «Mis favoritos».
+
+**Carpetas** (`radios_viferor_music_folders_v1`): en Carpetas, «⚙️ Incluir / excluir carpetas»
+abre el árbol de todas las carpetas (también las ocultas). 🚫 Excluir oculta una carpeta y lo de
+dentro en toda la música (canciones, álbumes, artistas, búsqueda, listas inteligentes); ✅ Incluir
+hace que solo se vea lo de las incluidas; se combinan. También desde el ⋯ de cada carpeta. Se
+aplica al momento, sin volver a leer el móvil; las listas normales y la cola siguen pudiendo
+tener canciones de carpetas ocultas.
+
 ## 1.18.1 — Significado como pestaña, buscar en internet y compartir en LRCLIB
 
 - La letra tiene tres pestañas: **🎤 Letra**, **🌐 Original + español** y **💡 Significado**.
