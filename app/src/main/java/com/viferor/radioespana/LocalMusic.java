@@ -194,6 +194,23 @@ final class LocalMusic {
 
     static WebResourceResponse handle(Context c, Uri url, Map<String, String> headers) {
         String path = url.getPath() == null ? "" : url.getPath();
+        // Archivos abiertos desde otras apps: no necesitan el permiso de la biblioteca.
+        try {
+            if (path.startsWith(PREFIX + "ext/")) {
+                ExternalAudio.Item it = ExternalAudio.get(path.substring((PREFIX + "ext/").length()));
+                if (it == null) return empty(404, "Not Found");
+                return serveUri(c, it.uri, it.mime, header(headers, "Range"));
+            }
+            if (path.startsWith(PREFIX + "extart/")) {
+                ExternalAudio.Item it = ExternalAudio.get(path.substring((PREFIX + "extart/").length()));
+                if (it == null || it.art == null) return empty(404, "Not Found");
+                Map<String, String> h = new HashMap<>();
+                h.put("Cache-Control", "max-age=86400");
+                return new WebResourceResponse("image/jpeg", null, 200, "OK", h, new ByteArrayInputStream(it.art));
+            }
+        } catch (Exception e) {
+            return json(500, "Error", "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}");
+        }
         if (!hasPermission(c)) return json(403, "Forbidden", "{\"ok\":false,\"error\":\"permission\"}");
         try {
             if (path.equals(PREFIX + "library.json")) return json(200, "OK", libraryJson(c));
@@ -238,9 +255,13 @@ final class LocalMusic {
 
     /** Audio con «Range»: sin él el reproductor no podría saltar a otra parte de la canción. */
     static WebResourceResponse serveTrack(Context c, long id, String range) throws IOException {
+        return serveUri(c, ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id), null, range);
+    }
+
+    static WebResourceResponse serveUri(Context c, Uri u, String knownMime, String range) throws IOException {
         ContentResolver cr = c.getContentResolver();
-        Uri u = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
-        String mime = cr.getType(u);
+        String mime = knownMime;
+        if (TextUtils.isEmpty(mime) || "*/*".equals(mime)) mime = cr.getType(u);
         if (TextUtils.isEmpty(mime)) mime = "audio/mpeg";
         AssetFileDescriptor afd = cr.openAssetFileDescriptor(u, "r");
         if (afd == null) return empty(404, "Not Found");
@@ -353,6 +374,10 @@ final class LocalMusic {
         try {
             Uri u = Uri.parse(url);
             String p = u.getPath();
+            if (p != null && p.startsWith(PREFIX + "extart/")) {
+                ExternalAudio.Item it = ExternalAudio.get(p.substring((PREFIX + "extart/").length()));
+                return it == null || it.art == null ? null : BitmapFactory.decodeByteArray(it.art, 0, it.art.length);
+            }
             if (p == null || !p.startsWith(PREFIX + "art/") || !hasPermission(c)) return null;
             long albumId = Long.parseLong(p.substring((PREFIX + "art/").length()).replaceAll("[^0-9].*$", ""));
             long trackId = 0;

@@ -659,6 +659,7 @@ function trackLastPlayed(t) {
   return Number(musicStats()[t.id]?.[1] || 0);
 }
 function countMusicPlay(t) {
+  if (t.external) return;
   const st = musicStats();
   const prev = st[t.id] || [0, 0];
   st[t.id] = [prev[0] + 1, Date.now()];
@@ -2372,6 +2373,82 @@ function removeListDups(l) {
 }
 
 /* ---------------------------------------------------------------------------
+   Archivos abiertos desde otras apps («Abrir con…» / «Compartir», APK 1.14+)
+--------------------------------------------------------------------------- */
+async function waitMusicLibrary(ms = 6000) {
+  const t0 = Date.now();
+  while (musicState.loading && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 150));
+  return musicState.loaded;
+}
+async function openExternalAudio(info) {
+  if (typeof info === 'string') {
+    try {
+      info = JSON.parse(info);
+    } catch {
+      return;
+    }
+  }
+  if (!info) return;
+  if (info.error) return podToast('No se pudo abrir el archivo: ' + info.error);
+  if (!musicViewActive()) switchToMusic();
+  await waitMusicLibrary();
+  // Lista M3U: se crea una lista con las canciones que estén en el móvil.
+  if (info.playlist) {
+    if (!musicState.loaded) return podToast('Para abrir listas hace falta dar acceso a tu música');
+    const { tracks, missing } = tracksFromM3u(String(info.text || ''));
+    if (!tracks.length) return podToast('Ninguna canción de esa lista está en tu música');
+    const name = (String(info.text || '').match(/^#PLAYLIST:(.+)$/m)?.[1] || stripExt(info.name || 'Lista')).trim();
+    return confirmListAdd(
+      null,
+      tracks,
+      sel => {
+        const l = createMusicList(name, sel);
+        openMusicScreen('list:' + l.id);
+        podToast(`Lista «${l.name}»: ${plural(sel.length, 'canción', 'canciones')}${missing ? ` · ${missing} no encontradas` : ''}`, { action: '▶ Reproducir', onAction: () => playCollection(musicListTracks(l, { fresh: true }), 0, { shuffle: false, label: `«${l.name}»` }) });
+      },
+      { listName: name }
+    );
+  }
+  // ¿Está en la biblioteca? Entonces suena «de verdad» (favoritos, contador, letra…).
+  const all = musicState.allTracks || musicState.tracks || [];
+  let t = (info.mediaId && (musicState.byId.get('a' + info.mediaId) || musicState.allById?.get('a' + info.mediaId))) || null;
+  if (!t && info.name) {
+    const same = all.filter(x => x.file === info.name && (!(info.size > 0) || !x.size || x.size === info.size));
+    if (same.length === 1) t = same[0]; // si hay varias iguales no se adivina
+  }
+  if (!t) {
+    if (!info.token) return podToast('No se pudo abrir el archivo');
+    const name = stripExt(info.name || '');
+    const m = name.match(/^(?:\d{1,3}\s*[-._)]?\s+)?(.+?)\s+[-–—]\s+(.+)$/);
+    t = {
+      id: 'x' + info.token,
+      title: info.title || (m ? m[2] : name) || 'Sin título',
+      artist: info.artist || (info.title ? '' : m ? m[1] : ''),
+      album: info.album || '',
+      albumArtist: '',
+      track: 0,
+      disc: 0,
+      year: 0,
+      dur: Number(info.dur) || 0,
+      folder: '',
+      file: info.name || '',
+      added: Date.now(),
+      genre: '',
+      size: Number(info.size) > 0 ? Number(info.size) : 0,
+      src: '/__music/ext/' + info.token,
+      art: info.art ? '/__music/extart/' + info.token : '',
+      external: true
+    };
+  }
+  playTrackNow(t);
+  openMusicExpanded();
+  podToast(`▶ ${t.title}${t.external ? ' · abierto desde otra app' : ''}`);
+}
+window.viferorOpenAudio = info => {
+  openExternalAudio(info);
+};
+
+/* ---------------------------------------------------------------------------
    Editar el nombre del archivo y las etiquetas ID3 (app Android 1.13+)
 --------------------------------------------------------------------------- */
 const MUS_TAG_FIELDS = [
@@ -2403,12 +2480,12 @@ function editTrackFlow(t) {
   const ext = trackExt(t);
   const base = String(t.file || '').slice(0, ext ? -ext.length : undefined);
   const mp3 = /^\.mp3$/i.test(ext);
-  const can = canEditFiles();
+  const can = canEditFiles() && /^a\d+$/.test(t.id);
   const v = trackTagValues(t);
   const form = document.createElement('form');
   form.className = 'pod-sheet-form mus-edit';
   form.innerHTML = `
-    ${can ? '' : `<p class="mus-hint">⚠️ ${musicState.source === 'android' ? 'Para cambiar el archivo hace falta la última versión de la app Android.' : 'Cambiar el archivo solo se puede en la app Android.'}</p>`}
+    ${can ? '' : `<p class="mus-hint">⚠️ ${t.external ? 'Este archivo se abrió desde otra app y no se puede modificar desde aquí.' : musicState.source === 'android' ? 'Para cambiar el archivo hace falta la última versión de la app Android.' : 'Cambiar el archivo solo se puede en la app Android.'}</p>`}
     <label><span>Nombre del archivo</span><div class="mus-edit-file"><input type="text" name="file" value="${pEsc(base)}" maxlength="190" autocomplete="off" spellcheck="false"><b>${pEsc(ext)}</b></div></label>
     <div class="mus-edit-tools"><button type="button" data-do="fromTags">↓ Nombre desde las etiquetas</button><button type="button" data-do="fromFile">↑ Etiquetas desde el nombre</button></div>
     <fieldset class="mus-edit-tags"${mp3 ? '' : ' disabled'}><legend>Etiquetas ID3 ${mp3 ? '' : '· solo en MP3'}</legend>
@@ -3379,6 +3456,13 @@ function initMusic() {
   $m('musExpPlay').onclick = toggleMusicPlay;
   $m('musExpPrev').onclick = () => prevTrack();
   initMusicSwipe();
+  // Si la app se abrió con un archivo de audio de otra app.
+  setTimeout(() => {
+    try {
+      const o = window.Android?.takeOpenedAudio?.();
+      if (o) openExternalAudio(o);
+    } catch {}
+  }, 300);
   $m('musExpNext').onclick = () => nextTrack(false);
   $m('musExpShuffle').onclick = toggleMusicShuffle;
   $m('musExpRepeat').onclick = cycleMusicRepeat;

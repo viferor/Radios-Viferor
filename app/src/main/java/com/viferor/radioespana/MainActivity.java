@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
     private static final String START_URL = "https://radiosviferor.vercel.app/";
     private static final String APP_HOST = "radiosviferor.vercel.app";
     public static final String EXTRA_PODCAST_FEED_URL = "podcastFeedUrl";
+    static final String ACTION_OPEN_AUDIO = "com.viferor.radioespana.OPEN_AUDIO";
+    private volatile String pendingOpenAudio;
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int FILE_SAVE_REQUEST = 1002;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1003;
@@ -71,7 +73,7 @@ public class MainActivity extends Activity {
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
         handleNotificationIntent(getIntent());
-        handleWidgetOpenIntent(getIntent());
+        if (!handleOpenAudioIntent(getIntent())) handleWidgetOpenIntent(getIntent());
     }
 
     private void setupWebView(String url) {
@@ -281,7 +283,44 @@ public class MainActivity extends Activity {
         setIntent(intent);
         if (intent != null) handleMediaControlAction(intent.getAction());
         handleNotificationIntent(intent);
-        handleWidgetOpenIntent(intent);
+        if (!handleOpenAudioIntent(intent)) handleWidgetOpenIntent(intent);
+    }
+
+    /** Audio o lista M3U abiertos desde otra app (ver OpenAudioActivity). */
+    private boolean handleOpenAudioIntent(Intent intent) {
+        if (intent == null || !ACTION_OPEN_AUDIO.equals(intent.getAction()) || intent.getData() == null) return false;
+        final Uri uri = intent.getData();
+        final String type = intent.getType();
+        intent.setAction(Intent.ACTION_MAIN); // que no se repita al girar la pantalla
+        new Thread(() -> {
+            String json;
+            try {
+                json = ExternalAudio.describe(this, uri, type).toString();
+            } catch (Exception e) {
+                json = "{\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}";
+            }
+            final String j = json;
+            runOnUiThread(() -> {
+                pendingOpenAudio = j;
+                deliverOpenAudio(0);
+            });
+        }, "open-audio").start();
+        return true;
+    }
+
+    /** Se entrega cuando la web está lista (si no, la web lo recoge con takeOpenedAudio). */
+    private void deliverOpenAudio(int attempt) {
+        final String j = pendingOpenAudio;
+        if (j == null || webView == null) return;
+        if (!bridgeTrusted) {
+            if (attempt < 40) webView.postDelayed(() -> deliverOpenAudio(attempt + 1), 500);
+            return;
+        }
+        webView.evaluateJavascript("(function(){if(!window.viferorOpenAudio)return 'no';window.viferorOpenAudio(" + j + ");return 'ok';})()", r -> {
+            if ("\"ok\"".equals(r)) {
+                if (j.equals(pendingOpenAudio)) pendingOpenAudio = null;
+            } else if (attempt < 40) webView.postDelayed(() -> deliverOpenAudio(attempt + 1), 500);
+        });
     }
 
     private void handleWidgetOpenIntent(Intent intent) {
@@ -507,6 +546,15 @@ public class MainActivity extends Activity {
         public void editMusicFile(String reqId, String id, String json) {
             if (!bridgeTrusted) return;
             runOnUiThread(() -> musicEditor.start(reqId, id, json));
+        }
+
+        /** Audio abierto desde otra app que aún no se ha entregado a la web (o ""). */
+        @JavascriptInterface
+        public String takeOpenedAudio() {
+            if (!bridgeTrusted) return "";
+            String j = pendingOpenAudio;
+            pendingOpenAudio = null;
+            return j == null ? "" : j;
         }
 
         /** Por dónde suena ahora: JSON {type, name} (speaker | wired | usb | bluetooth | other). */

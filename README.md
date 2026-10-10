@@ -1,6 +1,20 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.27.0 · APK 1.14.0 — Abrir archivos de audio con la app
+
+La app aparece en «Abrir con…» y «Compartir» de cualquier archivo de audio (MP3, M4A, FLAC,
+OGG/Opus, WAV…) y de las listas M3U/M3U8, desde el gestor de archivos, WhatsApp, Telegram,
+Drive… Android pregunta con qué app abrirlo; eligiendo Radios Viferor y «Siempre» queda como
+reproductor predeterminado de esos tipos.
+
+- `OpenAudioActivity` (invisible) recibe el archivo y se lo pasa a la ventana de la app sin
+  abrir otra copia; `ExternalAudio` lee nombre, tamaño, etiquetas, duración y carátula.
+- Si el archivo es una canción de la biblioteca (por id de MediaStore, o por nombre y tamaño
+  cuando no hay duda) suena como tal; si no, suena desde `/__music/ext/{ficha}` (con Range),
+  con su carátula en `/__music/extart/{ficha}` y título/artista desde las etiquetas o el nombre.
+- Una lista M3U se convierte en una lista de Mi música con las canciones que haya en el móvil.
+
 ## 1.26.0 · APK 1.13.0 — Editar nombre del archivo y etiquetas ID3
 
 Menú ⋯ de una canción → **✏️ Editar nombre y etiquetas…**: cambia el nombre del archivo
