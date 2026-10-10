@@ -1,6 +1,14 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.22.0 — Buscar canciones cortas o rotas
+
+Menú ⋯ de Mi música → **⏱ Buscar canciones cortas o rotas…**: lista las canciones que duran
+menos de lo que elijas (5 s, 15 s, 30 s, 1 min, 2 min u otra duración, en segundos o m:ss),
+de la más corta a la más larga, incluidas las que no tienen duración. Debajo de cada una
+sale la ruta del archivo; se pueden reproducir, guardar como lista, exportar sus rutas a
+.txt u ocultar su carpeta.
+
 ## 1.21.1 — Deslizar para cambiar de canción
 
 En el reproductor de música ampliado, deslizar el dedo a la **izquierda** pone la canción

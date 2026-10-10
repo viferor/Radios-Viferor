@@ -23,7 +23,8 @@ const MUS_KEYS = {
   ui: 'radios_viferor_music_ui_v1',
   volume: 'radios_viferor_music_volume',
   favs: 'radios_viferor_music_favs_v1',
-  folders: 'radios_viferor_music_folders_v1'
+  folders: 'radios_viferor_music_folders_v1',
+  shortSecs: 'radios_viferor_music_short_secs'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -1603,6 +1604,7 @@ function renderMusicScreen() {
   if (kind === 'list') return renderMusicList(root, key);
   if (kind === 'queue') return renderMusicQueue(root);
   if (kind === 'fmanage') return renderFolderManager(root);
+  if (kind === 'short') return renderShortTracks(root, Number(key) || 30);
   renderMusicTab(root, musicState.tab);
 }
 
@@ -1963,6 +1965,87 @@ function trackInfo(t) {
   podSheet({ title: 'Información', body, cancel: 'Cerrar' });
 }
 
+/* ---------------------------------------------------------------------------
+   Canciones cortas (para encontrar archivos rotos o cortados)
+--------------------------------------------------------------------------- */
+const MUS_SHORT_STEPS = [5, 15, 30, 60, 120];
+function fmtSecsLabel(n) {
+  return n < 60 ? `${n} s` : n % 60 ? `${Math.floor(n / 60)} min ${n % 60} s` : `${n / 60} min`;
+}
+function shortTracks(secs) {
+  return musicState.tracks.filter(t => !(t.dur > 0) || t.dur < secs).sort((a, b) => (a.dur || 0) - (b.dur || 0) || musCollator.compare(a.title, b.title));
+}
+async function askShortSecs() {
+  const v = await podPromptText({ title: '⏱ Duración máxima', label: 'Segundos o minutos (por ejemplo 45 o 1:30)', value: String(lsGet(MUS_KEYS.shortSecs, 30)), ok: 'Buscar', placeholder: '30' });
+  if (v == null) return null;
+  const m = String(v).trim().match(/^(\d+)(?:[:.,'](\d{1,2}))?\s*(s|seg|min|m)?$/i);
+  if (!m) return podToast('Escribe un número de segundos, o minutos:segundos'), null;
+  let n = m[2] != null ? Number(m[1]) * 60 + Number(m[2]) : Number(m[1]);
+  if (m[2] == null && /^m/i.test(m[3] || '')) n *= 60;
+  return Math.max(1, Math.min(3600, n));
+}
+function chooseShortTracks() {
+  const last = lsGet(MUS_KEYS.shortSecs, 30);
+  const steps = [...new Set([...MUS_SHORT_STEPS, last])].sort((a, b) => a - b);
+  podSheet({
+    title: '⏱ Canciones cortas',
+    subtitle: 'Sirve para encontrar archivos rotos o cortados. También salen las que no tienen duración.',
+    items: [
+      ...steps.map(n => ({ icon: n === last ? '●' : '○', label: `Menos de ${fmtSecsLabel(n)}`, hint: plural(shortTracks(n).length, 'canción', 'canciones'), on: () => openShortTracks(n) })),
+      { icon: '✏️', label: 'Otra duración…', on: async () => (n => n && openShortTracks(n))(await askShortSecs()) }
+    ]
+  });
+}
+function openShortTracks(n, replace = false) {
+  lsSet(MUS_KEYS.shortSecs, n);
+  openMusicScreen('short:' + n, { replace });
+}
+function renderShortTracks(root, secs) {
+  const songs = shortTracks(secs);
+  const unknown = songs.filter(t => !(t.dur > 0)).length;
+  root.append(detailHead(`Menos de ${fmtSecsLabel(secs)}`, `${plural(songs.length, 'canción', 'canciones')}${unknown ? ` · ${unknown} sin duración` : ''} · de la más corta a la más larga`, null));
+  const chips = musEl('div', 'mus-chips');
+  [...new Set([...MUS_SHORT_STEPS, secs])]
+    .sort((a, b) => a - b)
+    .forEach(n => {
+      const b = musEl('button', n === secs ? 'on' : '', pEsc('< ' + fmtSecsLabel(n)));
+      b.type = 'button';
+      b.onclick = () => openShortTracks(n, true);
+      chips.append(b);
+    });
+  const other = musEl('button', '', '✏️ Otra');
+  other.type = 'button';
+  other.onclick = async () => (n => n && openShortTracks(n, true))(await askShortSecs());
+  chips.append(other);
+  root.append(chips);
+  if (!songs.length) {
+    root.append(musEl('div', 'pod-empty pod-empty-small', `<p>No hay ninguna canción de menos de ${pEsc(fmtSecsLabel(secs))}. 👍</p>`));
+    return;
+  }
+  root.append(
+    collectionActions(songs, {
+      label: 'estas canciones',
+      more: () =>
+        podSheet({
+          title: 'Canciones cortas',
+          items: [
+            { icon: '📃', label: 'Guardar como lista…', on: () => chooseMusicListFor(songs) },
+            { icon: '📄', label: 'Exportar sus rutas (.txt)', hint: 'Para localizarlas y borrarlas o reemplazarlas', on: () => downloadText(`canciones-de-menos-de-${secs}s.txt`, songs.map(t => `${fmtDur(t.dur || 0)}\t${[t.folder, t.file].filter(Boolean).join('/') || t.title}`).join('\n') + '\n', 'text/plain') }
+          ]
+        })
+    })
+  );
+  root.append(musEl('p', 'mus-hint', 'Debajo de cada una sale dónde está el archivo. Con ⋯ puedes ir a su carpeta u ocultarla.'));
+  const box = musEl('div', 'pod-queue');
+  root.append(box);
+  appendRowsChunked(box, songs, (t, i) =>
+    trackRow(t, i, {
+      sub: (t.dur > 0 ? '' : '⚠️ sin duración · ') + ([t.folder, t.file].filter(Boolean).join('/') || trackSub(t)),
+      onPlay: k => playCollection(songs, k),
+      menuExtra: x => (x.folder ? [{ icon: '🙈', label: 'Ocultar su carpeta en Mi música', hint: x.folder, on: () => setFolderRule(x.folder, 'exclude', true) }] : [])
+    })
+  );
+}
 /* ===========================================================================
    Listas: pestaña, detalle y editor
 =========================================================================== */
@@ -2547,6 +2630,7 @@ function initMusic() {
         { icon: '☰', label: 'Cola', hint: plural(musicState.queue.length, 'canción', 'canciones'), on: () => openMusicScreen('queue') },
         { icon: '📃', label: 'Listas', on: () => setMusicTab('lists') },
         { icon: '🎚️', label: 'Sonido y ecualizador', hint: 'Corrección de auriculares, fundidos, nivelador…', on: () => window.openFxPanel?.() },
+        { icon: '⏱', label: 'Buscar canciones cortas o rotas…', hint: 'Las que duran menos de lo que elijas', disabled: !musicState.tracks.length, on: chooseShortTracks },
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
         { icon: '🔄', label: isAndroidApp() ? 'Volver a buscar música en el móvil' : 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
