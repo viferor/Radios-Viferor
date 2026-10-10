@@ -356,7 +356,7 @@ function closeLyricsPanel() {
 window.closeLyricsPanel = closeLyricsPanel;
 async function loadLyricsFor(t, opts = {}) {
   const tok = ++lyr.token;
-  Object.assign(lyr, { track: t, data: null, adj: null, loading: true, error: '', trans: null, transError: '', meaning: null, meaningOpen: false, meaningError: '', sync: null, cur: -1 });
+  Object.assign(lyr, { track: t, data: null, adj: null, loading: true, error: '', trans: null, transError: '', meaning: null, meaningOpen: false, meaningLoading: false, meaningError: '', sync: null, cur: -1 });
   renderLyrics();
   try {
     const d = await loadLyrics(t, opts);
@@ -404,7 +404,7 @@ function renderLyrics() {
   body.classList.toggle('lyr-adjusting', adjusting);
   $m('lyrGuide').hidden = !adjusting;
   if (lyr.sync) return renderSyncEditor(body, foot);
-  if (lyr.loading) return body.append(musEl('div', 'lyr-msg', '<div class="lyr-spin"></div>Buscando la letra…'));
+  if (lyr.loading) return body.append(musEl('div', 'lyr-msg', `<div class="lyr-spin"></div>${lyr.mode === 'meaning' ? 'Buscando la letra para explicar mejor la canción…' : 'Buscando la letra…'}`));
   // El significado no depende de tener la letra: con título y artista basta.
   if (lyr.mode === 'meaning' && (lyr.error || !lyr.data?.lines?.length)) {
     body.append(renderMeaningCard());
@@ -952,19 +952,36 @@ async function ensureTranslation(force = false) {
 function aiDeviceKey() {
   return lsGet(LYR_AI_KEY, null);
 }
+// El mejor significado sale con la letra; sin ella, con las etiquetas ID3
+// (título, artista, álbum, año, género) y el nombre del archivo.
+function lyrLyricsText() {
+  return lyr.data?.instrumental ? '' : (lyr.data?.lines || []).map(l => l.text).join('\n').trim();
+}
+let meaningBusy = '';
 async function openMeaning(force = false) {
   lyr.meaningOpen = true;
   const t = lyr.track;
+  if (!t) return;
+  // Si aún se está buscando la letra, se espera: al terminar se vuelve a llamar
+  // (loadLyricsFor) y el significado sale con la letra si la hay.
+  if (lyr.loading) return renderLyrics();
   const ck = 'm|' + lyrKey(t);
   const tok = lyr.token;
+  const lyrics = lyrLyricsText();
   if (!force && !lyr.meaning) {
     const c = await idbGet('lyrics', ck);
-    if (c && tok === lyr.token) {
+    if (tok !== lyr.token) return;
+    // Uno hecho sin letra se rehace solo cuando ya hay letra (sale mejor).
+    if (c && !(c.noLyrics && lyrics)) {
       lyr.meaning = c;
       return renderLyrics();
     }
   }
-  if (lyr.meaning && !force) return renderLyrics();
+  if (lyr.meaning && !force && !(lyr.meaning.noLyrics && lyrics)) return renderLyrics();
+  const busy = tok + '|' + (lyrics ? 1 : 0);
+  if (!force && meaningBusy === busy) return; // ya se está pidiendo
+  meaningBusy = busy;
+  lyr.meaning = null;
   lyr.meaningLoading = true;
   lyr.meaningError = '';
   renderLyrics();
@@ -975,19 +992,22 @@ async function openMeaning(force = false) {
       headers['X-AI-Provider'] = dk.provider;
       headers['X-AI-Key'] = dk.key;
     }
-    const lyrics = (lyr.data?.lines || []).map(l => l.text).join('\n');
-    const r = await fetch('/api/song-meaning', { method: 'POST', headers, body: JSON.stringify({ title: t.title, artist: t.artist, album: t.album, year: t.year || '', lyrics }) });
+    const file = String(t.file || '').replace(/\.[a-z0-9]{2,5}$/i, '');
+    const body = { title: t.title, artist: t.artist || t.albumArtist || '', album: t.album, year: t.year || '', lyrics, albumArtist: t.albumArtist || '', genre: t.genre || '', file: file && file !== t.title ? file : '' };
+    const r = await fetch('/api/song-meaning', { method: 'POST', headers, body: JSON.stringify(body) });
     const res = await r.json().catch(() => ({}));
     if (r.status === 501 && res.error === 'no-key') throw Object.assign(Error('no-key'), { noKey: true });
     if (!r.ok) throw Error(res.error || 'No se pudo obtener el significado');
-    if (tok !== lyr.token) return;
-    lyr.meaning = { text: res.text, provider: res.provider, model: res.model, at: Date.now() };
-    idbPut('lyrics', ck, lyr.meaning);
+    const m = { text: res.text, provider: res.provider, model: res.model, at: Date.now(), noLyrics: !lyrics };
+    idbPut('lyrics', ck, m);
+    if (tok === lyr.token) lyr.meaning = m;
   } catch (e) {
     if (tok === lyr.token) lyr.meaningError = e.noKey ? 'no-key' : e?.message || 'Error';
   }
+  if (meaningBusy === busy) meaningBusy = '';
+  if (tok !== lyr.token) return;
   lyr.meaningLoading = false;
-  if (tok === lyr.token) renderLyrics();
+  renderLyrics();
 }
 function renderMeaningCard() {
   const card = musEl('section', 'lyr-meaning');

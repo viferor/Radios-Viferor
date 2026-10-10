@@ -1,7 +1,7 @@
 // Significado de una canción (qué quiso transmitir el autor), explicado por una IA.
 //
 //   GET  /api/song-meaning?info=1   → { server: { gemini, anthropic } }  (claves configuradas)
-//   POST /api/song-meaning  { title, artist, album, year, lyrics }
+//   POST /api/song-meaning  { title, artist, album, year, lyrics, albumArtist?, genre?, file? }
 //        → { text, provider, model }
 //
 // Claves (por orden): variables de entorno de Vercel GEMINI_API_KEY (gratis en Google
@@ -30,10 +30,22 @@ Los temas principales y las metáforas o imágenes más importantes, explicadas.
 
 Reglas: no copies la letra; como mucho menciona fragmentos muy breves (menos de 8 palabras). Si no te paso la letra, explica la canción a partir del título, el artista y lo que sepas de ella (sin reconstruir ni citar la letra). Si la canción no te suena: con letra, basa el análisis en ella y avísalo al principio; sin letra, dilo claramente en dos o tres frases, cuenta solo lo que sepas con seguridad del artista o del álbum y no inventes nada. Entre 250 y 450 palabras.`;
 
-export function buildUserPrompt({ title, artist, album, year, lyrics }) {
-  const meta = [`Título: ${title}`, artist && `Artista: ${artist}`, album && `Álbum: ${album}`, year && `Año: ${year}`].filter(Boolean).join('\n');
+export function buildUserPrompt({ title, artist, album, year, lyrics, albumArtist, genre, file }) {
+  const meta = [
+    `Título: ${title}`,
+    artist && `Artista: ${artist}`,
+    albumArtist && albumArtist !== artist && `Artista del álbum: ${albumArtist}`,
+    album && `Álbum: ${album}`,
+    year && `Año: ${year}`,
+    genre && `Género: ${genre}`,
+    // Sin etiquetas buenas, el nombre del archivo suele traer «Artista - Título».
+    file && `Nombre del archivo: ${file}`
+  ]
+    .filter(Boolean)
+    .join('\n');
   const text = String(lyrics || '').trim().slice(0, 4000);
-  if (!text) return `${meta}\n\nNo tengo la letra de esta canción: explícala por su título, su artista y lo que se sepa de ella.`;
+  if (!text)
+    return `${meta}\n\nNo tengo la letra de esta canción: explícala por su título, su artista y lo que se sepa de ella. Si el título o el artista parecen incompletos o mal escritos, usa también el álbum y el nombre del archivo para reconocerla.`;
   return `${meta}\n\nLetra (para tu análisis, no la reproduzcas):\n"""\n${text}\n"""`;
 }
 
@@ -176,7 +188,8 @@ export default async function handler(req, res) {
     const b = await readJson(req);
     const title = String(b.title || '').slice(0, 200).trim();
     if (!title) return res.status(400).json({ error: 'Falta el título' });
-    const prompt = buildUserPrompt({ title, artist: String(b.artist || '').slice(0, 200), album: String(b.album || '').slice(0, 200), year: Number(b.year) || '', lyrics: String(b.lyrics || '') });
+    const s200 = v => String(v || '').slice(0, 200).trim();
+    const prompt = buildUserPrompt({ title, artist: s200(b.artist), album: s200(b.album), year: Number(b.year) || '', lyrics: String(b.lyrics || ''), albumArtist: s200(b.albumArtist), genre: s200(b.genre), file: s200(b.file) });
     let out;
     if (ch.provider === 'gemini') {
       try {
