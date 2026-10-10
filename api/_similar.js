@@ -35,10 +35,14 @@ export async function similarArtists(name) {
   let v = { artist: '', artists: [] };
   if (hit) {
     let names = [];
+    const errs = [];
     try {
       const rel = await deezer(`/artist/${hit.id}/related`);
       names = (rel.data || []).map(a => a.name).filter(Boolean);
-    } catch {}
+      if (!names.length) errs.push('related:' + JSON.stringify(rel).slice(0, 120));
+    } catch (e) {
+      errs.push('related:' + e.message);
+    }
     // Si Deezer no da «relacionados», se sacan de su radio del artista (canciones de
     // artistas parecidos), por orden de aparición.
     if (names.length < 5) {
@@ -50,9 +54,12 @@ export async function similarArtists(name) {
           const n = t.artist?.name;
           if (n && norm(n) !== self && !seen.has(norm(n))) seen.add(norm(n)), names.push(n);
         });
-      } catch {}
+        if (!(radio.data || []).length) errs.push('radio:' + JSON.stringify(radio).slice(0, 120));
+      } catch (e) {
+        errs.push('radio:' + e.message);
+      }
     }
-    v = { artist: hit.name, artists: names.slice(0, 60), via: names.length ? 'deezer' : 'none' };
+    v = { artist: hit.name, artists: names.slice(0, 60), via: names.length ? 'deezer' : 'none', ...(names.length ? {} : { errs }) };
   }
   cache.set(key, { t: Date.now(), v });
   if (cache.size > 3000) cache.delete(cache.keys().next().value);
