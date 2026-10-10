@@ -1,6 +1,17 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.25.0 · APK 1.12.0 — Sonido según por dónde suena
+
+En 🎚️ Sonido, **🔀 Según por dónde suena** (activado por defecto en la app Android 1.12+):
+el ecualizador, la corrección de auriculares, el balance y el mono se recuerdan por salida
+—altavoz del móvil, auriculares con cable, USB y cada dispositivo Bluetooth por su nombre—
+y se cambian solos al conectar o desconectar (aviso en pantalla). Un Bluetooth nuevo cuyo
+nombre coincide con unos auriculares conocidos (p. ej. realme Buds Air 7 Pro) estrena con su
+corrección; el resto empieza plano. Las salidas guardadas se ven en la tarjeta y se pueden
+olvidar. La APK avisa de los cambios con `AudioDeviceCallback` (en Android 13+ con la ruta
+real de la música; antes, Bluetooth > cable > altavoz).
+
 ## 1.24.0 — Canciones duplicadas
 
 - **👯 Buscar canciones duplicadas** (menú ⋯ de Mi música, y botón junto a «Cortas o rotas»):

@@ -52,6 +52,7 @@ public class MainActivity extends Activity {
     private String pendingSaveContent;
     private String pendingSaveMime;
     private MusicDeleter musicDeleter;
+    private AudioOutputWatcher audioOutput;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -62,6 +63,8 @@ public class MainActivity extends Activity {
         PodcastNotificationScheduler.schedule(this);
         podcastMediaController = PodcastMediaController.get(this);
         musicDeleter = new MusicDeleter(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        audioOutput = new AudioOutputWatcher(this, js -> { if (webView != null && bridgeTrusted) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        audioOutput.start();
         setupWebView(START_URL);
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
@@ -99,6 +102,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (activeInstance == this) activeInstance = null;
+        if (audioOutput != null) audioOutput.stop();
         if (filePathCallback != null) {
             filePathCallback.onReceiveValue(null);
             filePathCallback = null;
@@ -494,6 +498,12 @@ public class MainActivity extends Activity {
                 getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_MUSIC_PERMISSION_ASKED, true).apply();
                 requestPermissions(new String[]{LocalMusic.permissionName()}, MUSIC_PERMISSION_REQUEST);
             });
+        }
+
+        /** Por dónde suena ahora: JSON {type, name} (speaker | wired | usb | bluetooth | other). */
+        @JavascriptInterface
+        public String audioOutput() {
+            return bridgeTrusted && audioOutput != null ? audioOutput.current() : "";
         }
 
         /** "system" si Android pide confirmación al borrar (11+), "app" si la tiene que pedir la web. */

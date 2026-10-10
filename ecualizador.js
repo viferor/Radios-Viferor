@@ -87,19 +87,118 @@ const FX_DEFAULTS = {
   level: false,
   balance: 0,
   mono: false,
-  custom: []
+  custom: [],
+  autoOutput: true, // ajustes distintos según por dónde suena (app Android)
+  profiles: {} // salida → ajustes de sonido
 };
+// Lo que cambia con la salida (lo demás —fundidos, nivelador, presets guardados— es común).
+const FX_PROFILE_FIELDS = ['eq', 'bands', 'preset', 'autoPreamp', 'preamp', 'hpOn', 'hp', 'balance', 'mono'];
 function fxSettings() {
   const s = { ...FX_DEFAULTS, ...lsGet(FX_KEY, {}) };
   if (!Array.isArray(s.bands) || s.bands.length !== 10) s.bands = FX_DEFAULTS.bands.slice();
   if (!Array.isArray(s.custom)) s.custom = [];
+  if (!s.profiles || typeof s.profiles !== 'object') s.profiles = {};
   return s;
 }
-function saveFx(patch) {
+function saveFx(patch, { fromProfile = false } = {}) {
   const s = { ...fxSettings(), ...patch };
+  // Lo que se toca a mano queda guardado para la salida actual.
+  const out = fxOutput.cur;
+  if (!fromProfile && s.autoOutput && out && FX_PROFILE_FIELDS.some(k => k in patch)) {
+    s.profiles = { ...s.profiles, [out.key]: { ...pickProfile(s), label: out.label, at: Date.now() } };
+  }
   lsSet(FX_KEY, s);
   applyFx();
   return s;
+}
+function pickProfile(s) {
+  const o = {};
+  FX_PROFILE_FIELDS.forEach(k => (o[k] = Array.isArray(s[k]) ? s[k].slice() : s[k]));
+  return o;
+}
+
+/* ---------------------------------------------------------------------------
+   Según por dónde suena (app Android 1.12+): altavoz, cable, USB o cada Bluetooth
+--------------------------------------------------------------------------- */
+const fxOutput = { cur: null, supported: false };
+const fxKeyNorm = v =>
+  String(v || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+function describeOutput(o) {
+  const type = ['speaker', 'wired', 'usb', 'bluetooth'].includes(o?.type) ? o.type : 'other';
+  const name = String(o?.name || '').trim();
+  const key = type === 'bluetooth' || type === 'usb' || type === 'other' ? `${type}:${fxKeyNorm(name) || '?'}` : type;
+  const icon = { speaker: '🔊', wired: '🎧', usb: '🎧', bluetooth: '🎧', other: '🔈' }[type];
+  const label = type === 'speaker' ? 'Altavoz del móvil' : type === 'wired' ? 'Auriculares con cable' : name || (type === 'bluetooth' ? 'Bluetooth' : type === 'usb' ? 'Auriculares USB' : 'Otra salida');
+  return { type, name, key, icon, label };
+}
+// Corrección conocida para unos auriculares Bluetooth por su nombre (p. ej. «realme Buds Air7 Pro»).
+function hpForDevice(name, s) {
+  const n = fxKeyNorm(name);
+  if (n.length < 4) return null;
+  const known = [...HP_BUILTIN, s.hp, ...Object.values(s.profiles).map(p => p.hp)].filter(Boolean);
+  return known.find(h => {
+    const hn = fxKeyNorm(String(h.name || '').replace(/\(.*?\)/g, ''));
+    return hn.length >= 4 && (hn.includes(n) || n.includes(hn));
+  });
+}
+function profileForNew(out, s) {
+  const flat = { eq: false, bands: FX_DEFAULTS.bands.slice(), preset: 'Plano', autoPreamp: true, preamp: 0, hpOn: false, hp: s.hp, balance: 0, mono: false };
+  if (out.type === 'bluetooth' || out.type === 'usb') {
+    const hp = hpForDevice(out.name, s);
+    if (hp) return { ...flat, hpOn: true, hp: { name: hp.name, label: hp.label || hp.name, source: hp.source, path: hp.path, preamp: hp.preamp, filters: hp.filters.slice(0, HP_MAX) } };
+  }
+  return flat;
+}
+function onAudioOutput(raw, { initial = false } = {}) {
+  let o = raw;
+  if (typeof o === 'string') {
+    try {
+      o = JSON.parse(o);
+    } catch {
+      return;
+    }
+  }
+  if (!o || !o.type) return;
+  fxOutput.supported = true;
+  const out = describeOutput(o);
+  const prev = fxOutput.cur;
+  fxOutput.cur = out;
+  const s = fxSettings();
+  if (!s.autoOutput) return refreshFxPanel();
+  let prof = s.profiles[out.key];
+  let isNew = false;
+  if (!prof) {
+    isNew = true;
+    // La primera vez se aprovecha lo que ya tenías para la salida en la que estás
+    // (sin la corrección de auriculares si estás en el altavoz).
+    prof = initial && !Object.keys(s.profiles).length ? { ...pickProfile(s), ...(out.type === 'speaker' ? { hpOn: false } : {}) } : profileForNew(out, s);
+    s.profiles = { ...s.profiles, [out.key]: { ...prof, label: out.label, at: Date.now() } };
+    lsSet(FX_KEY, s);
+  }
+  // Al arrancar solo se guarda: la cadena de audio se crea con el primer toque.
+  if (initial) lsSet(FX_KEY, { ...fxSettings(), ...pickProfile({ ...s, ...prof }) });
+  else saveFx(pickProfile({ ...s, ...prof }), { fromProfile: true });
+  refreshFxPanel();
+  if (!prev || prev.key === out.key) return;
+  const what = prof.hpOn && prof.hp ? `corrección ${prof.hp.label || prof.hp.name}` : prof.eq ? `ecualizador «${prof.preset}»` : 'sin ecualizar';
+  podToast(`${out.icon} ${out.label}: ${what}${isNew && !prof.hpOn && out.type !== 'speaker' ? ' · busca su corrección en 🎚️ Sonido' : ''}`, { ms: 4500 });
+}
+window.onAndroidAudioOutput = o => onAudioOutput(o);
+function refreshFxPanel() {
+  const p = document.getElementById('fxPanel');
+  if (p && !p.hidden) renderFxPanel();
+}
+function forgetOutputProfile(key) {
+  const s = fxSettings();
+  const profiles = { ...s.profiles };
+  delete profiles[key];
+  lsSet(FX_KEY, { ...s, profiles });
+  if (fxOutput.cur?.key === key) onAudioOutput({ type: fxOutput.cur.type, name: fxOutput.cur.name });
+  else refreshFxPanel();
 }
 // ¿Hace falta la cadena de Web Audio? (los fundidos funcionan también sin ella)
 function fxNeedsGraph(s = fxSettings()) {
@@ -358,6 +457,7 @@ function renderFxPanel() {
     <canvas id="fxCurve" class="fx-curve" aria-label="Curva de ecualización"></canvas>
     <p class="fx-curve-note">${s.eq || (s.hpOn && s.hp) ? `Preamplificación total ${fmtDb(totalPreamp(s))} · limitador activo para que no sature.` : 'Activa el ecualizador o la corrección de tus auriculares para cambiar el sonido.'}</p>
 
+    ${fxOutput.supported ? outputCardHtml(s) : ''}
     <section class="fx-card">
       <label class="fx-switch"><input type="checkbox" data-k="hpOn" ${s.hpOn ? 'checked' : ''}><span><b>🎧 Corrección de auriculares</b><small>Ajusta tus auriculares a una curva de referencia (Harman), con mediciones de AutoEq de unos 9.000 modelos.</small></span></label>
       <div class="fx-hp-now">${s.hp ? `<b>${pEsc(hpName)}</b><small>${s.hp.filters.length} filtros · preamp ${fmtDb(s.hp.preamp || 0)} · medición de ${pEsc(s.hp.source || 'AutoEq')}</small>` : '<small>Sin auriculares elegidos.</small>'}</div>
@@ -390,7 +490,19 @@ function renderFxPanel() {
     <p class="fx-foot">Correcciones de auriculares: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT). Con la app Android, comprueba que sigue sonando con la pantalla apagada; si no, desactiva el ecualizador y avísame.</p>
   </div>`;
   p.querySelector('.fx-close').onclick = closeFxPanel;
-  p.querySelectorAll('input[type=checkbox][data-k]').forEach(c => (c.onchange = () => saveFx({ [c.dataset.k]: c.checked }) && renderFxPanel()));
+  p.querySelectorAll('input[type=checkbox][data-k]').forEach(
+    c =>
+      (c.onchange = () => {
+        saveFx({ [c.dataset.k]: c.checked });
+        if (c.dataset.k === 'autoOutput' && c.checked && fxOutput.cur) {
+          // Al activarlo, lo de ahora queda como ajuste de esta salida.
+          const st = fxSettings();
+          lsSet(FX_KEY, { ...st, profiles: { ...st.profiles, [fxOutput.cur.key]: { ...pickProfile(st), label: fxOutput.cur.label, at: Date.now() } } });
+        }
+        renderFxPanel();
+      })
+  );
+  p.querySelectorAll('[data-forget]').forEach(b => (b.onclick = () => forgetOutputProfile(b.dataset.forget)));
   p.querySelector('select[data-k=crossfade]').onchange = e => saveFx({ crossfade: Number(e.target.value) });
   p.querySelectorAll('[data-band]').forEach(r => {
     r.oninput = () => {
@@ -463,6 +575,16 @@ function renderFxPanel() {
   p.querySelector('.fx-body').scrollTop = sc;
   requestAnimationFrame(drawFxCurve);
 }
+function outputCardHtml(s) {
+  const out = fxOutput.cur;
+  const saved = Object.entries(s.profiles).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  const icon = k => (k === 'speaker' ? '🔊' : '🎧');
+  return `<section class="fx-card fx-out">
+      <label class="fx-switch"><input type="checkbox" data-k="autoOutput" ${s.autoOutput ? 'checked' : ''}><span><b>🔀 Según por dónde suena</b><small>Recuerda el ecualizador y la corrección de cada salida (altavoz, cable y cada Bluetooth) y los cambia solos al conectar o desconectar.</small></span></label>
+      <div class="fx-hp-now"><b>${out ? `${out.icon} Ahora: ${pEsc(out.label)}` : 'Salida desconocida'}</b><small>${s.autoOutput ? 'Lo que cambies aquí se guarda para esta salida.' : 'Desactivado: los mismos ajustes para todo.'}</small></div>
+      ${s.autoOutput && saved.length ? `<div class="fx-outs">${saved.map(([k, p]) => `<span class="fx-out-item${out?.key === k ? ' on' : ''}">${icon(k)} ${pEsc(p.label || k)} <small>${pEsc(p.hpOn && p.hp ? 'corrección' : p.eq ? p.preset : 'plano')}</small><button type="button" data-forget="${pEsc(k)}" aria-label="Olvidar">✕</button></span>`).join('')}</div>` : ''}
+    </section>`;
+}
 function balText(v) {
   v = Number(v) || 0;
   if (Math.abs(v) < 0.01) return 'Centro';
@@ -512,6 +634,10 @@ async function loadHeadphones(path) {
 
 function initFx() {
   document.getElementById('musExpFx')?.addEventListener('click', openFxPanel);
+  try {
+    const o = window.Android?.audioOutput?.();
+    if (o) onAudioOutput(o, { initial: true });
+  } catch {}
   // Si había algo activado, la cadena se crea al primer toque (los navegadores lo exigen).
   if (fxNeedsGraph()) {
     const arm = () => {
