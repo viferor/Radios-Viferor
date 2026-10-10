@@ -1,6 +1,13 @@
 # Radios Viferor
 Radios y podcast
 
+## APK 1.10.1 — Sin corte al pasar a segundo plano
+
+Al salir de la app, Android avisaba al WebView de que su ventana dejaba de verse;
+Chromium marcaba la página como oculta y reajustaba el audio, lo que producía un corte
+muy breve. Ahora, mientras hay algo sonando (servicio de reproducción activo), el WebView
+ignora ese aviso y el sonido sigue sin interrupción. Solo cambia la app Android.
+
 ## 1.20.0 — Sonido: ecualizador, corrección de auriculares y motor de dos platinas
 
 Botón **🎚️ Sonido** en el reproductor de música (y en el ⋯ de Mi música).

@@ -26,6 +26,8 @@ import android.webkit.WebResourceResponse;
 import android.graphics.Bitmap;
 import org.json.JSONObject;
 import android.view.Window;
+import android.view.View;
+import android.content.Context;
 
 public class MainActivity extends Activity {
     private static final String START_URL = "https://radiosviferor.vercel.app/";
@@ -66,7 +68,7 @@ public class MainActivity extends Activity {
     }
 
     private void setupWebView(String url) {
-        webView = new WebView(this);
+        webView = new AudioWebView(this);
         setContentView(webView);
 
         WebSettings settings = webView.getSettings();
@@ -140,6 +142,22 @@ public class MainActivity extends Activity {
      * Solo se navega dentro de la app. Cualquier otro enlace se abre fuera (navegador,
      * app correspondiente), para que una página ajena nunca tenga acceso al puente.
      */
+    /**
+     * WebView que no se da por "oculto" mientras suena algo. Al pasar la app a segundo
+     * plano Android manda GONE a la ventana; Chromium marca la pagina como oculta,
+     * baja la prioridad del renderer y rehace el audio, lo que provoca un corte breve.
+     * Mientras el servicio de reproduccion esta activo ignoramos ese cambio.
+     */
+    static class AudioWebView extends WebView {
+        AudioWebView(Context context) { super(context); }
+
+        @Override
+        protected void onWindowVisibilityChanged(int visibility) {
+            if (visibility != View.VISIBLE && MediaPlaybackService.isRunning()) return;
+            super.onWindowVisibilityChanged(visibility);
+        }
+    }
+
     private class AppWebViewClient extends WebViewClient {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
