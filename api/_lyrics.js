@@ -71,17 +71,32 @@ function shape(x) {
     source: 'lrclib'
   };
 }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+async function lrclibOnce(key) {
+  const r = await safeFetch(key, { headers: { 'User-Agent': UA, 'Lrclib-Client': UA, Accept: 'application/json' } }, { allowFirstHost: h => h === 'lrclib.net', timeoutMs: 8000 });
+  if (r.status === 404) return null;
+  if (!r.ok) throw Object.assign(new Error('LRCLIB no responde (' + r.status + ')'), { status: 502, retry: r.status === 429 || r.status >= 500 });
+  return JSON.parse(new TextDecoder().decode(await readLimited(r, 3_000_000)));
+}
+// LRCLIB a veces tarda o devuelve 5xx/429 puntuales: un reintento corto antes de rendirse.
 async function lrclib(path, params) {
   const u = new URL(BASE + path);
   Object.entries(params || {}).forEach(([k, v]) => v !== '' && v != null && u.searchParams.set(k, String(v)));
   const key = u.toString();
   const c = cache.get(key);
   if (c && Date.now() - c.t < TTL) return c.v;
-  const r = await safeFetch(key, { headers: { 'User-Agent': UA, 'Lrclib-Client': UA, Accept: 'application/json' } }, { allowFirstHost: h => h === 'lrclib.net', timeoutMs: 9000 });
-  let v = null;
-  if (r.status === 404) v = null;
-  else if (!r.ok) throw Object.assign(new Error('LRCLIB no responde (' + r.status + ')'), { status: 502 });
-  else v = JSON.parse(new TextDecoder().decode(await readLimited(r, 3_000_000)));
+  let v;
+  try {
+    v = await lrclibOnce(key);
+  } catch (e) {
+    if (e.retry === false) throw e;
+    await wait(700);
+    try {
+      v = await lrclibOnce(key);
+    } catch (e2) {
+      throw Object.assign(new Error(e2.name === 'AbortError' ? 'LRCLIB tarda demasiado en responder' : e2.message || 'LRCLIB no responde'), { status: 502 });
+    }
+  }
   cache.set(key, { t: Date.now(), v });
   if (cache.size > 2000) cache.delete(cache.keys().next().value);
   return v;
@@ -101,10 +116,12 @@ export default async function handler(req, res) {
     if (id) return res.status(200).json(shape(await lrclib('/get/' + id)));
     if (!title) return res.status(400).json({ error: 'Falta el título' });
     if (u.searchParams.get('search') === '1') {
-      const lists = await Promise.all([
+      const settled = await Promise.allSettled([
         lrclib('/search', { track_name: simplifyTitle(title), artist_name: artist }),
         artist ? lrclib('/search', { q: `${artist} ${simplifyTitle(title)}` }) : null
       ]);
+      if (settled.every(x => x.status === 'rejected' || !x.value) && settled.some(x => x.status === 'rejected')) throw settled.find(x => x.status === 'rejected').reason;
+      const lists = settled.map(x => (x.status === 'fulfilled' ? x.value : null));
       const seen = new Set();
       const items = lists
         .flat()
@@ -122,16 +139,22 @@ export default async function handler(req, res) {
         }));
       return res.status(200).json({ items });
     }
-    // 1) Firma exacta (artista, título, álbum y duración), 2) sin álbum, 3) búsqueda.
-    let hit = null;
-    if (artist && album && duration) hit = await lrclib('/get', { artist_name: artist, track_name: title, album_name: album, duration });
-    if (!hit && artist) {
-      const found = await lrclib('/search', { track_name: simplifyTitle(title), artist_name: artist });
-      hit = pickBest(found, { artist, title, duration });
-    }
+    // Firma exacta y búsqueda por artista+título a la vez; si una falla se usa la otra.
+    // Solo se da error si no ha respondido ninguna consulta.
+    const errors = [];
+    const soft = p => p.catch(e => (errors.push(e), undefined));
+    const [exact, byFields] = await Promise.all([
+      artist && album && duration ? soft(lrclib('/get', { artist_name: artist, track_name: title, album_name: album, duration })) : null,
+      artist ? soft(lrclib('/search', { track_name: simplifyTitle(title), artist_name: artist })) : null
+    ]);
+    let hit = exact && (exact.syncedLyrics || exact.plainLyrics || exact.instrumental) ? exact : null;
+    const fromFields = pickBest(byFields, { artist, title, duration });
+    if (!hit || (!hit.syncedLyrics && !hit.instrumental && fromFields?.syncedLyrics)) hit = fromFields || hit;
     if (!hit) {
-      const found = await lrclib('/search', { q: `${artist} ${simplifyTitle(title)}`.trim() });
+      const found = await soft(lrclib('/search', { q: `${artist} ${simplifyTitle(title)}`.trim() }));
       hit = pickBest(found, { artist, title, duration });
+      const asked = (artist && album && duration ? 1 : 0) + (artist ? 1 : 0) + 1;
+      if (!hit && errors.length >= asked) throw errors[0];
     }
     return res.status(200).json(shape(hit));
   } catch (e) {

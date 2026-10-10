@@ -136,19 +136,129 @@ async function lyrSidecar(t) {
   }
   return '';
 }
+// Consulta de letras: primero nuestro servidor (/api/lyrics, con caché); si falla o
+// tarda, se pregunta a LRCLIB directamente desde el móvil/navegador (admite CORS).
+const LRC_DIRECT = 'https://lrclib.net/api';
+const lrcSig = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+function lrcNorm(v) {
+  return String(v ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+function lrcSimplify(t) {
+  return String(t ?? '')
+    .replace(/\s*[([](feat\.?|ft\.?|with|con)\s[^)\]]*[)\]]/gi, '')
+    .replace(/\s+-\s+(\d{4}\s+)?(remaster(ed)?|live|en directo|mono|stereo|radio edit|single version|versi[oó]n).*$/i, '')
+    .replace(/\s*[([](\d{4}\s+)?(remaster(ed)?|live|en directo|mono|stereo|radio edit|single version|bonus track|explicit)[^)\]]*[)\]]/gi, '')
+    .trim();
+}
+function lrcPickBest(items, { artist = '', title = '', duration = 0 } = {}) {
+  const a = lrcNorm(artist),
+    t = lrcNorm(lrcSimplify(title));
+  let best = null,
+    bs = -1e9;
+  for (const x of items || []) {
+    if (!x || !(x.syncedLyrics || x.plainLyrics || x.instrumental)) continue;
+    const xa = lrcNorm(x.artistName),
+      xt = lrcNorm(lrcSimplify(x.trackName));
+    let sc = t && xt === t ? 40 : t && (xt.includes(t) || t.includes(xt)) ? 20 : -30;
+    sc += a ? (xa === a || xa.includes(a) || a.includes(xa) ? 30 : -20) : 0;
+    if (x.syncedLyrics) sc += 15;
+    if (duration && x.duration) {
+      const d = Math.abs(x.duration - duration);
+      sc += d <= 2 ? 15 : d <= 5 ? 8 : d <= 15 ? 0 : -15;
+    }
+    if (sc > bs) (bs = sc), (best = x);
+  }
+  return bs >= 30 ? best : null;
+}
+const lrcShape = x =>
+  x
+    ? { found: true, id: x.id, trackName: x.trackName || '', artistName: x.artistName || '', albumName: x.albumName || '', duration: Number(x.duration) || 0, instrumental: !!x.instrumental, synced: x.syncedLyrics || '', plain: x.plainLyrics || '', source: 'lrclib' }
+    : { found: false };
+async function lrcDirect(path, params = {}) {
+  const u = new URL(LRC_DIRECT + path);
+  Object.entries(params).forEach(([k, v]) => v !== '' && v != null && u.searchParams.set(k, String(v)));
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await fetch(u, { signal: lrcSig(15000) });
+      if (r.status === 404) return null;
+      if (r.ok) return await r.json();
+      if (r.status !== 429 && r.status < 500) throw Error('LRCLIB ' + r.status);
+    } catch (e) {
+      if (i) throw Error(e?.name === 'TimeoutError' ? 'LRCLIB tarda demasiado' : 'LRCLIB no responde');
+    }
+    await new Promise(r => setTimeout(r, 800));
+  }
+  throw Error('LRCLIB no responde');
+}
+async function lrcDirectQuery(q) {
+  if (q.id) return lrcShape(await lrcDirect('/get/' + q.id));
+  const title = lrcSimplify(q.title);
+  if (q.search) {
+    const lists = await Promise.allSettled([lrcDirect('/search', { track_name: title, artist_name: q.artist }), q.artist ? lrcDirect('/search', { q: `${q.artist} ${title}` }) : null]);
+    if (lists.every(x => x.status === 'rejected')) throw lists[0].reason;
+    const seen = new Set();
+    const items = lists
+      .flatMap(x => (x.status === 'fulfilled' && x.value) || [])
+      .filter(x => x && !seen.has(x.id) && seen.add(x.id))
+      .slice(0, 40)
+      .map(x => ({ id: x.id, trackName: x.trackName, artistName: x.artistName, albumName: x.albumName, duration: x.duration, instrumental: !!x.instrumental, hasSynced: !!x.syncedLyrics, hasPlain: !!x.plainLyrics }));
+    return { items };
+  }
+  const tries = [];
+  if (q.artist && q.album && q.duration) tries.push(() => lrcDirect('/get', { artist_name: q.artist, track_name: q.title, album_name: q.album, duration: q.duration }).then(x => (x ? [x] : [])));
+  if (q.artist) tries.push(() => lrcDirect('/search', { track_name: title, artist_name: q.artist }));
+  tries.push(() => lrcDirect('/search', { q: `${q.artist || ''} ${title}`.trim() }));
+  let err = null,
+    ok = 0;
+  for (const f of tries) {
+    try {
+      const hit = lrcPickBest(await f(), q);
+      ok++;
+      if (hit) return lrcShape(hit);
+    } catch (e) {
+      err = e;
+    }
+  }
+  if (!ok && err) throw err;
+  return { found: false };
+}
+// q: { id } | { artist, title, album, duration, search }
+async function lyricsQuery(q) {
+  const u = new URL('/api/lyrics', location.origin);
+  if (q.id) u.searchParams.set('id', q.id);
+  else {
+    if (q.search) u.searchParams.set('search', '1');
+    u.searchParams.set('artist', q.artist || '');
+    u.searchParams.set('title', q.title || '');
+    if (q.album) u.searchParams.set('album', q.album);
+    if (q.duration) u.searchParams.set('duration', q.duration);
+  }
+  let first;
+  try {
+    const r = await fetch(u, { signal: lrcSig(25000) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) return d;
+    first = Error(d.error || 'No se pudo buscar la letra');
+  } catch (e) {
+    first = e;
+  }
+  try {
+    return await lrcDirectQuery(q);
+  } catch (e) {
+    throw Error(e?.message || first?.message || 'No se pudo buscar la letra');
+  }
+}
 async function lyrOnline(t, force = false) {
   const ck = 'l|' + lyrKey(t);
   const c = !force && (await idbGet('lyrics', ck));
   // Lo no encontrado se vuelve a buscar al día siguiente.
   if (c && (c.found || Date.now() - c.at < 86400000)) return c;
-  const u = new URL('/api/lyrics', location.origin);
-  u.searchParams.set('artist', t.artist || '');
-  u.searchParams.set('title', t.title || '');
-  if (t.album) u.searchParams.set('album', t.album);
-  if (t.dur) u.searchParams.set('duration', Math.round(t.dur));
-  const r = await fetch(u);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw Error(d.error || 'No se pudo buscar la letra');
+  const d = await lyricsQuery({ artist: t.artist || '', title: t.title || '', album: t.album || '', duration: t.dur ? Math.round(t.dur) : 0 });
   const v = { found: !!d.found, id: d.id, synced: d.synced || '', plain: d.plain || '', instrumental: !!d.instrumental, at: Date.now() };
   idbPut('lyrics', ck, v);
   return v;
@@ -564,13 +674,7 @@ async function searchOtherLyrics() {
   podToast('Buscando versiones…', { ms: 6000 });
   let items = [];
   try {
-    const u = new URL('/api/lyrics', location.origin);
-    u.searchParams.set('search', '1');
-    u.searchParams.set('artist', t.artist || '');
-    u.searchParams.set('title', t.title || '');
-    const r = await fetch(u);
-    const d = await r.json();
-    if (!r.ok) throw Error(d.error);
+    const d = await lyricsQuery({ search: true, artist: t.artist || '', title: t.title || '' });
     items = d.items || [];
   } catch (e) {
     return podToast('No se pudo buscar: ' + (e?.message || 'error'));
@@ -593,9 +697,8 @@ async function searchOtherLyrics() {
 }
 async function pickLrclibVersion(id) {
   try {
-    const r = await fetch('/api/lyrics?id=' + encodeURIComponent(id));
-    const d = await r.json();
-    if (!r.ok || !d.found) throw Error(d.error || 'No encontrada');
+    const d = await lyricsQuery({ id: String(id).replace(/\D/g, '') });
+    if (!d.found) throw Error('No encontrada');
     if (d.instrumental && !d.synced && !d.plain) return podToast('Esa versión es instrumental');
     lyrUserSet(lyr.track, { text: d.synced || d.plain, source: 'lrclib', lrclibId: d.id, offset: undefined });
     podToast(d.synced ? 'Versión sincronizada elegida' : 'Versión elegida');

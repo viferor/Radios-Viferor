@@ -1,6 +1,13 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.20.1 — Letras: LRCLIB más fiable
+
+Cuando LRCLIB tardaba o devolvía un error puntual, la búsqueda de letra fallaba con
+«LRCLIB no responde». Ahora el servidor reintenta, lanza a la vez la búsqueda exacta y la
+de artista+título y solo da error si fallan todas; y si nuestro servidor no consigue
+respuesta, la app pregunta a LRCLIB directamente desde el móvil.
+
 ## APK 1.10.1 — Sin corte al pasar a segundo plano
 
 Al salir de la app, Android avisaba al WebView de que su ventana dejaba de verse;
