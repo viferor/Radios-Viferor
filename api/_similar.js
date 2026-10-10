@@ -34,8 +34,25 @@ export async function similarArtists(name) {
   const hit = list.find(a => norm(a.name) === key) || list[0];
   let v = { artist: '', artists: [] };
   if (hit) {
-    const rel = await deezer(`/artist/${hit.id}/related?limit=60`);
-    v = { artist: hit.name, artists: (rel.data || []).map(a => a.name).filter(Boolean).slice(0, 60) };
+    let names = [];
+    try {
+      const rel = await deezer(`/artist/${hit.id}/related`);
+      names = (rel.data || []).map(a => a.name).filter(Boolean);
+    } catch {}
+    // Si Deezer no da «relacionados», se sacan de su radio del artista (canciones de
+    // artistas parecidos), por orden de aparición.
+    if (names.length < 5) {
+      try {
+        const radio = await deezer(`/artist/${hit.id}/radio?limit=100`);
+        const self = norm(hit.name);
+        const seen = new Set(names.map(norm));
+        (radio.data || []).forEach(t => {
+          const n = t.artist?.name;
+          if (n && norm(n) !== self && !seen.has(norm(n))) seen.add(norm(n)), names.push(n);
+        });
+      } catch {}
+    }
+    v = { artist: hit.name, artists: names.slice(0, 60), via: names.length ? 'deezer' : 'none' };
   }
   cache.set(key, { t: Date.now(), v });
   if (cache.size > 3000) cache.delete(cache.keys().next().value);
