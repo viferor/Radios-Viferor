@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePathCallback;
     private String pendingSaveContent;
     private String pendingSaveMime;
+    private MusicDeleter musicDeleter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,6 +61,7 @@ public class MainActivity extends Activity {
         createNotificationChannel();
         PodcastNotificationScheduler.schedule(this);
         podcastMediaController = PodcastMediaController.get(this);
+        musicDeleter = new MusicDeleter(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
         setupWebView(START_URL);
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
@@ -494,6 +496,19 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** "system" si Android pide confirmación al borrar (11+), "app" si la tiene que pedir la web. */
+        @JavascriptInterface
+        public String musicDeleteMode() {
+            return bridgeTrusted ? MusicDeleter.mode() : "none";
+        }
+
+        /** Borra del móvil las canciones (ids de MediaStore separados por comas). */
+        @JavascriptInterface
+        public void deleteMusicFiles(String reqId, String idsCsv) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> musicDeleter.start(reqId, idsCsv));
+        }
+
         @JavascriptInterface
         public void openAppSettings() {
             if (!bridgeTrusted) return;
@@ -628,6 +643,7 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (musicDeleter != null && musicDeleter.onRequestPermissionsResult(requestCode, grantResults)) return;
         if (requestCode == MUSIC_PERMISSION_REQUEST) {
             notifyWebMusicPermission(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
             return;
@@ -643,6 +659,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (musicDeleter != null && musicDeleter.onActivityResult(requestCode, resultCode)) return;
         if (requestCode == FILE_SAVE_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 try (OutputStream out = getContentResolver().openOutputStream(data.getData())) {

@@ -24,7 +24,9 @@ const MUS_KEYS = {
   volume: 'radios_viferor_music_volume',
   favs: 'radios_viferor_music_favs_v1',
   folders: 'radios_viferor_music_folders_v1',
-  shortSecs: 'radios_viferor_music_short_secs'
+  shortSecs: 'radios_viferor_music_short_secs',
+  hidden: 'radios_viferor_music_hidden_v1',
+  shortOk: 'radios_viferor_music_short_ok_v1'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -380,7 +382,8 @@ function finishLibrary(tracks, source) {
   musicState.allById = new Map(tracks.map(t => [t.id, t]));
   musicState.allByPath = new Map(tracks.map(t => [pathKey(t), t]));
   const ff = musicFolderFilter();
-  tracks = tracks.filter(t => folderVisible(t.folder, ff));
+  const hidden = musicHiddenMap();
+  tracks = tracks.filter(t => folderVisible(t.folder, ff) && !hidden[pathKey(t)]);
   musicState.source = source;
   musicState.tracks = tracks;
   musicState.byId = new Map(tracks.map(t => [t.id, t]));
@@ -1940,6 +1943,7 @@ function openTrackMenu(t, { extra = [] } = {}) {
       ar && { icon: '🎤', label: `Ir a ${ar.name}`, on: () => openMusicScreen('artist:' + ar.key) },
       t.folder && { icon: '📁', label: 'Ir a la carpeta', hint: t.folder, on: () => openMusicScreen('folder:' + t.folder) },
       { icon: 'ℹ️', label: 'Información', on: () => trackInfo(t) },
+      { icon: '🗑', label: 'Eliminar…', hint: 'Del móvil o solo de la biblioteca', on: () => deleteTracksFlow([t]) },
       ...(extra.length ? [{ sep: true }, ...extra] : [])
     ]
   });
@@ -1972,8 +1976,9 @@ const MUS_SHORT_STEPS = [5, 15, 30, 60, 120];
 function fmtSecsLabel(n) {
   return n < 60 ? `${n} s` : n % 60 ? `${Math.floor(n / 60)} min ${n % 60} s` : `${n / 60} min`;
 }
-function shortTracks(secs) {
-  return musicState.tracks.filter(t => !(t.dur > 0) || t.dur < secs).sort((a, b) => (a.dur || 0) - (b.dur || 0) || musCollator.compare(a.title, b.title));
+function shortTracks(secs, { withOk = false } = {}) {
+  const ok = new Set(withOk ? [] : lsGet(MUS_KEYS.shortOk, []));
+  return musicState.tracks.filter(t => (!(t.dur > 0) || t.dur < secs) && !ok.has(pathKey(t))).sort((a, b) => (a.dur || 0) - (b.dur || 0) || musCollator.compare(a.title, b.title));
 }
 async function askShortSecs() {
   const v = await podPromptText({ title: '⏱ Duración máxima', label: 'Segundos o minutos (por ejemplo 45 o 1:30)', value: String(lsGet(MUS_KEYS.shortSecs, 30)), ok: 'Buscar', placeholder: '30' });
@@ -2029,22 +2034,206 @@ function renderShortTracks(root, secs) {
         podSheet({
           title: 'Canciones cortas',
           items: [
+            { icon: '🗑', label: 'Eliminar todas…', hint: 'Del móvil o solo de la biblioteca', on: () => deleteTracksFlow(songs) },
             { icon: '📃', label: 'Guardar como lista…', on: () => chooseMusicListFor(songs) },
             { icon: '📄', label: 'Exportar sus rutas (.txt)', hint: 'Para localizarlas y borrarlas o reemplazarlas', on: () => downloadText(`canciones-de-menos-de-${secs}s.txt`, songs.map(t => `${fmtDur(t.dur || 0)}\t${[t.folder, t.file].filter(Boolean).join('/') || t.title}`).join('\n') + '\n', 'text/plain') }
           ]
         })
     })
   );
-  root.append(musEl('p', 'mus-hint', 'Debajo de cada una sale dónde está el archivo. Con ⋯ puedes ir a su carpeta u ocultarla.'));
+  root.append(musEl('p', 'mus-hint', 'Escúchala para comprobarla. Si está rota, ✕ para eliminarla (del móvil o solo de la biblioteca); si está bien, ⋯ → «Está bien» y no volverá a salir aquí.'));
   const box = musEl('div', 'pod-queue');
   root.append(box);
   appendRowsChunked(box, songs, (t, i) =>
     trackRow(t, i, {
       sub: (t.dur > 0 ? '' : '⚠️ sin duración · ') + ([t.folder, t.file].filter(Boolean).join('/') || trackSub(t)),
       onPlay: k => playCollection(songs, k),
-      menuExtra: x => (x.folder ? [{ icon: '🙈', label: 'Ocultar su carpeta en Mi música', hint: x.folder, on: () => setFolderRule(x.folder, 'exclude', true) }] : [])
+      onRemove: k => deleteTracksFlow([songs[k]]),
+      menuExtra: x => [
+        { icon: '✅', label: 'Está bien: no mostrarla aquí', hint: 'Por ejemplo, una intro corta de verdad', on: () => markShortOk(x, true) },
+        x.folder && { icon: '🙈', label: 'Ocultar su carpeta en Mi música', hint: x.folder, on: () => setFolderRule(x.folder, 'exclude', true) }
+      ].filter(Boolean)
     })
   );
+  const okN = shortTracks(secs, { withOk: true }).length - songs.length;
+  if (okN > 0) {
+    const b = musEl('button', 'mus-link', `✅ ${plural(okN, 'canción marcada', 'canciones marcadas')} como bien · volver a mostrarlas`);
+    b.type = 'button';
+    b.onclick = () => {
+      const keys = new Set(shortTracks(secs, { withOk: true }).map(pathKey));
+      lsSet(MUS_KEYS.shortOk, lsGet(MUS_KEYS.shortOk, []).filter(k => !keys.has(k)));
+      renderMusicScreen();
+    };
+    root.append(b);
+  }
+}
+function markShortOk(t, on) {
+  const k = pathKey(t);
+  const set = new Set(lsGet(MUS_KEYS.shortOk, []));
+  on ? set.add(k) : set.delete(k);
+  lsSet(MUS_KEYS.shortOk, [...set].slice(-3000));
+  if (String(musicState.screen).startsWith('short:')) rerenderKeepScroll();
+  if (on) podToast('Marcada como bien', { action: 'Deshacer', onAction: () => markShortOk(t, false) });
+}
+function rerenderKeepScroll() {
+  const c = $m('musicContent'),
+    sc = c?.scrollTop || 0;
+  renderMusicScreen();
+  if (c) c.scrollTop = sc;
+}
+
+/* ---------------------------------------------------------------------------
+   Eliminar canciones: del móvil (archivo) o solo de la biblioteca (ocultar)
+--------------------------------------------------------------------------- */
+function musicHiddenMap() {
+  return lsGet(MUS_KEYS.hidden, {}) || {};
+}
+function canDeleteFiles(tracks) {
+  if (musicState.source === 'android') return !!window.Android?.deleteMusicFiles && tracks.every(t => /^a\d+$/.test(t.id));
+  return tracks.every(t => typeof musicState.files.get(t.id)?.remove === 'function');
+}
+function deleteTracksFlow(tracks) {
+  tracks = (tracks || []).filter(Boolean);
+  if (!tracks.length) return;
+  const one = tracks.length === 1;
+  const what = one ? `«${tracks[0].title}»` : plural(tracks.length, 'canción', 'canciones');
+  const canFile = canDeleteFiles(tracks);
+  podSheet({
+    title: `🗑 Eliminar ${what}`,
+    subtitle: one ? [trackArtist(tracks[0]), [tracks[0].folder, tracks[0].file].filter(Boolean).join('/')].filter(Boolean).join(' · ') : '',
+    items: [
+      { icon: '🙈', label: 'Quitar de la biblioteca', hint: 'El archivo se queda en el móvil; se puede deshacer', on: () => hideTracks(tracks) },
+      {
+        icon: '🗑',
+        label: musicState.source === 'android' ? 'Borrar del móvil' : 'Borrar el archivo',
+        hint: canFile ? 'Se borra el archivo para siempre' : musicState.source === 'android' ? 'Necesita la última versión de la app Android' : 'Este navegador no permite borrar archivos',
+        danger: true,
+        disabled: !canFile,
+        on: () => confirmDeleteFiles(tracks)
+      }
+    ]
+  });
+}
+function hideTracks(tracks) {
+  const h = musicHiddenMap();
+  const keys = tracks.map(pathKey);
+  tracks.forEach((t, i) => (h[keys[i]] = { title: t.title, artist: trackArtist(t), path: [t.folder, t.file].filter(Boolean).join('/'), at: Date.now() }));
+  lsSet(MUS_KEYS.hidden, h);
+  dropTracksEverywhere(new Set(tracks.map(t => t.id)), false);
+  podToast(`${tracks.length === 1 ? 'Quitada' : plural(tracks.length, 'canción quitada', 'canciones quitadas')} de la biblioteca`, {
+    action: 'Deshacer',
+    onAction: () => unhideTracks(keys)
+  });
+}
+function unhideTracks(keys) {
+  const h = musicHiddenMap();
+  keys.forEach(k => delete h[k]);
+  lsSet(MUS_KEYS.hidden, h);
+  applyFolderFilter();
+}
+function openHiddenTracks() {
+  const h = musicHiddenMap();
+  const keys = Object.keys(h).sort((a, b) => (h[b].at || 0) - (h[a].at || 0));
+  if (!keys.length) return podToast('No has quitado ninguna canción de la biblioteca');
+  podSheet({
+    title: '🙈 Canciones quitadas',
+    subtitle: 'Siguen en el móvil. Toca una para devolverla a la biblioteca.',
+    items: [
+      { icon: '↩', label: 'Devolverlas todas', on: () => (unhideTracks(keys), podToast('Canciones devueltas a la biblioteca')) },
+      { sep: true },
+      ...keys.slice(0, 200).map(k => ({ icon: '🎵', label: h[k].title || h[k].path || k, hint: [h[k].artist, h[k].path].filter(Boolean).join(' · '), on: () => (unhideTracks([k]), podToast('Devuelta a la biblioteca')) }))
+    ]
+  });
+}
+// Quita canciones de la cola, el historial, la que suena… (y de la biblioteca si se borraron).
+function dropTracksEverywhere(ids, deleted) {
+  const cur = musicState.current;
+  const curGone = cur && ids.has(cur.id);
+  ['queue', 'history', 'context'].forEach(k => (musicState[k] = musicState[k].filter(t => t && !ids.has(t.id))));
+  saveMusicQueue();
+  saveMusicHistory();
+  if (deleted && musicState.allTracks) musicState.allTracks = musicState.allTracks.filter(t => !ids.has(t.id));
+  if (curGone) {
+    const a = musicAudio();
+    try {
+      a.pause();
+    } catch {}
+    stopOtherDeck();
+    if (musicState.queue.length) nextTrack(false);
+    else {
+      musicState.current = null;
+      try {
+        a.removeAttribute('src');
+        a.load();
+      } catch {}
+      updateMusicNowUI();
+      window.Android?.stopPodcastMedia?.();
+    }
+  }
+  applyFolderFilter();
+}
+function confirmDeleteFiles(tracks) {
+  const n = tracks.length;
+  const go = () => deleteTrackFiles(tracks);
+  // En Android 11+ el propio sistema pide confirmación.
+  if (musicState.source === 'android' && window.Android?.musicDeleteMode?.() === 'system') return go();
+  podSheet({
+    title: n === 1 ? '¿Borrar el archivo?' : `¿Borrar ${n} archivos?`,
+    subtitle: 'Se borra del almacenamiento para siempre. No se puede deshacer.',
+    items: [{ icon: '🗑', label: n === 1 ? 'Sí, borrar' : `Sí, borrar ${n}`, danger: true, on: go }]
+  });
+}
+const musDeleteWaits = new Map();
+window.onAndroidMusicDeleted = (reqId, ids, error) => {
+  const w = musDeleteWaits.get(reqId);
+  if (!w) return;
+  musDeleteWaits.delete(reqId);
+  w({ ids: (ids || []).map(x => 'a' + x), error });
+};
+async function deleteTrackFiles(tracks) {
+  let gone = [],
+    error = null;
+  if (musicState.source === 'android') {
+    const reqId = 'd' + Date.now();
+    // Si suena una de ellas, se suelta antes para que Android pueda borrarla.
+    if (musicState.current && tracks.some(t => t.id === musicState.current.id)) {
+      try {
+        musicAudio().pause();
+      } catch {}
+    }
+    const res = await new Promise(resolve => {
+      musDeleteWaits.set(reqId, resolve);
+      window.Android.deleteMusicFiles(reqId, tracks.map(t => t.id.slice(1)).join(','));
+      setTimeout(() => musDeleteWaits.has(reqId) && (musDeleteWaits.delete(reqId), resolve({ ids: [], error: 'timeout' })), 10 * 60 * 1000);
+    });
+    gone = res.ids;
+    error = res.error;
+  } else {
+    for (const t of tracks) {
+      const h = musicState.files.get(t.id);
+      try {
+        if ((await h.queryPermission?.({ mode: 'readwrite' })) !== 'granted' && (await h.requestPermission?.({ mode: 'readwrite' })) !== 'granted') {
+          error = 'permission';
+          break;
+        }
+        await h.remove();
+        gone.push(t.id);
+        musicState.files.delete(t.id);
+      } catch (e) {
+        error = e?.message || 'error';
+      }
+    }
+  }
+  if (gone.length) {
+    dropTracksEverywhere(new Set(gone), true);
+    podToast(gone.length === 1 ? 'Archivo borrado' : `${gone.length} archivos borrados`);
+  }
+  if (gone.length < tracks.length) {
+    if (error === 'cancelled') podToast(gone.length ? 'Algunas no se han borrado' : 'No se ha borrado nada');
+    else if (error === 'permission') podToast('Sin permiso para borrar: no se ha borrado');
+    else if (!gone.length) podToast('No se pudo borrar' + (error && error !== 'timeout' ? ': ' + error : ''));
+    else podToast(`No se pudieron borrar ${tracks.length - gone.length}`);
+  }
 }
 /* ===========================================================================
    Listas: pestaña, detalle y editor
@@ -2633,6 +2822,7 @@ function initMusic() {
         { icon: '⏱', label: 'Buscar canciones cortas o rotas…', hint: 'Las que duran menos de lo que elijas', disabled: !musicState.tracks.length, on: chooseShortTracks },
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
+        Object.keys(musicHiddenMap()).length && { icon: '🙈', label: 'Canciones quitadas de la biblioteca', hint: plural(Object.keys(musicHiddenMap()).length, 'canción', 'canciones'), on: openHiddenTracks },
         { icon: '🔄', label: isAndroidApp() ? 'Volver a buscar música en el móvil' : 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
         !isAndroidApp() && { icon: '📁', label: 'Elegir otra carpeta', on: pickMusicFolder }
       ]

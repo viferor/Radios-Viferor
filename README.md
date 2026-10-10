@@ -1,6 +1,17 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.23.0 · APK 1.11.0 — Eliminar canciones (del móvil o de la biblioteca)
+
+- **🗑 Eliminar…** en el menú ⋯ de cualquier canción, con ✕ en la lista de canciones
+  cortas y «Eliminar todas…» en su «⋯ Más»:
+  - **Quitar de la biblioteca**: el archivo se queda en el móvil; se puede deshacer y
+    recuperar desde ⋯ de Mi música → «Canciones quitadas de la biblioteca».
+  - **Borrar del móvil** (APK 1.11.0): en Android 11+ el sistema pide confirmación (una vez
+    para todas); en Android 10 o anterior confirma la app. En el navegador se puede borrar si
+    la carpeta se eligió con permiso de escritura.
+- En canciones cortas, ⋯ → **«Está bien»** para que una canción revisada no vuelva a salir.
+
 ## 1.22.0 — Buscar canciones cortas o rotas
 
 Menú ⋯ de Mi música → **⏱ Buscar canciones cortas o rotas…**: lista las canciones que duran

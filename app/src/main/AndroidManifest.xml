@@ -11,6 +11,8 @@
     <!-- «Mi música»: leer las canciones del móvil (Android 13+ / anteriores). -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Solo Android 9 o anterior, para borrar canciones del móvil desde «Mi música». -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:icon="@mipmap/ic_launcher"

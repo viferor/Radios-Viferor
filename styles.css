@@ -1665,3 +1665,4 @@ html.dark-mode .fx-switch input:checked{background:var(--primary)!important}
 .mus-chips button.on{background:var(--primary);border-color:var(--primary);color:#fff}
 .mus-hint{margin:2px 0 8px;font-size:.78rem;color:var(--muted,#6b7480)}
 html.dark-mode .mus-chips button:not(.on){background:#11151a;color:#f5f7f9;border-color:#353c44}
+.mus-link{display:block;margin:12px auto;border:0;background:none;color:var(--primary);font-weight:700;font-size:.82rem;cursor:pointer;text-decoration:underline}
