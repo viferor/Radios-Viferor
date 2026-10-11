@@ -512,6 +512,9 @@ function loadFavorites() {
   favCountEl.textContent = favorites.length;
 }
 
+// Deslizar en horizontal en la pantalla principal de cada pestaña cambia de pestaña,
+// como un carrusel: a la izquierda → la de la derecha (Radios → Podcasts → Música) y a
+// la derecha → la de la izquierda. Igual que al deslizar la carátula de una canción.
 function configurarGestoRadiosPodcasts() {
   let sx = 0,
     sy = 0,
@@ -519,16 +522,24 @@ function configurarGestoRadiosPodcasts() {
   const ignorar = el => {
     if (!el) return true;
     return !!el.closest(
-      'input,textarea,select,button,a,[contenteditable="true"],.player-bar,.pod-expanded,.dragging,.settings-menu'
+      'input,textarea,select,button,a,[contenteditable="true"],.player-bar,.pod-player,.pod-expanded,.dragging,.settings-menu,.mus-tabs,.mus-chips,.fx-chips,.pod-sheet,.lyr-panel,.fx-panel,.radio-now-panel,.pod-tiles-scroll'
     );
   };
-  const enMenuPrincipal = () => {
+  const vistaActual = () => {
     const fav = document.getElementById('viewFav'),
       pods = document.getElementById('viewPodcasts'),
+      music = document.getElementById('viewMusic'),
       search = document.getElementById('viewSearch');
-    if (search?.classList.contains('active')) return false;
-    if (fav?.classList.contains('active')) return true;
-    if (pods?.classList.contains('active')) {
+    if (music?.classList.contains('active')) return 'music';
+    if (pods?.classList.contains('active')) return 'podcasts';
+    if (fav?.classList.contains('active') || search?.classList.contains('active')) return 'radios';
+    return '';
+  };
+  const enMenuPrincipal = () => {
+    if (document.body.classList.contains('pod-sheet-open') || document.body.classList.contains('lyr-open')) return false;
+    const v = vistaActual();
+    if (v === 'radios') return document.getElementById('viewFav')?.classList.contains('active');
+    if (v === 'podcasts') {
       const screen = window.podcastState?.screen;
       return (
         screen === 'landing' &&
@@ -537,8 +548,16 @@ function configurarGestoRadiosPodcasts() {
         !document.body.classList.contains('podcast-subs-fullscreen')
       );
     }
+    if (v === 'music') {
+      const ms = window.musicState;
+      const exp = document.getElementById('musExpanded');
+      return !!ms && ms.screen === 'tab' && !ms.search && (!exp || exp.hidden);
+    }
     return false;
   };
+  // Igual que tocar la pestaña.
+  const ir = v => document.getElementById({ radios: 'btnViewRadios', podcasts: 'btnViewPodcasts', music: 'btnViewMusic' }[v])?.click();
+  const ORDEN = ['radios', 'podcasts', 'music'];
   document.addEventListener(
     'touchstart',
     e => {
@@ -553,6 +572,7 @@ function configurarGestoRadiosPodcasts() {
     },
     { passive: true }
   );
+  document.addEventListener('touchcancel', () => (tracking = false), { passive: true });
   document.addEventListener(
     'touchend',
     e => {
@@ -563,14 +583,11 @@ function configurarGestoRadiosPodcasts() {
         dx = t.clientX - sx,
         dy = t.clientY - sy;
       if (Math.abs(dx) < 65 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
-      const pods = document.getElementById('viewPodcasts');
-      if (dx < 0) {
-        if (pods?.classList.contains('active') && typeof window.switchToRadios === 'function')
-          window.switchToRadios();
-      } else {
-        if (!pods?.classList.contains('active') && typeof window.switchToPodcasts === 'function')
-          window.switchToPodcasts();
-      }
+      const i = ORDEN.indexOf(vistaActual());
+      if (i < 0) return;
+      const j = dx < 0 ? i + 1 : i - 1;
+      if (j < 0 || j >= ORDEN.length) return;
+      ir(ORDEN[j]);
     },
     { passive: true }
   );

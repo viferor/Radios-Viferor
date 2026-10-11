@@ -1,6 +1,14 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.27.5 — Deslizar entre Radios, Podcasts y Música
+
+En la pantalla principal de cada pestaña, deslizar en horizontal cambia de pestaña como un
+carrusel (igual que la carátula de una canción): a la **izquierda** pasa a la de la derecha
+(Radios → Podcasts → Música) y a la **derecha**, a la de la izquierda. Ahora incluye Música
+(en su pantalla principal, sin búsqueda ni detalle abierto) y no reacciona al deslizar sobre
+las pestañas de Mi música, los reproductores ni los menús.
+
 ## 1.27.4 — Reanudar sin fallos y fin del bucle de un feed caído
 
 - **Bucle de peticiones**: una suscripción cuyo feed fallaba (p. ej. Comandante Lara, 502)
