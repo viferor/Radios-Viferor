@@ -1,6 +1,20 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.27.4 — Reanudar sin fallos y fin del bucle de un feed caído
+
+- **Bucle de peticiones**: una suscripción cuyo feed fallaba (p. ej. Comandante Lara, 502)
+  se volvía a pedir unas dos veces por segundo sin fin (pintar → consultar → fallar →
+  pintar…). Ahora un feed que falla espera 6 h antes de reintentarse (se guarda en la
+  suscripción, también tras reiniciar). El servidor reintenta con otra identificación si el
+  feed rechaza al lector de RSS.
+- **Reanudar**: en música y podcasts, si a los 5–6 s de darle a ▶ el audio no avanza (o
+  suena a volumen 0 tras el fundido, o con el procesado de sonido suspendido), se reactiva
+  y, si hace falta, se vuelve a cargar donde iba (hasta dos veces). Al reanudar desde la
+  notificación también se reactiva el ecualizador.
+- **Registro de errores**: los errores repetidos se agrupan (×N) en vez de borrar los
+  demás, y se anotan los errores de los reproductores y los «play()» rechazados.
+
 ## 1.27.0 · APK 1.14.0 — Abrir archivos de audio con la app
 
 La app aparece en «Abrir con…» y «Compartir» de cualquier archivo de audio (MP3, M4A, FLAC,

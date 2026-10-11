@@ -36,7 +36,8 @@ function iniciarInterrupcionPodcast(a) {
     }
     if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
       finInterrupcionPodcast();
-      a.play().catch(() => {});
+      a.play().catch(e => podcastPlayFailed(e, 'tras interrupción'));
+      watchPodcastResume('tras interrupción');
     }
   }, 1500);
 }
@@ -328,6 +329,7 @@ function podcastActivityKey(p) {
 // Usa /api/podcast-feed?meta=1, que no devuelve la lista de episodios, con un
 // máximo de 4 peticiones simultáneas y sin repetir peticiones en curso.
 const podcastMetaInFlight = new Map();
+const podcastMetaFailed = new Map(); // feed → cuándo falló (también para no suscritos)
 let podcastMetaActive = 0;
 const podcastMetaWaiters = [];
 async function podcastMetaSlot(fn) {
@@ -370,6 +372,9 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
   const now = Date.now();
   const pending = items.filter(p => {
     if (!podcastFeedUrl(p)) return false;
+    // Feed que ha fallado hace poco: no se insiste (antes se reintentaba sin parar).
+    const failed = Number(p.metaFailedAt || podcastMetaFailed.get(podcastActivityKey(p)) || 0);
+    if (failed && now - failed < 6 * 3600000) return false;
     // Suscripciones sin categoría (p. ej. importadas por OPML): se lee la del feed una vez.
     if (!p.genre && !p.categoryChecked && isSubscribed(p)) return true;
     const cached = podcastActivityCache.get(podcastActivityKey(p));
@@ -388,7 +393,15 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
       const targets = i >= 0 && podcastState.subs[i] !== p ? [p, podcastState.subs[i]] : [p];
       for (const cur of targets) {
         cur.latestEpisodeCheckedAt = Date.now();
-        if (!x) continue;
+        if (!x) {
+          cur.metaFailedAt = Date.now();
+          podcastMetaFailed.set(podcastActivityKey(cur), Date.now());
+          continue;
+        }
+        if (cur.metaFailedAt) {
+          delete cur.metaFailedAt;
+          changed = true;
+        }
         if (!cur.categoryChecked) {
           cur.categoryChecked = 1;
           changed = true;
@@ -440,6 +453,8 @@ async function refreshPodcastActivity(items, { rerender = null, maxAge = 8640000
     })
   );
   savePodcastSubs();
+  // Los feeds que fallan quedan en espera (metaFailedAt), así que volver a pintar ya no
+  // provoca otra consulta a los mismos (antes: pintar → consultar → fallar → pintar…).
   if (typeof rerender === 'function') rerender();
   return changed;
 }
@@ -1898,10 +1913,61 @@ function syncPodcastAndroidMedia(force = false) {
     }
   } catch {}
 }
+// Al reanudar un episodio: si no avanza en unos segundos se anota y se vuelve a cargar
+// el audio donde iba (tras una pausa larga el servidor suele haber cerrado la conexión).
+let podResumeTimer = null;
+function podcastPlayFailed(e, where) {
+  if (e?.name === 'AbortError') return;
+  window.logError?.('media', `Podcast: play() rechazado (${where}): ${e?.name || ''} ${e?.message || e}`, podcastState.current?.title || '');
+}
+function watchPodcastResume(reason) {
+  clearTimeout(podResumeTimer);
+  const ep = podcastState.current;
+  const a = $p('podcastAudio');
+  if (!ep || !a) return;
+  const pos = a.currentTime || 0;
+  let tries = 0;
+  const check = () => {
+    if (podcastUserPaused || podcastState.current !== ep) return;
+    if (!a.paused && a.currentTime - pos > 0.3) return;
+    window.logError?.(
+      'media',
+      `Podcast: no sigue al reanudar (${reason})`,
+      String(a.currentSrc || a.src || '').replace(/\?.*$/, '').slice(0, 160),
+      `pausado=${a.paused} t=${(a.currentTime || 0).toFixed(1)} rs=${a.readyState} ns=${a.networkState} err=${a.error?.code || 0} intento=${tries}`
+    );
+    if (tries++ >= 2) return;
+    const src = a.currentSrc || a.src;
+    if (!src) return;
+    const p = a.currentTime || pos;
+    podcastUserPaused = true;
+    try {
+      a.pause();
+    } catch {}
+    a.src = src;
+    a.load();
+    const seek = () => {
+      if (p > 0 && (!Number.isFinite(a.duration) || p < a.duration - 1)) {
+        try {
+          a.currentTime = p;
+        } catch {}
+      }
+    };
+    a.addEventListener('loadedmetadata', seek, { once: true });
+    podcastUserPaused = false;
+    a.play().catch(e => podcastPlayFailed(e, 'recarga'));
+    podResumeTimer = setTimeout(check, 7000);
+  };
+  podResumeTimer = setTimeout(check, 6000);
+}
 window.viferorNativePodcastPlay = () => {
   podcastUserPaused = false;
+  finInterrupcionPodcast();
   const a = $p('podcastAudio');
-  if (a) a.play().catch(() => {});
+  if (a) {
+    a.play().catch(e => podcastPlayFailed(e, 'notificación'));
+    watchPodcastResume('notificación');
+  }
 };
 window.viferorNativePodcastPause = () => {
   finInterrupcionPodcast();
@@ -1963,7 +2029,8 @@ function togglePodcastPlay() {
   if (a.paused || podcastInterrupted) {
     finInterrupcionPodcast();
     podcastUserPaused = false;
-    a.play().catch(() => {});
+    a.play().catch(e => podcastPlayFailed(e, 'botón'));
+    watchPodcastResume('botón');
   } else {
     podcastUserPaused = true; // pausa explícita del usuario
     a.pause();

@@ -213,7 +213,10 @@ export default async function handler(req, res) {
       for (const candidate of candidates) {
         try {
           // safeFetch rechaza direcciones internas/privadas en la URL y en cada redirección.
-          const rr = await safeFetch(candidate, { headers }, { timeoutMs: 15000 });
+          // Algunos servidores rechazan lectores de RSS desconocidos: el 2.º intento se
+          // presenta como un navegador.
+          const h = attempt === 0 ? headers : { ...headers, 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36' };
+          const rr = await safeFetch(candidate, { headers: h }, { timeoutMs: 15000 });
           if (rr.ok) {
             r = rr;
             break;
@@ -260,6 +263,7 @@ export default async function handler(req, res) {
   } catch (e) {
     res.setHeader('Cache-Control', 'no-store');
     const status = e instanceof HttpError ? (e.status === 413 ? 502 : e.status) : 502;
+    console.warn('podcast-feed', req.url, e?.message);
     return res.status(status).json({ error: 'No se pudo leer el podcast', detail: e.message });
   }
 }

@@ -17,6 +17,14 @@
   }
   function add(type, message, source, extra) {
     const a = read();
+    // El mismo error seguido no ocupa varias líneas (si no, uno repetido borra los demás).
+    const last = a[a.length - 1];
+    if (last && last.type === type && last.message === String(message || '') && last.source === (source || '')) {
+      last.count = (last.count || 1) + 1;
+      last.last = new Date().toISOString();
+      if (extra) last.extra = extra;
+      return write(a);
+    }
     a.push({
       time: new Date().toISOString(),
       type,
@@ -34,6 +42,19 @@
       e.message || 'Error desconocido',
       e.filename ? `${e.filename}:${e.lineno || 0}:${e.colno || 0}` : ''
     )
+  );
+  // Errores de los reproductores (no suben como los demás: se recogen en captura).
+  const MEDIA_ERR = { 1: 'cancelado', 2: 'red', 3: 'decodificación', 4: 'formato no soportado' };
+  window.addEventListener(
+    'error',
+    e => {
+      const el = e.target;
+      if (!el || !/^(AUDIO|VIDEO)$/.test(el.tagName || '')) return;
+      const code = el.error?.code || 0;
+      const src = String(el.currentSrc || el.src || '').replace(/\?.*$/, '').slice(0, 160);
+      add('media', `${el.id || 'audio'}: error ${code} (${MEDIA_ERR[code] || 'desconocido'})${el.error?.message ? ' · ' + el.error.message : ''}`, src, `t=${(el.currentTime || 0).toFixed(1)} rs=${el.readyState} ns=${el.networkState}`);
+    },
+    true
   );
   window.addEventListener('unhandledrejection', e =>
     add('unhandledrejection', e.reason?.stack || e.reason?.message || String(e.reason || 'Promise rechazada'))
@@ -59,7 +80,7 @@
       ? a
           .map(
             x =>
-              `[${x.time}] ${x.type.toUpperCase()} | ${x.message}${x.source ? ' | ' + x.source : ''}${x.extra ? ' | ' + x.extra : ''}`
+              `[${x.time}] ${x.type.toUpperCase()} | ${x.message}${x.count > 1 ? ` (×${x.count}, última ${x.last})` : ''}${x.source ? ' | ' + x.source : ''}${x.extra ? ' | ' + x.extra : ''}`
           )
           .join('\n')
       : 'Sin errores registrados.';

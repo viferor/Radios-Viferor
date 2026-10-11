@@ -787,6 +787,52 @@ function prevTrack(force = false) {
   saveMusicQueue();
   startTrack(prev);
 }
+// Al reanudar: si a los pocos segundos no avanza (o suena en silencio), se anota en el
+// registro de errores y se intenta arreglar solo: se reactiva el procesado de sonido,
+// se restablece el volumen del fundido y, si sigue parada, se vuelve a cargar donde iba.
+let musResumeTimer = null;
+function watchMusicResume(reason) {
+  clearTimeout(musResumeTimer);
+  const t = musicState.current;
+  if (!t) return;
+  const pos = musicAudio()?.currentTime || 0;
+  let tries = 0;
+  const check = async () => {
+    if (musicUserPaused || musicState.current !== t) return;
+    const a = musicAudio();
+    const fx = window.musicFx;
+    const moved = !a.paused && a.currentTime - pos > 0.3;
+    const ctxBad = !!(fx?.active && fx.ctx && fx.ctx.state !== 'running');
+    const silent = !musicState.xf && musDeckLevel[musicState.deck] < 0.5;
+    if (moved && !ctxBad && !silent) return;
+    window.logError?.(
+      'media',
+      `Música: no sigue al reanudar (${reason})`,
+      t.file || t.id,
+      `pausada=${a.paused} t=${(a.currentTime || 0).toFixed(1)} rs=${a.readyState} ns=${a.networkState} err=${a.error?.code || 0} ctx=${fx?.ctx?.state || '-'} nivel=${musDeckLevel[musicState.deck].toFixed(2)} intento=${tries}`
+    );
+    if (ctxBad) fx.ctx.resume().catch(() => {});
+    if (silent) deckLevel(musicState.deck, 1, 0);
+    if (!moved && tries++ < 2) {
+      const p = a.currentTime || pos;
+      musicUserPaused = true;
+      try {
+        a.pause();
+      } catch {}
+      await prepareTrack(t, p);
+      musicUserPaused = false;
+      musicAudio()
+        .play()
+        .catch(e => window.logError?.('media', `Música: play() rechazado al recargar: ${e?.name || e}`, t.file || t.id));
+      musResumeTimer = setTimeout(check, 6000);
+    }
+  };
+  musResumeTimer = setTimeout(check, 5000);
+}
+function musicPlayFailed(e, where) {
+  if (e?.name === 'AbortError') return; // una pausa interrumpió el play(): normal
+  window.logError?.('media', `Música: play() rechazado (${where}): ${e?.name || ''} ${e?.message || e}`, musicState.current?.file || '');
+}
 function toggleMusicPlay() {
   const a = musicAudio();
   if (!a) return;
@@ -803,10 +849,18 @@ function toggleMusicPlay() {
     window.musicFx?.resume?.();
     if (!a.src) startTrack(musicState.current);
     else {
-      if (fade) deckLevel(musicState.deck, 0, 0);
+      const d = musicState.deck;
+      if (fade) deckLevel(d, 0, 0);
+      // Si el play() tarda en responder, que no se quede sonando a volumen 0.
+      const guard = fade ? setTimeout(() => musicState.deck === d && musDeckLevel[d] < 0.5 && deckLevel(d, 1, 0), 1500) : 0;
       a.play()
-        .then(() => fade && deckLevel(musicState.deck, 1, 0.35))
-        .catch(() => deckLevel(musicState.deck, 1, 0));
+        .then(() => fade && deckLevel(d, 1, 0.35))
+        .catch(e => {
+          deckLevel(d, 1, 0);
+          musicPlayFailed(e, 'botón');
+        })
+        .finally(() => clearTimeout(guard));
+      watchMusicResume('botón');
     }
   } else {
     musicUserPaused = true;
@@ -1123,7 +1177,8 @@ function startMusicInterrupt(a) {
     }
     if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
       finMusicInterrupt();
-      a.play().catch(() => {});
+      a.play().catch(e => musicPlayFailed(e, 'tras interrupción'));
+      watchMusicResume('tras interrupción');
     }
   }, 1500);
 }
@@ -1169,7 +1224,12 @@ window.viferorNativeMusicPlay = () => {
   const a = musicAudio();
   if (a && musicState.current) {
     pauseOtherAudio();
-    a.play().catch(() => {});
+    finMusicInterrupt();
+    window.musicFx?.resume?.();
+    if (!musicState.xf) deckLevel(musicState.deck, 1, 0);
+    if (!a.src) return startTrack(musicState.current);
+    a.play().catch(e => musicPlayFailed(e, 'notificación'));
+    watchMusicResume('notificación');
   }
 };
 window.viferorNativeMusicPause = () => {
