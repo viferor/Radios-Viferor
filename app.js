@@ -684,6 +684,46 @@ window.rvPuedeReanudar = function (elapsed) {
   return elapsed > 5000; // APK antiguo: se espera un poco más
 };
 const RV_INTERRUPCION_MAX = 15 * 60 * 1000;
+// Cuándo vuelve a sonar sola tras una pausa que no hizo el usuario:
+//  · llamada (se ve con la APK 1.15+): al colgar, aunque haya durado mucho;
+//  · aviso corto (notificación, navegador GPS, nota de voz…): si acaba en 45 s;
+//  · otra app de audio o vídeo que sigue sonando más de 45 s: ya no — queda en pausa.
+// Antes esperaba hasta 15 min a que otra app dejara de sonar y luego arrancaba sola.
+const RV_AVISO_MAX = 45 * 1000,
+  RV_LLAMADA_MAX = 2 * 3600 * 1000;
+window.rvEstadoAudio = function () {
+  try {
+    if (typeof window.Android?.audioState === 'function') return String(window.Android.audioState() || 'free');
+  } catch {}
+  try {
+    if (typeof window.Android?.canResumeAudio === 'function') return window.Android.canResumeAudio() ? 'free' : 'busy';
+  } catch {}
+  return 'free';
+};
+window.rvReanudarTrasInterrupcion = function () {
+  try {
+    return localStorage.getItem('radios_viferor_resume_after_interrupt') !== '0';
+  } catch {
+    return true;
+  }
+};
+// info = { t0, call }. Devuelve 'wait' (seguir esperando), 'resume' o 'giveup' (queda en pausa).
+window.rvInterrupcionPaso = function (info) {
+  const t = Date.now() - info.t0;
+  if (!window.rvReanudarTrasInterrupcion()) return 'giveup';
+  const st = window.rvEstadoAudio();
+  if (st === 'call') {
+    info.call = true;
+    return t > RV_LLAMADA_MAX ? 'giveup' : 'wait';
+  }
+  if (t > (info.call ? RV_LLAMADA_MAX : RV_AVISO_MAX)) return 'giveup';
+  if (t < 2500 || st !== 'free') return 'wait';
+  return 'resume';
+};
+window.rvAnotar = function (msg, extra) {
+  window.logError?.('auto', msg, '', extra || '');
+};
+let radioInterruptInfo = { t0: 0, call: false };
 let radioInterrupted = 0;
 let radioInterruptTimer = null;
 function finInterrupcionRadio() {
@@ -693,6 +733,7 @@ function finInterrupcionRadio() {
 }
 function iniciarInterrupcionRadio() {
   radioInterrupted = Date.now();
+  radioInterruptInfo = { t0: radioInterrupted, call: false };
   clearRadioWatchdog();
   clearTimeout(reconnectTimer);
   radioReconnectPending = false;
@@ -701,9 +742,11 @@ function iniciarInterrupcionRadio() {
   radioInterruptTimer = setInterval(() => {
     if (!radioInterrupted || !currentStation) return finInterrupcionRadio();
     if (!audio.paused) return finInterrupcionRadio();
-    const t = Date.now() - radioInterrupted;
-    if (t > RV_INTERRUPCION_MAX) {
-      // Demasiado tiempo: queda en pausa normal.
+    const paso = window.rvInterrupcionPaso(radioInterruptInfo);
+    const secs = Math.round((Date.now() - radioInterrupted) / 1000);
+    if (paso === 'giveup') {
+      // Otra app sigue sonando o pasó demasiado tiempo: queda en pausa normal.
+      window.rvAnotar(`Radio: interrumpida ${secs} s → queda en pausa`, radioInterruptInfo.call ? 'llamada' : 'otra app o aviso largo');
       finInterrupcionRadio();
       radioUserPaused = true;
       stopRadioPolling();
@@ -715,7 +758,8 @@ function iniciarInterrupcionRadio() {
     }
     // Se deja un momento para que el propio WebView reanude; si no lo hace, se
     // reconecta desde cero (en directo, mejor que seguir con un búfer antiguo).
-    if (t >= 2500 && window.rvPuedeReanudar(t)) {
+    if (paso === 'resume') {
+      window.rvAnotar(`Radio: vuelve a sonar sola tras ${secs} s interrumpida`, radioInterruptInfo.call ? 'llamada' : 'aviso corto');
       finInterrupcionRadio();
       reproducirRadio(currentStation).catch(() => {});
     }
@@ -871,6 +915,12 @@ function saveRadioResume(playing) {
     };
     localStorage.setItem('radio_resume_state', JSON.stringify(st));
     if (playing) localStorage.setItem('radios_viferor_playback_resume_v1', JSON.stringify(st));
+    else {
+      // Al pausar se quita la marca de «sonando» (si no, «Reanudar al abrir» la
+      // arrancaba aunque la hubieras dejado en pausa).
+      const last = JSON.parse(localStorage.getItem('radios_viferor_playback_resume_v1') || 'null');
+      if (last && last.type === 'radio') localStorage.setItem('radios_viferor_playback_resume_v1', JSON.stringify({ ...last, playing: false, at: Date.now() }));
+    }
   } catch {}
 }
 // Canción y programación solo se consultan mientras la radio suena.
@@ -1269,6 +1319,7 @@ function reanudarRadio() {
   reproducirRadio(currentStation);
 }
 window.viferorNativeRadioPlay = () => {
+  window.rvAnotar?.('Radio: ▶ desde Android', 'notificación, widget, auriculares, coche o pantalla de bloqueo');
   try {
     reanudarRadio();
   } catch {}

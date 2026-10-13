@@ -1,6 +1,21 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.28.0 · APK 1.15.0 — Que no se ponga a sonar sola
+
+- **Tras una pausa que no hiciste tú** (llamada, aviso, otra app que suena…), antes la app
+  esperaba hasta 15 min a que la otra app callara y entonces arrancaba sola. Ahora:
+  llamada → vuelve al colgar (la APK 1.15 distingue llamadas con `audioState()`); aviso corto
+  (≤ 45 s) → vuelve; otra app que sigue sonando más de 45 s → queda en pausa. Se puede
+  desactivar en Ajustes: «Volver a sonar tras una llamada o aviso».
+- **«Reanudar al abrir»**: la marca de «estaba sonando» no se quitaba al pausar la radio o
+  un podcast, así que al abrir la app (o si Android la recreaba) arrancaba aunque la hubieras
+  dejado en pausa. Ahora se pone al día al pausar.
+- La comprobación de «reanudar» de la 1.27.4 ya no vuelve a arrancar nada si lo pausó otra
+  cosa (otra app, la radio, un podcast…).
+- El registro de errores anota cuándo y por qué algo arranca solo (interrupción, «Reanudar
+  al abrir», Android recreó la app, ▶ desde notificación/auriculares/coche).
+
 ## 1.27.5 — Deslizar entre Radios, Podcasts y Música
 
 En la pantalla principal de cada pestaña, deslizar en horizontal cambia de pestaña como un

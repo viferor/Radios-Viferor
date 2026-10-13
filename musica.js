@@ -797,9 +797,16 @@ function watchMusicResume(reason) {
   if (!t) return;
   const pos = musicAudio()?.currentTime || 0;
   let tries = 0;
+  let sawPlaying = false;
+  const el0 = musicAudio();
+  el0?.addEventListener('playing', () => (sawPlaying = true), { once: true });
   const check = async () => {
-    if (musicUserPaused || musicState.current !== t) return;
+    if (musicUserPaused || musicState.current !== t || musicInterrupted) return;
     const a = musicAudio();
+    // Si llegó a sonar y luego se pausó (otra app, la radio, un podcast…), no se toca.
+    if (a.paused && sawPlaying) return;
+    const others = ['audioPlayer', 'podcastAudio'].map(id => document.getElementById(id)).filter(Boolean);
+    if (others.some(o => !o.paused)) return;
     const fx = window.musicFx;
     const moved = !a.paused && a.currentTime - pos > 0.3;
     const ctxBad = !!(fx?.active && fx.ctx && fx.ctx.state !== 'running');
@@ -1162,20 +1169,25 @@ function finMusicInterrupt() {
   clearInterval(musicInterruptTimer);
   musicInterruptTimer = null;
 }
+let musicInterruptInfo = { t0: 0, call: false };
 function startMusicInterrupt(a) {
   musicInterrupted = Date.now();
+  musicInterruptInfo = { t0: musicInterrupted, call: false };
   clearInterval(musicInterruptTimer);
   musicInterruptTimer = setInterval(() => {
     if (!musicInterrupted || !a.paused) return finMusicInterrupt();
-    const t = Date.now() - musicInterrupted;
-    if (t > 15 * 60 * 1000) {
+    const paso = window.rvInterrupcionPaso ? window.rvInterrupcionPaso(musicInterruptInfo) : 'giveup';
+    const secs = Math.round((Date.now() - musicInterrupted) / 1000);
+    if (paso === 'giveup') {
+      window.rvAnotar?.(`Música: interrumpida ${secs} s → queda en pausa`, musicInterruptInfo.call ? 'llamada' : 'otra app o aviso largo');
       finMusicInterrupt();
       musicUserPaused = true;
       syncMusicAndroid(true);
       updateMusicPlayerUI();
       return;
     }
-    if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
+    if (paso === 'resume') {
+      window.rvAnotar?.(`Música: vuelve a sonar sola tras ${secs} s interrumpida`, musicInterruptInfo.call ? 'llamada' : 'aviso corto');
       finMusicInterrupt();
       a.play().catch(e => musicPlayFailed(e, 'tras interrupción'));
       watchMusicResume('tras interrupción');
@@ -1220,6 +1232,7 @@ function updateMediaSession() {
   } catch {}
 }
 window.viferorNativeMusicPlay = () => {
+  window.rvAnotar?.('Música: ▶ desde Android', 'notificación, widget, auriculares, coche o pantalla de bloqueo');
   musicUserPaused = false;
   const a = musicAudio();
   if (a && musicState.current) {

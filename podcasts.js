@@ -19,14 +19,18 @@ function finInterrupcionPodcast() {
   clearInterval(podcastInterruptTimer);
   podcastInterruptTimer = null;
 }
+let podcastInterruptInfo = { t0: 0, call: false };
 function iniciarInterrupcionPodcast(a) {
   podcastInterrupted = Date.now();
+  podcastInterruptInfo = { t0: podcastInterrupted, call: false };
   clearInterval(podcastInterruptTimer);
   podcastInterruptTimer = setInterval(() => {
     if (!podcastInterrupted || !podcastState.current) return finInterrupcionPodcast();
     if (!a.paused) return finInterrupcionPodcast();
-    const t = Date.now() - podcastInterrupted;
-    if (t > 15 * 60 * 1000) {
+    const paso = window.rvInterrupcionPaso ? window.rvInterrupcionPaso(podcastInterruptInfo) : 'giveup';
+    const secs = Math.round((Date.now() - podcastInterrupted) / 1000);
+    if (paso === 'giveup') {
+      window.rvAnotar?.(`Podcast: interrumpido ${secs} s → queda en pausa`, podcastInterruptInfo.call ? 'llamada' : 'otra app o aviso largo');
       finInterrupcionPodcast();
       podcastUserPaused = true;
       savePodcastResume(false);
@@ -34,7 +38,8 @@ function iniciarInterrupcionPodcast(a) {
       updatePodcastPlayerUI();
       return;
     }
-    if (t >= 2500 && (window.rvPuedeReanudar ? window.rvPuedeReanudar(t) : t > 5000)) {
+    if (paso === 'resume') {
+      window.rvAnotar?.(`Podcast: vuelve a sonar solo tras ${secs} s interrumpido`, podcastInterruptInfo.call ? 'llamada' : 'aviso corto');
       finInterrupcionPodcast();
       a.play().catch(e => podcastPlayFailed(e, 'tras interrupción'));
       watchPodcastResume('tras interrupción');
@@ -785,6 +790,11 @@ function savePodcastResume(forcePlaying = null) {
           PLAYBACK_RESUME_KEY,
           JSON.stringify({ ...state, playing: true, at: Date.now() })
         );
+      else {
+        // En pausa: «Reanudar al abrir» ya no debe arrancarlo.
+        const last = JSON.parse(localStorage.getItem(PLAYBACK_RESUME_KEY) || 'null');
+        if (last && last.type === 'podcast') localStorage.setItem(PLAYBACK_RESUME_KEY, JSON.stringify({ ...last, playing: false, at: Date.now() }));
+      }
     }
   } catch {}
 }
@@ -1927,8 +1937,15 @@ function watchPodcastResume(reason) {
   if (!ep || !a) return;
   const pos = a.currentTime || 0;
   let tries = 0;
+  let sawPlaying = false;
+  a.addEventListener('playing', () => (sawPlaying = true), { once: true });
   const check = () => {
-    if (podcastUserPaused || podcastState.current !== ep) return;
+    if (podcastUserPaused || podcastState.current !== ep || podcastInterrupted) return;
+    // Si llegó a sonar y luego se pausó (otra app, la radio, la música…), no se toca.
+    if (a.paused && sawPlaying) return;
+    const radio = document.getElementById('audioPlayer'),
+      mus = window.musicState?.current ? document.querySelectorAll('#musicAudio, #musicAudio2') : [];
+    if ((radio && !radio.paused) || [...mus].some(m => !m.paused)) return;
     if (!a.paused && a.currentTime - pos > 0.3) return;
     window.logError?.(
       'media',
@@ -1961,6 +1978,7 @@ function watchPodcastResume(reason) {
   podResumeTimer = setTimeout(check, 6000);
 }
 window.viferorNativePodcastPlay = () => {
+  window.rvAnotar?.('Podcast: ▶ desde Android', 'notificación, widget, auriculares, coche o pantalla de bloqueo');
   podcastUserPaused = false;
   finInterrupcionPodcast();
   const a = $p('podcastAudio');
@@ -2190,6 +2208,7 @@ function restoreLastPlayback() {
     } catch {}
     // ?autoresume=1: Android ha recreado el WebView (el sistema lo cerró) y debe seguir sonando.
     const qs = new URLSearchParams(location.search);
+    const fromAndroid = qs.has('autoresume');
     if (qs.has('autoresume')) {
       autoplay = true;
       qs.delete('autoresume');
@@ -2209,12 +2228,17 @@ function restoreLastPlayback() {
         if (savedPos > 0) a.currentTime = Math.min(savedPos, Math.max(0, a.duration || savedPos));
         applyPodcastSpeed();
         updatePodcastPlayerUI();
-        if (autoplay) retryPodcastAutoplay(a);
+        if (autoplay) {
+          window.rvAnotar?.('Podcast: arranca solo al abrir la app', fromAndroid ? 'Android recreó la app' : '«Reanudar al abrir» activado');
+          retryPodcastAutoplay(a);
+        }
       };
       setPodcastNowUI(chosen.episode);
     } else if (chosen.type === 'radio' && chosen.station) {
-      if (autoplay && typeof window.reproducirRadio === 'function')
+      if (autoplay && typeof window.reproducirRadio === 'function') {
+        window.rvAnotar?.('Radio: arranca sola al abrir la app', fromAndroid ? 'Android recreó la app' : '«Reanudar al abrir» activado');
         setTimeout(() => window.reproducirRadio(chosen.station), 900);
+      }
       else if (typeof window.prepararRadio === 'function') window.prepararRadio(chosen.station);
     }
   } catch {}

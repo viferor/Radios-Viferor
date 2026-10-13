@@ -672,6 +672,22 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** "call" (llamada o sonando el teléfono), "busy" (otra app suena) o "free". */
+        @JavascriptInterface
+        public String audioState() {
+            if (!bridgeTrusted) return "free";
+            try {
+                android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am == null) return "free";
+                int mode = am.getMode();
+                if (mode == android.media.AudioManager.MODE_IN_CALL || mode == android.media.AudioManager.MODE_IN_COMMUNICATION
+                        || mode == android.media.AudioManager.MODE_RINGTONE) return "call";
+                return am.isMusicActive() ? "busy" : "free";
+            } catch (Exception e) {
+                return "free";
+            }
+        }
+
         @JavascriptInterface
         public boolean areNotificationsEnabled() {
             if (!bridgeTrusted) return false;

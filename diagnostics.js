@@ -289,6 +289,24 @@
       } catch {}
       resumeText();
     });
+    // Tras una llamada o un aviso corto, la radio, el podcast o la música vuelven a sonar solos.
+    const afterBtn = document.getElementById('btnResumeAfter');
+    const afterText = () => {
+      if (!afterBtn) return;
+      let on = true;
+      try {
+        on = localStorage.getItem('radios_viferor_resume_after_interrupt') !== '0';
+      } catch {}
+      afterBtn.textContent = on ? '🔁 Volver a sonar tras una llamada o aviso: sí' : '⏹️ Volver a sonar tras una llamada o aviso: no';
+    };
+    afterText();
+    afterBtn?.addEventListener('click', () => {
+      try {
+        const on = localStorage.getItem('radios_viferor_resume_after_interrupt') !== '0';
+        localStorage.setItem('radios_viferor_resume_after_interrupt', on ? '0' : '1');
+      } catch {}
+      afterText();
+    });
     const v = document.getElementById('appVersionText'),
       b = document.getElementById('appBuildText');
     if (v) v.textContent = VERSION;
