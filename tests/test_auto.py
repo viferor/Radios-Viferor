@@ -190,6 +190,59 @@ with sync_playwright() as p:
     check('podcast en pausa: ya no queda marcado como sonando', page.evaluate("JSON.parse(localStorage.getItem('radios_viferor_playback_resume_v1')).playing") is False)
     # 7) Ajuste visible
     check('ajuste «Volver a sonar tras una llamada o aviso»', page.locator('#btnResumeAfter').count() == 1)
+    # 8) Microcortes: si la canción todavía se está cargando, la vigilancia NO la recarga.
+    #    Se copia lo que enseña el registro del móvil: «pausada=false rs=1 ns=2» (primeros
+    #    datos sin llegar, sin haber avanzado). Antes eso se tomaba por un atasco y recargaba
+    #    la canción en mitad del silencio: ese era el microcorte.
+    page.evaluate("finMusicInterrupt(); musicUserPaused = false; playTrackNow(musicState.tracks[0]); 0"); page.wait_for_timeout(1500)
+    page.evaluate("""() => {
+      window.__reloads = 0;
+      window.__realPrepareTrack = prepareTrack;
+      prepareTrack = async (...args) => { window.__reloads++; return window.__realPrepareTrack(...args); };
+      const a = musicAudio();
+      musicUserPaused = true; a.pause(); musicUserPaused = false;
+      Object.defineProperty(a, 'paused', { get: () => false, configurable: true });
+      Object.defineProperty(a, 'readyState', { get: () => 1, configurable: true });
+      Object.defineProperty(a, 'networkState', { get: () => 2, configurable: true });
+      watchMusicResume('prueba de carga');
+      return 0;
+    }""")
+    page.wait_for_timeout(6200)
+    check('todavía cargando (rs=1 ns=2): no se recarga la canción', page.evaluate("window.__reloads") == 0, page.evaluate("window.__reloads"))
+    check('…y queda anotado como «aún cargando»', any('aún cargando' in m for m in log()), log()[-2:])
+    page.evaluate("""() => {
+      const a = musicAudio();
+      delete a.paused; delete a.readyState; delete a.networkState;
+      musicUserPaused = true; a.pause(); musicUserPaused = false;
+      return 0;
+    }""")
+    # 9) Fallo de lectura a mitad de canción: se sigue con la misma canción, en el mismo punto
+    page.evaluate("""() => {
+      finMusicInterrupt(); musicUserPaused = false;
+      musicState.queue = [musicState.tracks[1], musicState.tracks[2]];
+      startTrack(musicState.tracks[0]);
+      return 0;
+    }"""); page.wait_for_timeout(1500)
+    page.evaluate("""() => {
+      window.__reloads = 0;
+      window.__failed = musicState.current.id;
+      const a = musicAudio();
+      a.currentTime = 30;
+      musicRetry = { id: musicState.current.id, tries: 0, since: 0 };
+      a.dispatchEvent(new Event('error'));
+      return 0;
+    }"""); page.wait_for_timeout(2200)
+    check('fallo a mitad de canción: no se salta a la siguiente', page.evaluate("musicState.current.id") == page.evaluate("window.__failed"), page.evaluate("musicState.current.id"))
+    check('…se vuelve a cargar la misma canción, en el punto donde iba', page.evaluate("window.__reloads") == 1 and page.evaluate("musicRetry.tries") == 1, [page.evaluate("window.__reloads"), page.evaluate("musicRetry.tries")])
+    check('…y vuelve a sonar', not paused())
+    check('…y lo anota en el registro', any('se vuelve a cargar la misma canción' in m for m in log()), log()[-2:])
+    # 10) Si la misma canción falla dos veces seguidas, entonces sí se pasa a la siguiente
+    page.evaluate("""() => {
+      musicRetry = { id: musicState.current.id, tries: 2, since: Date.now() };
+      musicAudio().dispatchEvent(new Event('error'));
+      return 0;
+    }"""); page.wait_for_timeout(2600)
+    check('dos fallos seguidos: ahora sí pasa a la siguiente', page.evaluate("musicState.current.id") != page.evaluate("window.__failed"), page.evaluate("musicState.current.id"))
     b.close()
 
 print('\nErrores JS:', len(errors))

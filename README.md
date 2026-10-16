@@ -1,6 +1,26 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.28.1 — Las canciones ya no se cortan solas y microcortes al reanudar
+
+- **Ya no se tira la canción al primer fallo.** El registro del móvil enseñaba fallos de
+  lectura a mitad de canción (error 2 de red · `PIPELINE_ERROR_READ` en `/__music/track/…`):
+  la misma canción fallaba en el segundo 53 y volvía a sonar bien después. Antes, al primer
+  fallo se avisaba y se saltaba a la siguiente. Ahora se vuelve a cargar **la misma canción en
+  el punto donde iba** (dos intentos por minuto, para no entrar en bucle si el archivo está
+  roto de verdad) y solo se salta si tampoco arranca.
+- **Microcortes al reanudar**: la vigilancia que se pone en marcha al darle a ▶ recargaba la
+  canción si a los 5 s no había avanzado, aunque estuviera simplemente cargando los primeros
+  datos (`readyState=1`, `networkState=2`, tal y como salía en el registro). Esa recarga era el
+  corte de sonido. Ahora, mientras el archivo se está cargando, se le da tiempo (hasta 20 s
+  más) y no se toca nada. También se fuerza una lectura de verdad al recargar: si la dirección
+  es la misma, el navegador no volvía a leer el archivo.
+- **El registro anota los microcortes** («microcorte (sin datos para seguir)» y «la lectura se
+  ha quedado parada») con el segundo, lo que había cargado por delante y el volumen, para poder
+  distinguir si son del archivo, del búfer o del sonido.
+- El aviso de fallo de lectura ahora guarda lo que quedaba cargado por delante (`buf=`) y el
+  estado del reproductor, para saber por qué falló la próxima vez.
+
 ## 1.28.0 · APK 1.15.0 — Que no se ponga a sonar sola
 
 - **Tras una pausa que no hiciste tú** (llamada, aviso, otra app que suena…), antes la app

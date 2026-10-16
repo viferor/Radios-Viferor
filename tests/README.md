@@ -22,7 +22,8 @@ python tests\test_radio.py     # Radio de canción, ajustar letra, cortas, elimi
                                # editar ID3, abrir desde otras apps, gestos (84) — tarda ~2 min
 python tests\test_fix.py       # Bucle de feeds, registro de errores, reanudar (11)
 python tests\test_swipe.py     # Deslizar entre Radios/Podcasts/Música (10)
-python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar al abrir» (13)
+python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar al abrir»,
+                               # microcortes y fallos de lectura (20)
 ```
 
 Cada una termina con `N/N OK` y `Errores JS: 0`. Si alguna dice `FAIL`, el cambio ha roto algo.

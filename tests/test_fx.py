@@ -134,6 +134,9 @@ with sync_playwright() as p:
 
 
     page.goto(BASE + '/index.html'); page.wait_for_timeout(600)
+    # Los scripts se cargan en cadena: hay que esperar a que ecualizador.js esté listo, o la
+    # primera comprobación puede caer antes de que exista musicFx (pasaba de vez en cuando).
+    page.wait_for_function('!!window.musicFx')
     page.click('#btnViewMusic'); page.wait_for_function('musicState.loaded')
     page.evaluate("openMusicScreen('album:' + [...musicState.albums.values()].find(a=>a.name==='A Night at the Opera').key)"); page.wait_for_timeout(300)
     page.locator('#musicContent .mus-row').first.locator('.pod-qinfo').click(); page.wait_for_timeout(700)

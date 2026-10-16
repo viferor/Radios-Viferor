@@ -688,6 +688,9 @@ async function prepareTrack(t, pos = 0) {
   if (!src) return;
   a.preload = 'metadata';
   a.src = src;
+  // Volver a leer el archivo de verdad: si la dirección es la misma que ya tenía, el
+  // navegador no recargaría nada y ni la recuperación ni la vigilancia de reanudar servirían.
+  a.load();
   a.onloadedmetadata = () => {
     if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
     updateMusicPlayerUI();
@@ -732,13 +735,61 @@ async function startTrack(t, { pos = 0 } = {}) {
   syncMusicAndroid(true);
   updateMediaSession();
 }
-function musicTrackFailed(t) {
+/* Un fallo de lectura a mitad de canción casi nunca quiere decir que el archivo esté roto:
+   en el registro del móvil la misma canción falla en el segundo 53 y vuelve a sonar bien
+   después. Antes se tiraba la canción y se saltaba a la siguiente al primer fallo; ahora se
+   vuelve a cargar en el mismo punto y se sigue. Solo si tampoco arranca se pasa a la
+   siguiente. El límite por minuto evita el bucle si el archivo sí está roto. */
+const MUS_MAX_RETRIES = 2;
+let musicRetry = { id: '', tries: 0, since: 0 };
+// Segundos que quedan cargados por delante de la posición actual (-1 si no se sabe).
+function musBufferedAhead(a) {
   try {
-    window.logError?.('MUSIC_AUDIO', 'No se pudo reproducir ' + (t?.id || ''));
+    const b = a.buffered;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= a.currentTime && a.currentTime <= b.end(i)) return b.end(i) - a.currentTime;
   } catch {}
-  musicErrors++;
-  podToast(`No se pudo reproducir «${t?.title || 'canción'}»`);
-  if (musicErrors < 5 && musicState.queue.length) setTimeout(() => nextTrack(true), 1200);
+  return -1;
+}
+function musicCanRetry(t) {
+  if (!t || musicUserPaused || musicInterrupted) return false;
+  if (musicState.current?.id !== t.id) return false;
+  const now = Date.now();
+  if (musicRetry.id !== t.id || now - musicRetry.since > 60000) musicRetry = { id: t.id, tries: 0, since: now };
+  return musicRetry.tries < MUS_MAX_RETRIES;
+}
+async function musicRetrySameTrack(t, a, why) {
+  if (!musicCanRetry(t)) return false;
+  musicRetry.tries++;
+  musicRetry.since = Date.now();
+  const pos = Math.max(0, (Number(a?.currentTime) || 0) - 2);
+  window.logError?.('MUSIC_AUDIO', `Música: se vuelve a cargar la misma canción (${why})`, t.file || t.id, `t=${pos.toFixed(1)} intento=${musicRetry.tries}/${MUS_MAX_RETRIES}`);
+  try {
+    musicUserPaused = true; // que el pause() de la recarga no cuente como interrupción
+    musicAudio()?.pause();
+    await prepareTrack(t, pos);
+    musicUserPaused = false;
+    await musicAudio().play();
+    return true;
+  } catch (e) {
+    musicUserPaused = false;
+    window.logError?.('MUSIC_AUDIO', `Música: la recarga no arrancó (${e?.name || e})`, t.file || t.id);
+    return false;
+  }
+}
+function musicTrackFailed(t, a) {
+  const buf = a ? musBufferedAhead(a) : -1;
+  window.logError?.(
+    'MUSIC_AUDIO',
+    'No se pudo reproducir ' + (t?.id || ''),
+    t?.file || '',
+    `t=${(Number(a?.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a?.readyState ?? '?'} ns=${a?.networkState ?? '?'}`
+  );
+  musicRetrySameTrack(t, a, 'error de lectura').then(ok => {
+    if (ok) return; // sigue sonando la misma canción, donde iba
+    musicErrors++;
+    podToast(`No se pudo reproducir «${t?.title || 'canción'}»`);
+    if (musicErrors < 5 && musicState.queue.length) setTimeout(() => nextTrack(true), 1200);
+  });
 }
 function playTrackNow(t) {
   if (!t) return;
@@ -797,6 +848,7 @@ function watchMusicResume(reason) {
   if (!t) return;
   const pos = musicAudio()?.currentTime || 0;
   let tries = 0;
+  let waits = 0;
   let sawPlaying = false;
   const el0 = musicAudio();
   el0?.addEventListener('playing', () => (sawPlaying = true), { once: true });
@@ -812,6 +864,15 @@ function watchMusicResume(reason) {
     const ctxBad = !!(fx?.active && fx.ctx && fx.ctx.state !== 'running');
     const silent = !musicState.xf && musDeckLevel[musicState.deck] < 0.5;
     if (moved && !ctxBad && !silent) return;
+    // Todavía está arrancando: al volver a la app hay que abrir el archivo y llenar el primer
+    // búfer, y eso tarda unos segundos. Recargar aquí sería un corte de sonido sin motivo,
+    // así que se le da más tiempo antes de tocar nada (hasta 20 s más).
+    const stillLoading = !a.paused && a.networkState === 2 && a.readyState < 3;
+    if (stillLoading && waits++ < 4) {
+      window.rvAnotar?.(`Música: aún cargando a los ${waits * 5} s (no se toca)`, t.file || t.id);
+      musResumeTimer = setTimeout(check, 5000);
+      return;
+    }
     window.logError?.(
       'media',
       `Música: no sigue al reanudar (${reason})`,
@@ -3540,6 +3601,23 @@ function initMusic() {
     }
     updateMusicPlayerUI();
   });
+  // Microcortes: hasta ahora no quedaba ni rastro de ellos en el registro, así que no se
+  // sabía si eran del archivo, del búfer o del sonido. Se apunta el primero de cada 10 s con
+  // lo que había cargado por delante, que es lo que distingue una cosa de otra.
+  let musStallAt = 0;
+  const logMusStall = (que, a) => {
+    const now = Date.now();
+    if (a.paused || musicUserPaused || a.currentTime < 2 || now - musStallAt < 10000) return;
+    musStallAt = now;
+    window.logError?.(
+      'MUSIC_AUDIO',
+      `Música: microcorte (${que})`,
+      musicState.current?.file || musicState.current?.id || '',
+      `t=${(a.currentTime || 0).toFixed(1)} buf=${musBufferedAhead(a).toFixed(1)} rs=${a.readyState} ns=${a.networkState} gan=${musDeckLevel[musicState.deck].toFixed(2)}`
+    );
+  };
+  on('waiting', a => logMusStall('sin datos para seguir', a));
+  on('stalled', a => logMusStall('la lectura se ha quedado parada', a));
   on('loadedmetadata', updateMusicPlayerUI);
   on('ended', async () => {
     const t = musicState.current;
@@ -3558,7 +3636,7 @@ function initMusic() {
     nextTrack(true);
   });
   on('error', a => {
-    if (a.src && musicState.current) musicTrackFailed(musicState.current);
+    if (a.src && musicState.current) musicTrackFailed(musicState.current, a);
   });
   // Si empieza la radio o un podcast, la música se pausa (como pausa del usuario).
   ['audioPlayer', 'podcastAudio'].forEach(id =>
