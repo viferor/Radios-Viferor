@@ -29,10 +29,12 @@ public class WidgetProvider extends AppWidgetProvider {
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_podcast);
         String section = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PLAYBACK_SECTION, "radio");
-        boolean podcast = "podcast".equalsIgnoreCase(PodcastMediaController.getWidgetType(context));
+        String type = PodcastMediaController.getWidgetType(context);
+        boolean music = "music".equalsIgnoreCase(type);
+        boolean podcast = "podcast".equalsIgnoreCase(type) || music;
         String rawTitle = PodcastMediaController.getWidgetTitle(context);
         String rawSubtitle = PodcastMediaController.getWidgetSubtitle(context);
-        v.setTextViewText(R.id.widget_title, podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
+        v.setTextViewText(R.id.widget_title, music ? "🎵 Música · " + rawTitle : podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
         v.setTextViewText(R.id.widget_subtitle, rawSubtitle);
         v.setTextViewText(R.id.widget_play, PodcastMediaController.getWidgetPlaying(context) ? "⏸" : "▶");
         v.setTextViewText(R.id.widget_back, podcast ? "−15" : "•");
