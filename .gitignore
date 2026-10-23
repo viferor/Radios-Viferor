@@ -7,3 +7,11 @@ app/build/
 local.properties
 .idea/
 *.iml
+
+tests/shots/
+tests/id3/out/
+__pycache__/
+tests/smoke/test.html
+tests/smoke/dump.html
+tests/smoke/dump.err
+tests/smoke/out.html
