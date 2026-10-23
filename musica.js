@@ -1551,7 +1551,11 @@ function normMusicList(l) {
   if (!l || !l.name) return null;
   const out = { id: String(l.id || newListId()), name: String(l.name).slice(0, 80), type: l.type === 'smart' ? 'smart' : 'manual', createdAt: l.createdAt || Date.now(), updatedAt: l.updatedAt || Date.now() };
   if (out.type === 'smart') out.rules = { ...MUS_SMART_DEFAULTS, ...(l.rules || {}) };
-  else out.items = (Array.isArray(l.items) ? l.items : []).filter(x => x && x.id).map(x => ({ id: x.id, title: x.title || '', artist: x.artist || '', album: x.album || '', folder: x.folder || '', file: x.file || '', dur: x.dur || 0 }));
+  else {
+    out.items = (Array.isArray(l.items) ? l.items : []).filter(x => x && x.id).map(x => ({ id: x.id, title: x.title || '', artist: x.artist || '', album: x.album || '', folder: x.folder || '', file: x.file || '', dur: x.dur || 0 }));
+    // Niveles de orden con los que se ordenó la lista la última vez (para recordarlos).
+    out.sortBy = Array.isArray(l.sortBy) ? l.sortBy.filter(k => MUS_SORT_KEYS.includes(k)).slice(0, MUS_SORT_LEVELS) : [];
+  }
   return out;
 }
 function saveMusicLists() {
@@ -3264,70 +3268,165 @@ function musicListMenu(l, inside = false) {
    Las canciones de una lista se guardan con pocos datos (título, artista, álbum,
    carpeta, archivo y duración), así que para ordenar por pista o por fecha se mira la
    canción real de la biblioteca. La cola sí guarda las canciones enteras. */
+/* ---------------------------------------------------------------------------
+   Ordenar la cola y las listas (hasta 4 niveles: fecha → artista → más escuchadas…)
+   ---------------------------------------------------------------------------
+   Las canciones de una lista se guardan con pocos datos (título, artista, álbum,
+   carpeta, archivo y duración), así que para ordenar por pista o por fecha se mira la
+   canción real de la biblioteca. La cola sí guarda las canciones enteras. */
+const MUS_SORT_LEVELS = 4;
+const MUS_SORT_KEYS = ['title', 'artist', 'album', 'track', 'added', 'dur', 'plays', 'folder'];
+const MUS_SORT_INFO = {
+  title: ['🔤', 'Título', 'A-Z'],
+  artist: ['🎤', 'Artista', 'A-Z'],
+  album: ['💿', 'Álbum', 'A-Z'],
+  track: ['#️⃣', 'Número de pista', 'el orden del disco (disco y pista)'],
+  added: ['📅', 'Fecha en que se añadió', 'las más nuevas primero'],
+  dur: ['⏱', 'Duración', 'las más largas primero'],
+  plays: ['🔥', 'Más escuchadas', 'las que más has escuchado primero'],
+  folder: ['📁', 'Carpeta', 'por carpeta y archivo']
+};
+function musSortNombre(k) {
+  return (MUS_SORT_INFO[k] || [])[1] || '';
+}
+function musSortResumen(niveles) {
+  return (niveles || []).filter(Boolean).map(musSortNombre).join(' → ');
+}
+// Cada nivel compara SOLO con lo suyo: los empates los resuelve el nivel siguiente (si no,
+// añadir un segundo nivel no serviría de nada porque el primero ya lo decidiría todo).
 function musicSortFn(by) {
-  const byAlbum = (a, b) =>
-    musCollator.compare(a.album || '', b.album || '') || (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0);
   return (
     {
       title: (a, b) => musCollator.compare(a.title || '', b.title || ''),
-      artist: (a, b) => musCollator.compare(trackArtist(a), trackArtist(b)) || byAlbum(a, b),
-      album: byAlbum,
-      track: (a, b) =>
-        (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0) || musCollator.compare(a.title || '', b.title || ''),
+      artist: (a, b) => musCollator.compare(trackArtist(a), trackArtist(b)),
+      album: (a, b) => musCollator.compare(a.album || '', b.album || ''),
+      track: (a, b) => (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0),
       added: (a, b) => (b.added || 0) - (a.added || 0),
       dur: (a, b) => (b.dur || 0) - (a.dur || 0),
-      plays: (a, b) => trackPlays(b) - trackPlays(a) || musCollator.compare(a.title || '', b.title || ''),
+      plays: (a, b) => trackPlays(b) - trackPlays(a),
       folder: (a, b) => musCollator.compare(a.folder || '', b.folder || '') || musCollator.compare(a.file || '', b.file || '')
     }[by] || ((a, b) => musCollator.compare(a.title || '', b.title || ''))
   );
 }
-function openMusicSortMenu({ title, count = 0, conCarpeta = false, apply }) {
+// Ordena por la cadena de niveles: el primero manda y los demás desempatan.
+function musOrdenarPor(lista, niveles, resolver) {
+  const fs = (niveles || []).filter(Boolean).map(musicSortFn);
+  if (!fs.length) return lista;
+  const valor = typeof resolver === 'function' ? resolver : t => t;
+  return lista.sort((a, b) => {
+    for (const f of fs) {
+      const r = f(valor(a), valor(b));
+      if (r) return r;
+    }
+    return 0;
+  });
+}
+/* Menú de ordenar. Cada opción que tocas se AÑADE al final del orden (1.º, 2.º, 3.º, 4.º) y
+   se aplica al momento; el menú se vuelve a abrir para poder seguir añadiendo niveles. */
+function openMusicSortMenu({ title, count = 0, conCarpeta = false, niveles = [], onCambio, onAccion }) {
+  const usados = (niveles || []).filter(Boolean).slice(0, MUS_SORT_LEVELS);
+  const claves = conCarpeta ? MUS_SORT_KEYS : MUS_SORT_KEYS.filter(k => k !== 'folder');
+  const lleno = usados.length >= MUS_SORT_LEVELS;
+  const cadena = musSortResumen(usados);
   podSheet({
     title,
-    subtitle: count ? plural(count, 'canción', 'canciones') : '',
+    subtitle: cadena ? `Orden: ${cadena}` : count ? plural(count, 'canción', 'canciones') : '',
     items: [
-      { icon: '🔤', label: 'Título (A-Z)', on: () => apply('title') },
-      { icon: '🎤', label: 'Artista', on: () => apply('artist') },
-      { icon: '💿', label: 'Álbum', on: () => apply('album') },
-      { icon: '#️⃣', label: 'Número de pista', hint: 'El orden del disco', on: () => apply('track') },
-      { icon: '📅', label: 'Fecha en que se añadió', hint: 'Las más nuevas primero', on: () => apply('added') },
-      { icon: '⏱', label: 'Duración', hint: 'Las más largas primero', on: () => apply('dur') },
-      { icon: '🔥', label: 'Más escuchadas', on: () => apply('plays') },
-      conCarpeta && { icon: '📁', label: 'Carpeta', on: () => apply('folder') },
+      ...claves.map(k => {
+        const [icono, nombre, ayuda] = MUS_SORT_INFO[k];
+        const puesto = usados.indexOf(k);
+        return {
+          icon: icono,
+          label: nombre,
+          hint: puesto >= 0 ? `Ya está en el orden (${puesto + 1}.º)` : lleno ? 'Ya hay 4 niveles: quita uno' : `${ayuda} · añadir como ${usados.length + 1}.º`,
+          checked: puesto >= 0,
+          disabled: lleno || puesto >= 0,
+          on: () => onCambio([...usados, k])
+        };
+      }),
       { sep: true },
-      { icon: '↕', label: 'Invertir el orden', on: () => apply('invertir') },
-      { icon: '🔀', label: 'Al azar', on: () => apply('azar') },
+      usados.length > 0 && {
+        icon: '✕',
+        label: `Quitar el último nivel (${musSortNombre(usados[usados.length - 1])})`,
+        on: () => onCambio(usados.slice(0, -1))
+      },
+      usados.length > 0 && { icon: '↩️', label: 'Sin ordenar (volver al orden de antes)', on: () => onCambio([]) },
+      { icon: '↕', label: 'Invertir el resultado', on: () => onAccion('invertir') },
+      { icon: '🔀', label: 'Al azar', on: () => onAccion('azar') },
       { icon: '⠿', label: 'Poner el orden a mano', hint: 'Cierra este menú y arrastra las canciones ⠿', disabled: true }
     ]
   });
 }
 // Cola: al ordenarla cambia lo que va a sonar después (se puede deshacer).
-function openQueueSortMenu() {
-  const apply = by => {
-    const before = [...musicState.queue];
-    if (by === 'invertir') musicState.queue.reverse();
-    else if (by === 'azar') musicState.queue = shuffled(musicState.queue);
-    else musicState.queue.sort(musicSortFn(by));
-    saveMusicQueue();
-    podToast('Cola ordenada', { action: 'Deshacer', onAction: () => ((musicState.queue = before), saveMusicQueue()) });
-  };
-  openMusicSortMenu({ title: '⇅ Ordenar la cola', count: musicState.queue.length, conCarpeta: true, apply });
-}
-function sortMusicListMenu(l) {
-  if (!l || l.type !== 'manual' || !Array.isArray(l.items)) return;
-  const apply = by => {
-    const before = [...l.items];
-    if (by === 'invertir') l.items.reverse();
-    else if (by === 'azar') l.items = shuffled(l.items);
-    else {
-      const f = musicSortFn(by);
-      const real = new Map(l.items.map(x => [x.id, resolveTrack(x) || x]));
-      l.items.sort((a, b) => f(real.get(a.id) || a, real.get(b.id) || b));
+function openQueueSortMenu(antes = null) {
+  // «antes» es la lista tal y como estaba cuando se abrió el menú (para poder deshacer todo
+  // el orden de una vez). Se comprueba que sea una lista: el botón puede pasar un evento.
+  const original = Array.isArray(antes) ? antes : [...musicState.queue];
+  const niveles = Array.isArray(musicUi().queueSort) ? musicUi().queueSort : [];
+  const terminar = (texto, accion) =>
+    podToast(texto, {
+      action: 'Deshacer',
+      onAction: () => {
+        accion();
+        saveMusicQueue();
+      }
+    });
+  openMusicSortMenu({
+    title: '⇅ Ordenar la cola',
+    count: musicState.queue.length,
+    conCarpeta: true,
+    niveles,
+    onCambio: nuevos => {
+      saveMusicUi({ queueSort: nuevos });
+      if (!nuevos.length) musicState.queue = [...original];
+      else musOrdenarPor(musicState.queue, nuevos);
+      saveMusicQueue();
+      terminar(nuevos.length ? `Cola ordenada: ${musSortResumen(nuevos)}` : 'Cola sin ordenar', () => (musicState.queue = [...original]));
+      openQueueSortMenu(original);
+    },
+    onAccion: accion => {
+      if (accion === 'invertir') musicState.queue.reverse();
+      else musicState.queue = shuffled(musicState.queue);
+      saveMusicQueue();
+      terminar(accion === 'invertir' ? 'Orden invertido' : 'Cola mezclada', () => (musicState.queue = [...original]));
+      openQueueSortMenu(original);
     }
-    saveMusicLists(); // si esa lista está sonando, la cola sigue el nuevo orden
-    podToast('Lista ordenada', { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+  });
+}
+function sortMusicListMenu(l, antes = null) {
+  if (!l || l.type !== 'manual' || !Array.isArray(l.items)) return;
+  const original = Array.isArray(antes) ? antes : l.items.map(x => ({ ...x }));
+  const niveles = Array.isArray(l.sortBy) ? l.sortBy : [];
+  const restaurar = () => {
+    l.items = original.map(x => ({ ...x }));
+    saveMusicLists();
   };
-  openMusicSortMenu({ title: `⇅ Ordenar «${l.name}»`, count: l.items.length, conCarpeta: true, apply });
+  openMusicSortMenu({
+    title: `⇅ Ordenar «${l.name}»`,
+    count: l.items.length,
+    conCarpeta: true,
+    niveles,
+    onCambio: nuevos => {
+      l.sortBy = nuevos;
+      if (!nuevos.length) l.items = original.map(x => ({ ...x }));
+      else {
+        const real = new Map(l.items.map(x => [x.id, resolveTrack(x) || x]));
+        musOrdenarPor(l.items, nuevos, t => real.get(t.id) || t);
+      }
+      l.updatedAt = Date.now();
+      saveMusicLists(); // si esa lista está sonando, la cola sigue el nuevo orden
+      podToast(nuevos.length ? `Lista ordenada: ${musSortResumen(nuevos)}` : 'Lista sin ordenar', { action: 'Deshacer', onAction: restaurar });
+      sortMusicListMenu(l, original);
+    },
+    onAccion: accion => {
+      if (accion === 'invertir') l.items.reverse();
+      else l.items = shuffled(l.items);
+      l.updatedAt = Date.now();
+      saveMusicLists();
+      podToast(accion === 'invertir' ? 'Orden invertido' : 'Lista mezclada', { action: 'Deshacer', onAction: restaurar });
+      sortMusicListMenu(l, original);
+    }
+  });
 }
 function renderMusicList(root, id) {
   const l = musicListById(id);
@@ -3512,7 +3611,7 @@ function renderMusicQueue(root) {
     actionBar([
       [o.shuffle ? '🔀 Aleatorio: sí' : '🔀 Aleatorio: no', toggleMusicShuffle, o.shuffle ? 'on' : ''],
       [{ off: '🔁 Repetir: no', all: '🔁 Repetir: todo', one: '🔂 Repetir: una' }[o.repeat], cycleMusicRepeat, o.repeat !== 'off' ? 'on' : ''],
-      ['⇅ Ordenar', openQueueSortMenu, '', q.length < 2],
+      ['⇅ Ordenar', () => openQueueSortMenu(), '', q.length < 2],
       ['💾 Guardar como lista', saveMusicQueueAsList, '', !q.length && !cur],
       [
         '🗑 Vaciar',

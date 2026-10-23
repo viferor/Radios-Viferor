@@ -1,6 +1,22 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.6 — Ordenar por varios niveles (fecha → artista → más escuchadas…)
+
+- El botón **⇅ Ordenar** de la **cola** y de cada **lista** admite ahora **hasta 4 niveles**:
+  cada opción que tocas **se añade al final** del orden y se aplica al momento; el menú se
+  vuelve a abrir para poder seguir añadiendo. Arriba se ve la cadena: «Orden: Fecha → Artista».
+- Niveles disponibles: **Título**, **Artista**, **Álbum**, **Número de pista**, **Fecha en que
+  se añadió**, **Duración**, **Más escuchadas** y **Carpeta**.
+- **Cada nivel compara solo con lo suyo**, así que los empates los decide el siguiente. Antes
+  «Artista» ya desempataba por álbum y pista, y entonces un segundo nivel no servía de nada.
+- Para deshacer: **«Quitar el último nivel»**, **«Sin ordenar»** (vuelve al orden que tenía
+  antes) y el aviso con **Deshacer**, que devuelve la lista entera como estaba al abrir el menú.
+- El orden elegido **se recuerda**: la cola en los ajustes de música y **cada lista en la
+  suya**, así al volver a abrir el menú sigues con la misma cadena.
+- **Invertir el resultado** y **Al azar** siguen en el mismo menú, y el orden a mano con ⠿ no
+  cambia (el menú lo recuerda al final).
+
 ## 1.29.5 · APK 1.16.1 — La app dejaba de leer el archivo antes de tiempo (y una prueba para comprobarlo)
 
 Pista clave del usuario: **Poweramp reproduce esos mismos archivos sin cortarse nunca**. Si un

@@ -157,23 +157,53 @@
     };
     const ficha = (id, title, artist, album, track, added) => ({ id, title, artist, album, track, added, disc: 1, dur: 60, folder: 'Music', file: id + '.mp3' });
     const z1 = ficha('z1', 'Zeta', 'Aerosmith', 'B', 3, 100),
-      z2 = ficha('z2', 'Alfa', 'Zappa', 'A', 1, 300);
+      z2 = ficha('z2', 'Alfa', 'Zappa', 'A', 1, 300),
+      z3 = ficha('z3', 'Alfa', 'Aerosmith', 'C', 2, 50),
+      z4 = ficha('z4', 'Beta', 'Aerosmith', 'B', 4, 10);
+
+    // Abre el menú de ordenar desde cero y añade los niveles que se le pidan.
+    const ordenarCola = async (...criterios) => {
+      saveMusicUi({ queueSort: [] });
+      if (!(await pinchar('Ordenar', '#musicContent'))) return false;
+      for (const c of criterios) if (!(await pinchar(c, '.pod-sheet'))) return false;
+      return true;
+    };
+
     musicState.queue = [z1, z2];
     openMusicScreen('queue');
     await esperar(40);
     check('la cola tiene el botón «Ordenar»', await pinchar('Ordenar', '#musicContent'));
     const opciones = [...document.querySelectorAll('.pod-sheet .pod-sheet-item')].map(b => b.textContent).join(' | ');
     check('el menú ofrece Título, Artista, Pista y Fecha', ['Título', 'Artista', 'Número de pista', 'Fecha'].every(t => opciones.includes(t)), opciones);
-    check('ordena la cola por título', (await pinchar('Título', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.title).join(' | '));
+
     musicState.queue = [z1, z2];
-    await pinchar('Ordenar', '#musicContent');
-    check('ordena la cola por artista', (await pinchar('Artista', '.pod-sheet')) && musicState.queue[0].id === z1.id, musicState.queue.map(t => t.artist).join(' | '));
+    check('ordena la cola por título', (await ordenarCola('Título')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.title).join(' | '));
     musicState.queue = [z1, z2];
-    await pinchar('Ordenar', '#musicContent');
-    check('ordena la cola por fecha', (await pinchar('Fecha', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.added).join(' | '));
+    check('ordena la cola por artista', (await ordenarCola('Artista')) && musicState.queue[0].id === z1.id, musicState.queue.map(t => t.artist).join(' | '));
     musicState.queue = [z1, z2];
+    check('ordena la cola por fecha', (await ordenarCola('Fecha')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.added).join(' | '));
+
+    // Dos niveles: z1 y z4 son del mismo artista y del mismo álbum, así que el primer nivel
+    // los deja por número de pista (z1, z4) y el segundo (título) los pone Beta antes que Zeta.
+    musicState.queue = [z1, z4];
+    await ordenarCola('Artista');
+    const unNivel = musicState.queue.map(t => t.title).join('|');
+    musicState.queue = [z1, z4];
+    const dos = await ordenarCola('Artista', 'Título');
+    check('ordena por dos niveles (artista → título)', dos && unNivel === 'Zeta|Beta' && musicState.queue.map(t => t.title).join('|') === 'Beta|Zeta', `${unNivel} → ${musicState.queue.map(t => t.title).join('|')}`);
+
+    // Cuatro niveles seguidos y que no se pueda añadir un quinto
+    musicState.queue = [z1, z2, z3];
+    check('acepta cuatro niveles', await ordenarCola('Artista', 'Título', 'Fecha', 'Duración'));
     await pinchar('Ordenar', '#musicContent');
-    check('invierte el orden de la cola', (await pinchar('Invertir', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.title).join(' | '));
+    const desactivadas = [...document.querySelectorAll('.pod-sheet .pod-sheet-item')].filter(b => b.disabled).length;
+    check('con cuatro niveles no se ofrece un quinto', desactivadas >= 8, 'desactivadas=' + desactivadas);
+    await pinchar('Cancelar', '.pod-sheet').catch(() => {});
+
+    musicState.queue = [z1, z2];
+    await ordenarCola('Título'); // queda Alfa, Zeta
+    check('invierte el resultado', (await pinchar('Invertir', '.pod-sheet')) && musicState.queue[0].id === z1.id, musicState.queue.map(t => t.title).join(' | '));
+    check('«Sin ordenar» vuelve al orden de antes', (await ordenarCola('Título')) && (await pinchar('Sin ordenar', '.pod-sheet')) && musicState.queue.map(t => t.id).join() === 'z1,z2', musicState.queue.map(t => t.id).join());
 
     const tA = musicState.tracks[0],
       tB = musicState.tracks[1];
@@ -182,6 +212,7 @@
     await esperar(40);
     check('la lista tiene el botón «Ordenar»', await pinchar('Ordenar', '#musicContent'));
     check('ordena la lista por título', (await pinchar('Título', '.pod-sheet')) && lista2.items[0].id === tA.id, lista2.items.map(x => x.title).join(' | '));
+    check('la lista recuerda con qué se ordenó', Array.isArray(lista2.sortBy) && lista2.sortBy[0] === 'title', JSON.stringify(lista2.sortBy));
 
     // ---- 12. La prueba de lectura de archivos (Música → ⋯ → «Comprobar la lectura»)
     musicState.tracks.forEach(t => (t.src = '/__music/track/' + String(t.id).replace(/^a/, '')));
