@@ -311,5 +311,27 @@
       b = document.getElementById('appBuildText');
     if (v) v.textContent = VERSION;
     if (b) b.textContent = BUILD;
+    // Versión del APK instalado: la pone el propio APK en el user-agent
+    // («RadiosViferor/1.16.0»). Importa: las mejoras de lectura de música van en el APK
+    // 1.16.0 y sin él los cortes se arreglan a medias (la web no puede leer los archivos).
+    const apk = (String(navigator.userAgent || '').match(/RadiosViferor\/([\d.]+)/) || [])[1] || '';
+    if (apk) {
+      const wrap = document.getElementById('appApkWrap'),
+        el = document.getElementById('appApkText');
+      const num = s => String(s).split('.').map(x => Number(x) || 0);
+      const [a1 = 0, a2 = 0, a3 = 0] = num(apk),
+        [m1, m2, m3] = num('1.16.0');
+      const vieja = a1 < m1 || (a1 === m1 && (a2 < m2 || (a2 === m2 && a3 < m3)));
+      if (el) el.textContent = apk + (vieja ? ' ⚠️' : '');
+      if (wrap) {
+        wrap.hidden = false;
+        wrap.title = vieja
+          ? 'Tu APK es anterior al 1.16.0: instálalo para que la música no se corte al leer los archivos.'
+          : 'Versión de la aplicación Android instalada.';
+      }
+      window.rvAnotar?.(`App Android ${apk} · web ${VERSION} (${BUILD})`, vieja ? 'APK anterior al 1.16.0: instala el nuevo' : '');
+    } else if (window.rvAnotar) {
+      window.rvAnotar(`Navegador · web ${VERSION} (${BUILD})`, '');
+    }
   });
 })();

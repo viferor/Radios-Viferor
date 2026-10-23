@@ -103,6 +103,32 @@
     await esperar(300);
     check('tras un fallo sigue con otra canción', musicState.current && musicState.current.id === t2.id, 'suena=' + (musicState.current && musicState.current.id));
 
+    // ---- 8c. Un error de DECODIFICAR no se reintenta en el mismo segundo: se salta el trozo
+    const antes = musicState.deck;
+    musicState.current = cancion;
+    musicRetry = { id: cancion.id, tries: 0, since: Date.now(), pos: 0 };
+    musicSalto = { id: '', hechos: 0 };
+    const decod = cubo();
+    decod.currentTime = 2.5;
+    decod.duration = 200;
+    decod.error = { code: 3 };
+    decod.paused = false;
+    musDecks[antes] = decod;
+    musicTrackFailed(cancion, decod);
+    await esperar(400);
+    check(
+      'un error de decodificar salta el trozo (no recarga el mismo segundo)',
+      musicSalto.hechos === 1 && musicState.deck !== antes && Math.abs(musicAudio().currentTime - 12.5) < 1,
+      `saltos=${musicSalto.hechos} platina=${antes}->${musicState.deck} t=${musicAudio().currentTime}`
+    );
+
+    // ---- 8d. Nunca dos recuperaciones a la vez (se peleaban por las platinas)
+    musicRetry = { id: cancion.id, tries: 0, since: Date.now(), pos: 0 };
+    musicRecuperando = true;
+    const bloqueada = await musicRetrySameTrack(cancion, cubo(), 'prueba');
+    musicRecuperando = false;
+    check('no hay dos recuperaciones a la vez', bloqueada === false);
+
     // ---- 9. Pulsar la carátula abre la cola (o la lista, si suena una lista tuya); la letra
     //         sigue en su botón.
     musicState.current = musicState.tracks[0];

@@ -833,7 +833,12 @@ async function musicCargarEnOtra(t, pos, why) {
     ]);
     deckLevel(to, 1, 0);
   } catch (e) {
-    window.logError?.('MUSIC_AUDIO', `Música: la recarga no arrancó (${e?.name || e})`, t.file || t.id, why || '');
+    window.logError?.(
+      'MUSIC_AUDIO',
+      `Música: la recarga no arrancó (${e?.name || e})`,
+      t.file || t.id,
+      `${why || ''} t=${pos.toFixed(1)} rs=${b.readyState} ns=${b.networkState} err=${b.error?.code || 0}`
+    );
     try {
       b.pause();
     } catch {}
@@ -854,6 +859,19 @@ async function musicCargarEnOtra(t, pos, why) {
   updateMediaSession();
   return true;
 }
+// Una sola recuperación a la vez: la vigilancia de reanudar y el aviso de error podían
+// lanzarse juntas, pelearse por las platinas y gastar los dos intentos sin arreglar nada
+// (en el registro se veían dos recargas seguidas y luego ningún sonido).
+let musicRecuperando = false;
+async function musicRecuperar(t, pos, why) {
+  if (musicRecuperando) return false;
+  musicRecuperando = true;
+  try {
+    return await musicCargarEnOtra(t, pos, why);
+  } finally {
+    musicRecuperando = false;
+  }
+}
 // Vuelve a cargar la misma canción en el punto donde iba (2 intentos como mucho).
 async function musicRetrySameTrack(t, a, why) {
   if (!musicCanRetry(t)) return false;
@@ -862,24 +880,28 @@ async function musicRetrySameTrack(t, a, why) {
   const pos = Math.max(0, (Number(a?.currentTime) || 0) - 2);
   musicRetry.pos = pos;
   window.logError?.('MUSIC_AUDIO', `Música: se vuelve a cargar la misma canción (${why})`, t.file || t.id, `t=${pos.toFixed(1)} intento=${musicRetry.tries}/${MUS_MAX_RETRIES}`);
-  return musicCargarEnOtra(t, pos, why);
+  return musicRecuperar(t, pos, why);
 }
-/* Un trozo del archivo que no se puede leer no tiene por qué estropear la canción entera:
-   en el registro, la misma canción fallaba dos veces en el mismo segundo y luego sonaba bien.
-   Se sigue desde 20 s más adelante (2 veces como mucho por canción). */
+/* Un trozo del archivo que no se puede leer (o decodificar) no tiene por qué estropear la
+   canción entera: en el registro, la misma canción fallaba dos veces en el mismo segundo y
+   luego sonaba bien. Se sigue un poco más adelante (2 veces como mucho por canción). */
 let musicSalto = { id: '', hechos: 0 };
-async function musicSaltarTrozo(t, a) {
+async function musicSaltarTrozo(t, a, salto = 20, minPos = 5) {
   if (!t) return false;
   const dur = Number(a?.duration) || Number(t.dur) || 0;
   const pos = Number(a?.currentTime) || 0;
-  if (!dur || pos <= 1 || pos + 25 >= dur) return false;
+  if (!dur || dur < 30) return false;
+  // Si falla nada más empezar (y no es de decodificar), lo más probable es que ese archivo
+  // no se pueda leer entero: es mejor pasar a la siguiente canción que empezarla en el 0:20.
+  if (pos < minPos) return false;
   if (musicSalto.id !== t.id) musicSalto = { id: t.id, hechos: 0 };
   if (musicSalto.hechos >= 2) return false;
+  if (pos + salto >= dur - 2) return false; // ya casi al final: mejor pasar a la siguiente
   musicSalto.hechos++;
-  const desde = Math.min(pos + 20, Math.max(0, dur - 2));
+  const desde = Math.min(pos + salto, Math.max(0, dur - 2));
   window.logError?.('MUSIC_AUDIO', 'Música: se salta un trozo que no se puede leer', t.file || t.id, `de ${pos.toFixed(1)} a ${desde.toFixed(1)}`);
-  podToast(`«${t.title}» no se puede leer ahí: se salta un trozo`, { ms: 3500 });
-  return musicCargarEnOtra(t, desde, 'salto');
+  podToast(`«${t.title}» falla ahí: se salta un trozo`, { ms: 3500 });
+  return musicRecuperar(t, desde, 'salto');
 }
 // Canciones seguidas que no se pueden leer: si pasan de 3 se deja de intentar (para no
 // saltar sin parar por toda la biblioteca si la música no está accesible). Se pone a 0 en
@@ -887,17 +909,25 @@ async function musicSaltarTrozo(t, a) {
 let musicFallosSeguidos = 0;
 function musicTrackFailed(t, a) {
   const buf = a ? musBufferedAhead(a) : -1;
+  // 1 cancelado · 2 red · 3 decodificación · 4 formato no soportado.
+  const codigo = a?.error?.code || 0;
+  const deDecodificar = codigo === 3 || codigo === 4;
   window.logError?.(
     'MUSIC_AUDIO',
     'No se pudo reproducir ' + (t?.id || ''),
     t?.file || '',
-    `t=${(Number(a?.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a?.readyState ?? '?'} ns=${a?.networkState ?? '?'} tam=${Number(t?.size) || 0}`
+    `t=${(Number(a?.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a?.readyState ?? '?'} ns=${a?.networkState ?? '?'} codigo=${codigo} tam=${Number(t?.size) || 0}`
   );
   (async () => {
-    if (await musicRetrySameTrack(t, a, 'error de lectura')) return; // sigue sonando la misma, donde iba
-    if (await musicSaltarTrozo(t, a)) return; // sigue sonando la misma, un poco más adelante
+    // Un error de DECODIFICAR no se arregla recargando el mismo segundo (en el registro se
+    // gastaban los dos intentos así): se salta el trozo malo y, si tampoco, se pasa a la
+    // siguiente canción.
+    if (!deDecodificar && (await musicRetrySameTrack(t, a, 'error de lectura'))) return; // sigue sonando la misma, donde iba
+    // Decodificar: se salta 10 s desde el principio (el trozo malo suele estar al principio).
+    // Leer: se salta 20 s, y solo si el fallo es a mitad de canción.
+    if (await musicSaltarTrozo(t, a, deDecodificar ? 10 : 20, deDecodificar ? 1 : 5)) return; // sigue sonando la misma, un poco más adelante
     musicErrors++;
-    podToast(`No se pudo reproducir «${t?.title || 'canción'}»`);
+    podToast(deDecodificar ? `«${t?.title || 'canción'}» no se puede decodificar: se pasa a la siguiente` : `No se pudo reproducir «${t?.title || 'canción'}»`);
     musicContinuarTrasFallo(t);
   })().catch(e => window.logError?.('MUSIC_AUDIO', 'Música: fallo al recuperar la canción: ' + (e?.message || e), t?.file || ''));
 }
@@ -1023,22 +1053,12 @@ function watchMusicResume(reason) {
     if (ctxBad) fx.ctx.resume().catch(() => {});
     if (silent) deckLevel(musicState.deck, 1, 0);
     if (!moved && tries++ < 2) {
-      // Recuperar en la otra platina (sin pausar ni perder el punto donde iba).
+      // Recuperar en la otra platina (sin pausar ni perder el punto donde iba). Si no se
+      // puede, se sigue con otra canción: antes se recargaba la misma con play() sin esperar
+      // y eso dejaba la música muda («play() rechazado al recargar: AbortError»).
       const ok = await musicRetrySameTrack(t, a, 'reanudar');
-      if (!ok) {
-        // Si no se puede (no hay otra platina), el último recurso: recargar la misma.
-        const p = a.currentTime || pos;
-        musicUserPaused = true;
-        try {
-          a.pause();
-        } catch {}
-        await prepareTrack(t, p);
-        musicUserPaused = false;
-        musicAudio()
-          .play()
-          .catch(e => window.logError?.('media', `Música: play() rechazado al recargar: ${e?.name || e}`, t.file || t.id));
-      }
-      musResumeTimer = setTimeout(check, 6000);
+      if (!ok) musicContinuarTrasFallo(t);
+      else musResumeTimer = setTimeout(check, 6000);
     }
   };
   musResumeTimer = setTimeout(check, 5000);

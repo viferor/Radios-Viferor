@@ -1,6 +1,32 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.4 — Una sola recuperación a la vez, y ver qué versión de APK tienes
+
+El registro del 23-10 (16:15) enseñó dos cosas que sí dependían de la web:
+
+- **Dos recuperaciones a la vez.** El aviso de error y la vigilancia de «esto no arranca»
+  llamaban a la vez, se peleaban por las dos platinas y se gastaban los dos intentos sin
+  arreglar nada (`se vuelve a cargar… intento=1/2`, luego `intento=2/2` y después
+  `play() rechazado al recargar: AbortError`). Ahora **solo hay una recuperación a la vez**.
+- **Errores de decodificar** (`error 3`, el `.m4a` de «Catalina» a los 2,49 s): se
+  reintentaban en el mismo segundo, cosa que no arregla nada. Ahora, si el problema es
+  **decodificar**, se **salta el trozo** (10 s) directamente y, si tampoco, se pasa a la
+  siguiente canción. Si el fallo es de **leer** pero ocurre **en los primeros 5 s**, se pasa
+  a la siguiente en vez de empezar la canción por el minuto 0:20 (antes no se podía leer el
+  archivo entero).
+- **Ya no se recarga la misma platina con `play()` sin esperar** (eso era lo que dejaba la
+  música muda): si no se puede recuperar, se sigue con otra canción.
+- El registro de «la recarga no arrancó» incluye ahora el segundo, `rs`, `ns` y el código de
+  error del reproductor, para saber qué pasó exactamente.
+- **Nuevo: la versión del APK instalado aparece en el pie** («Versión 1.29.4 · Compilación
+  12940 · **App Android 1.16.0**») y **se anota al abrir la app** en el registro. Si el APK
+  es anterior al **1.16.0** sale un **⚠️**: esas mejoras de lectura de archivos son nativas y
+  sin ellas los cortes se arreglan solo a medias.
+
+> Sin APK 1.16.0 no aparecen líneas **`MUSIC_IO`** en el registro, y son justo las que dicen
+> por qué falla la lectura del archivo (tamaño que no cuadra, reapertura, byte).
+
 ## 1.29.3 — Botón «⇅ Ordenar» en la cola y en las listas
 
 - **Cola**: nuevo botón **⇅ Ordenar** en la fila de acciones (Aleatorio · Repetir · **Ordenar** ·

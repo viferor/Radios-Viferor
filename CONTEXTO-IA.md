@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.3** (compilación 12930) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.4** (compilación 12940) · APK
 > **1.16.0** (versionCode 11600) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
@@ -309,6 +309,18 @@ elegida en navegador; se puede perder sin daño.
   quedarse corto. `LocalMusic` usa el tamaño real (`getStatSize()`), no declara longitud si
   no la sabe y reabre el archivo si una lectura falla. Los fallos se anotan como `MUSIC_IO`
   en el registro (`LocalMusic.setDiag`).
+- **Música: una sola recuperación a la vez** (`musicRecuperando` / `musicRecuperar`): la
+  vigilancia de reanudar y el aviso de error se lanzaban juntos, se peleaban por las platinas
+  y gastaban los 2 intentos sin arreglar nada (`AbortError`). **No volver a llamar a
+  `musicCargarEnOtra` directamente**: siempre por `musicRecuperar`.
+- **Errores que no son de lectura**: código 3/4 (`MEDIA_ERR_DECODE`/`FORMATO`) → no se
+  reintenta el mismo segundo, se salta el trozo (`musicSaltarTrozo(t,a,10,1)`) y, si no, se
+  pasa a la siguiente canción. Un fallo de **leer** en los primeros 5 s → siguiente canción
+  (no tiene sentido empezarla en el 0:20).
+- **Versión del APK a la vista**: el pie muestra «App Android X» (la lee del user-agent
+  `RadiosViferor/x.y.z`, ver `diagnostics.js`) y se anota al abrir la app. Si es anterior a
+  1.16.0 sale ⚠️. Sirve para saber si las mejoras nativas de música están puestas y para
+  interpretar el registro (sin 1.16.0 **no hay líneas `MUSIC_IO`**).
 - **Música: una canción que no se puede leer no deja la música muda.** Escalera de
   recuperación en `musicTrackFailed`: (1) `musicRetrySameTrack` en la otra platina y en el
   mismo punto; (2) `musicSaltarTrozo` 20 s más adelante (2 veces por canción); (3)
