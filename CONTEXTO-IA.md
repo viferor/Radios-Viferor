@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.2** (compilación 12920) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.3** (compilación 12930) · APK
 > **1.16.0** (versionCode 11600) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
@@ -207,6 +207,8 @@ Recuérdale subir versión (paso 5) y hacer commit + push en GitHub Desktop.
 - **Música**: `musEl(tag, clase, html)`, `$m(id)`, `mNorm()`, `lsGet/lsSet`, `trackRow(t,i,opts)`,
   `appendRowsChunked`, `openMusicScreen('album:'|'artist:'|'list:'|'short:'|'dups:'…)`,
   `playCollection`, `queueTracks`, `playTrackNow`, `toggleMusicPlay`, `musicAudio()`.
+  Ordenar: `musicSortFn(by)`, `openMusicSortMenu({title,count,conCarpeta,apply})`,
+  `openQueueSortMenu()`, `sortMusicListMenu(l)` (botón «⇅ Ordenar» de la cola y de las listas).
   Pistas Android: id `a<idMediaStore>`; abiertas desde otra app: `x<ficha>` con `external:true`.
 - **Atrás de Android**: `handleAndroidBack()` en `podcasts.js` cierra en orden hoja → paneles →
   letra → reproductor ampliado → pantallas. Todo panel nuevo debe engancharse ahí.

@@ -1,6 +1,21 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.3 — Botón «⇅ Ordenar» en la cola y en las listas
+
+- **Cola**: nuevo botón **⇅ Ordenar** en la fila de acciones (Aleatorio · Repetir · **Ordenar** ·
+  Guardar como lista · Vaciar). Abre un menú con: **Título (A-Z)**, **Artista**, **Álbum**,
+  **Número de pista**, **Fecha en que se añadió**, **Duración**, **Más escuchadas**, **Carpeta**,
+  **Invertir el orden** y **Al azar**. Se puede **deshacer** desde el aviso.
+- **Listas**: el mismo botón **⇅ Ordenar**, ahora **visible** en la fila de acciones de cada
+  lista (antes estaba escondido en ⋯ → «Ordenar…»). Mismas opciones y también con deshacer.
+  En las listas **inteligentes** sale desactivado: su orden lo ponen las reglas (⚙️ Reglas).
+- Ordenar una lista **no cambia las canciones**, solo el orden. Si esa lista está sonando, la
+  cola sigue el nuevo orden (igual que al arrastrar).
+- El **orden a mano** sigue igual: arrastra las canciones con ⠿ (el menú de ordenar lo recuerda).
+- Ordenar la cola cambia **lo que va a sonar después**, así que el aviso de deshacer es la forma
+  rápida de volver al orden anterior.
+
 ## 1.29.2 — Si una canción no se puede leer, la música sigue (no se queda muda)
 
 El registro del móvil del 23-10 enseñó lo que pasaba: la canción fallaba al leer el archivo

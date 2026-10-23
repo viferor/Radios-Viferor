@@ -121,7 +121,43 @@
     check('con aleatorio, la carátula abre la cola', musicState.screen === 'queue', 'pantalla=' + musicState.screen);
     setMusicOpt('shuffle', false);
 
-    // ---- 10. El registro de errores no tiene fallos de JavaScript
+    // ---- 10. Botón «⇅ Ordenar» en la cola y en las listas
+    const pinchar = async (texto, contenedor) => {
+      const b = [...document.querySelectorAll(contenedor + ' button')].find(x => (x.textContent || '').includes(texto) && !x.disabled);
+      if (!b) return false;
+      b.click();
+      await esperar(40);
+      return true;
+    };
+    const ficha = (id, title, artist, album, track, added) => ({ id, title, artist, album, track, added, disc: 1, dur: 60, folder: 'Music', file: id + '.mp3' });
+    const z1 = ficha('z1', 'Zeta', 'Aerosmith', 'B', 3, 100),
+      z2 = ficha('z2', 'Alfa', 'Zappa', 'A', 1, 300);
+    musicState.queue = [z1, z2];
+    openMusicScreen('queue');
+    await esperar(40);
+    check('la cola tiene el botón «Ordenar»', await pinchar('Ordenar', '#musicContent'));
+    const opciones = [...document.querySelectorAll('.pod-sheet .pod-sheet-item')].map(b => b.textContent).join(' | ');
+    check('el menú ofrece Título, Artista, Pista y Fecha', ['Título', 'Artista', 'Número de pista', 'Fecha'].every(t => opciones.includes(t)), opciones);
+    check('ordena la cola por título', (await pinchar('Título', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.title).join(' | '));
+    musicState.queue = [z1, z2];
+    await pinchar('Ordenar', '#musicContent');
+    check('ordena la cola por artista', (await pinchar('Artista', '.pod-sheet')) && musicState.queue[0].id === z1.id, musicState.queue.map(t => t.artist).join(' | '));
+    musicState.queue = [z1, z2];
+    await pinchar('Ordenar', '#musicContent');
+    check('ordena la cola por fecha', (await pinchar('Fecha', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.added).join(' | '));
+    musicState.queue = [z1, z2];
+    await pinchar('Ordenar', '#musicContent');
+    check('invierte el orden de la cola', (await pinchar('Invertir', '.pod-sheet')) && musicState.queue[0].id === z2.id, musicState.queue.map(t => t.title).join(' | '));
+
+    const tA = musicState.tracks[0],
+      tB = musicState.tracks[1];
+    const lista2 = createMusicList('Prueba orden', [tB, tA]);
+    openMusicScreen('list:' + lista2.id);
+    await esperar(40);
+    check('la lista tiene el botón «Ordenar»', await pinchar('Ordenar', '#musicContent'));
+    check('ordena la lista por título', (await pinchar('Título', '.pod-sheet')) && lista2.items[0].id === tA.id, lista2.items.map(x => x.title).join(' | '));
+
+    // ---- 11. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {

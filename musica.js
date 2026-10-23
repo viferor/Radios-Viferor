@@ -3238,40 +3238,76 @@ function musicListMenu(l, inside = false) {
     ]
   });
 }
-function sortMusicListMenu(l) {
-  const apply = fn => {
-    const before = [...l.items];
-    const tr = new Map(l.items.map(x => [x.id, resolveTrack(x) || x]));
-    l.items.sort((a, b) => fn(tr.get(a.id), tr.get(b.id)));
-    saveMusicLists();
-    podToast('Lista ordenada', {
-      action: 'Deshacer',
-      onAction: () => {
-        l.items = before;
-        saveMusicLists();
-      }
-    });
-  };
+/* ---------------------------------------------------------------------------
+   Ordenar la cola y las listas (Título, Artista, Álbum, Pista, Fecha, …)
+   ---------------------------------------------------------------------------
+   Las canciones de una lista se guardan con pocos datos (título, artista, álbum,
+   carpeta, archivo y duración), así que para ordenar por pista o por fecha se mira la
+   canción real de la biblioteca. La cola sí guarda las canciones enteras. */
+function musicSortFn(by) {
+  const byAlbum = (a, b) =>
+    musCollator.compare(a.album || '', b.album || '') || (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0);
+  return (
+    {
+      title: (a, b) => musCollator.compare(a.title || '', b.title || ''),
+      artist: (a, b) => musCollator.compare(trackArtist(a), trackArtist(b)) || byAlbum(a, b),
+      album: byAlbum,
+      track: (a, b) =>
+        (a.disc || 0) - (b.disc || 0) || (a.track || 0) - (b.track || 0) || musCollator.compare(a.title || '', b.title || ''),
+      added: (a, b) => (b.added || 0) - (a.added || 0),
+      dur: (a, b) => (b.dur || 0) - (a.dur || 0),
+      plays: (a, b) => trackPlays(b) - trackPlays(a) || musCollator.compare(a.title || '', b.title || ''),
+      folder: (a, b) => musCollator.compare(a.folder || '', b.folder || '') || musCollator.compare(a.file || '', b.file || '')
+    }[by] || ((a, b) => musCollator.compare(a.title || '', b.title || ''))
+  );
+}
+function openMusicSortMenu({ title, count = 0, conCarpeta = false, apply }) {
   podSheet({
-    title: `Ordenar «${l.name}»`,
+    title,
+    subtitle: count ? plural(count, 'canción', 'canciones') : '',
     items: [
-      { icon: '🔤', label: 'Título', on: () => apply((a, b) => musCollator.compare(a.title || '', b.title || '')) },
-      { icon: '🎤', label: 'Artista', on: () => apply((a, b) => musCollator.compare(a.artist || '', b.artist || '') || musCollator.compare(a.album || '', b.album || '')) },
-      { icon: '💿', label: 'Álbum', on: () => apply((a, b) => musCollator.compare(a.album || '', b.album || '') || (a.track || 0) - (b.track || 0)) },
-      { icon: '🔥', label: 'Más escuchadas', on: () => apply((a, b) => trackPlays(b) - trackPlays(a)) },
-      {
-        icon: '🔀',
-        label: 'Al azar',
-        on: () => {
-          const before = [...l.items];
-          l.items = shuffled(l.items);
-          saveMusicLists();
-          podToast('Lista mezclada', { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
-        }
-      },
-      { icon: '↕', label: 'Invertir el orden', on: () => ((l.items = l.items.reverse()), saveMusicLists()) }
+      { icon: '🔤', label: 'Título (A-Z)', on: () => apply('title') },
+      { icon: '🎤', label: 'Artista', on: () => apply('artist') },
+      { icon: '💿', label: 'Álbum', on: () => apply('album') },
+      { icon: '#️⃣', label: 'Número de pista', hint: 'El orden del disco', on: () => apply('track') },
+      { icon: '📅', label: 'Fecha en que se añadió', hint: 'Las más nuevas primero', on: () => apply('added') },
+      { icon: '⏱', label: 'Duración', hint: 'Las más largas primero', on: () => apply('dur') },
+      { icon: '🔥', label: 'Más escuchadas', on: () => apply('plays') },
+      conCarpeta && { icon: '📁', label: 'Carpeta', on: () => apply('folder') },
+      { sep: true },
+      { icon: '↕', label: 'Invertir el orden', on: () => apply('invertir') },
+      { icon: '🔀', label: 'Al azar', on: () => apply('azar') },
+      { icon: '⠿', label: 'Poner el orden a mano', hint: 'Cierra este menú y arrastra las canciones ⠿', disabled: true }
     ]
   });
+}
+// Cola: al ordenarla cambia lo que va a sonar después (se puede deshacer).
+function openQueueSortMenu() {
+  const apply = by => {
+    const before = [...musicState.queue];
+    if (by === 'invertir') musicState.queue.reverse();
+    else if (by === 'azar') musicState.queue = shuffled(musicState.queue);
+    else musicState.queue.sort(musicSortFn(by));
+    saveMusicQueue();
+    podToast('Cola ordenada', { action: 'Deshacer', onAction: () => ((musicState.queue = before), saveMusicQueue()) });
+  };
+  openMusicSortMenu({ title: '⇅ Ordenar la cola', count: musicState.queue.length, conCarpeta: true, apply });
+}
+function sortMusicListMenu(l) {
+  if (!l || l.type !== 'manual' || !Array.isArray(l.items)) return;
+  const apply = by => {
+    const before = [...l.items];
+    if (by === 'invertir') l.items.reverse();
+    else if (by === 'azar') l.items = shuffled(l.items);
+    else {
+      const f = musicSortFn(by);
+      const real = new Map(l.items.map(x => [x.id, resolveTrack(x) || x]));
+      l.items.sort((a, b) => f(real.get(a.id) || a, real.get(b.id) || b));
+    }
+    saveMusicLists(); // si esa lista está sonando, la cola sigue el nuevo orden
+    podToast('Lista ordenada', { action: 'Deshacer', onAction: () => ((l.items = before), saveMusicLists()) });
+  };
+  openMusicSortMenu({ title: `⇅ Ordenar «${l.name}»`, count: l.items.length, conCarpeta: true, apply });
 }
 function renderMusicList(root, id) {
   const l = musicListById(id);
@@ -3289,6 +3325,7 @@ function renderMusicList(root, id) {
       ['➕ A la cola', () => queueTracks(tracks, 'end'), '', !tracks.length],
       smart && ['⚙️ Reglas', () => openMusicSmartEditor(l)],
       smart && ['🔄 Actualizar', () => (musicListTracks(l, { fresh: true }), renderMusicScreen())],
+      ['⇅ Ordenar', () => sortMusicListMenu(l), '', smart || (l.items || []).length < 2],
       ['⋯ Más', () => musicListMenu(l, true)]
     ])
   );
@@ -3455,6 +3492,7 @@ function renderMusicQueue(root) {
     actionBar([
       [o.shuffle ? '🔀 Aleatorio: sí' : '🔀 Aleatorio: no', toggleMusicShuffle, o.shuffle ? 'on' : ''],
       [{ off: '🔁 Repetir: no', all: '🔁 Repetir: todo', one: '🔂 Repetir: una' }[o.repeat], cycleMusicRepeat, o.repeat !== 'off' ? 'on' : ''],
+      ['⇅ Ordenar', openQueueSortMenu, '', q.length < 2],
       ['💾 Guardar como lista', saveMusicQueueAsList, '', !q.length && !cur],
       [
         '🗑 Vaciar',
