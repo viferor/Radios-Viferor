@@ -1,6 +1,41 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.0 · APK 1.16.0 — La pestaña ya no se vuelve a cambiar sola y la música no se reinicia al recuperarse
+
+- **La app te devolvía a Música al abrir, y a veces dos veces.** `MainActivity` pedía a la
+  web «vuelve a la última sección» en **cada** arranque y la pedía **dos veces** (a los
+  1,8 s y a los 3,5 s), sin distinguir un arranque normal de un toque en el widget: si
+  estabas en Música y tocabas Radios, a los pocos segundos volvía a Música; y al volver a
+  la app desde otra pestaña, también. Ahora:
+  - La app Android **solo cambia de pestaña cuando el widget lo pide expresamente**
+    (`openSection`). Un arranque normal no fuerza nada.
+  - La **última pestaña la recuerda la web** (`radios_viferor_last_tab_v1`) y la vuelve a
+    poner **una sola vez** al abrir (`restaurarPestanaAlAbrir()`).
+  - Las llamadas de las APK antiguas (`switchToMusic()` sin argumentos) **se ignoran**:
+    ya no pueden devolverte a una pestaña que no has pedido.
+  - Si todavía no hay pestaña guardada se usa la sección que estaba sonando
+    (`Android.lastPlaybackSection()`), así que al actualizar no se pierde la costumbre.
+- **La recuperación de la música ya no reinicia la canción.** El registro del móvil
+  enseñaba que, al fallar una lectura, la app pausaba la platina, recargaba y llamaba a
+  `play()` sin esperar: salía «la recarga no arrancó (AbortError)» y la canción volvía al
+  segundo 0 (o se saltaba a la siguiente). Ahora se carga **en la otra platina**, en el
+  punto donde iba, y cuando ya tiene datos se cambia a ella sin pausar nada.
+- **Paradas que no volvían**: si la lectura se queda parada (`waiting`/`stalled`) más de
+  8 s, se recupera sola igual. Antes solo se apuntaba en el registro y la música se
+  quedaba muda.
+- **Reintentos con más criterio**: el límite de 2 intentos se perdona cuando la canción ha
+  vuelto a sonar más de 20 s, así que un mal momento no hace que se salte la canción.
+- **Archivos de música (parte nativa)**: se sirve el **tamaño real** del archivo (el que
+  declara MediaStore puede quedarse corto y el reproductor se queda sin datos al final: de
+  ahí los `PIPELINE_ERROR_READ`), la longitud solo se declara si se sabe y, si una lectura
+  falla, se **vuelve a abrir el archivo en el punto donde iba** y se sigue leyendo.
+- **El registro apunta el porqué**: los fallos de lectura nativos se anotan como
+  `MUSIC_IO` (tamaño que no cuadra, reapertura, byte donde falló), para saber la próxima
+  vez si es del archivo, de MediaStore o del reproductor.
+- **Pruebas**: `tests/smoke/run.ps1` comprueba en un Chromium real, sin red ni Python, que
+  la pestaña no se cambia sola y que la recuperación no reinicia la canción.
+
 ## 1.28.1 — Las canciones ya no se cortan solas y microcortes al reanudar
 
 - **Ya no se tira la canción al primer fallo.** El registro del móvil enseñaba fallos de

@@ -29,6 +29,24 @@ python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar a
 Cada una termina con `N/N OK` y `Errores JS: 0`. Si alguna dice `FAIL`, el cambio ha roto algo.
 Las capturas se guardan en `tests/shots/` (ignorada por git).
 
+## Comprobación rápida sin Python ni internet (`tests/smoke/`)
+
+Si no hay Playwright a mano, esto abre la web en el Chromium que ya está instalado (el de
+Playwright) con un Android simulado y comprueba lo más delicado sin descargar nada:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\smoke\run.ps1
+```
+
+Ahora comprueba: la app abre en Radios, la última pestaña se recuerda **una sola vez**, las
+llamadas de las APK antiguas (`switchToMusic()` sin argumentos) se ignoran, `viferorIrAPestana`
+funciona y la recuperación de la música **no reinicia la canción** (usa dos platinas
+simuladas). Monta `tests/smoke/test.html` a partir de `index.html`; no se sube a Vercel
+(`tests/` está en `.vercelignore`).
+
+Nota: no se reproduce audio de verdad porque `--virtual-time-budget` se queda colgado
+mientras hay reproducción. Por eso la recuperación se prueba con platinas simuladas.
+
 ## Editor ID3 (Java, sin Android)
 
 ```powershell

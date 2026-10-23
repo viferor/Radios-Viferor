@@ -843,7 +843,7 @@ function backFromPodcast() {
     }
     return;
   }
-  switchToRadios();
+  switchToRadios(true);
 }
 // La portada de Podcasts muestra directamente tus favoritos (antes salía vacía y
 // había que entrar en «Mis podcasts» para verlos).
@@ -1752,7 +1752,9 @@ function importPodcastOPML(ev) {
   };
   r.readAsText(f);
 }
-function switchToPodcasts() {
+function switchToPodcasts(desdeLaWeb = false) {
+  // Las APK antiguas pedían la pestaña sin argumentos: se ignoran (ver podcast-listas.js).
+  if (rvPestanaForzadaPorApkAntigua(arguments.length)) return;
   const fav = document.getElementById('viewFav'),
     search = document.getElementById('viewSearch'),
     pods = document.getElementById('viewPodcasts'),
@@ -1765,8 +1767,10 @@ function switchToPodcasts() {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
   renderPodcastLanding(false);
+  rvGuardarPestana('podcasts');
 }
-function switchToRadios() {
+function switchToRadios(desdeLaWeb = false) {
+  if (rvPestanaForzadaPorApkAntigua(arguments.length)) return;
   document.body.classList.remove(
     'podcasts-active',
     'podcast-detail-active',
@@ -1785,11 +1789,12 @@ function switchToRadios() {
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
   if (typeof renderFavoritas === 'function') renderFavoritas();
+  rvGuardarPestana('radios');
 }
 function restorePodcastHistory(st) {
   const pods = document.getElementById('viewPodcasts');
   if (!pods?.classList.contains('active')) {
-    switchToPodcasts();
+    switchToPodcasts(true);
   }
   const s = st?.podcastScreen || 'landing';
   if (s === 'landing') renderPodcastLanding(true);
@@ -2157,7 +2162,7 @@ window.handleAndroidBack = function () {
 
 window.openPodcastFromNotification = async function (url) {
   try {
-    switchToPodcasts();
+    switchToPodcasts(true);
     // La notificación nativa envía la URL del feed de la suscripción.
     const wanted = String(url || '').trim().toLowerCase();
     const sub = podcastState.subs.find(p => podcastKey(p) === wanted);
@@ -2398,12 +2403,18 @@ function initPodcasts() {
   }
   $p('podSearchOpen').onclick = openPodcastSearchDrawer;
   $p('podSearchClose').onclick = closePodcastSearchDrawer;
-  $p('btnViewPodcasts').onclick = switchToPodcasts;
-  $p('btnViewRadios').onclick = switchToRadios;
+  $p('btnViewPodcasts').onclick = () => {
+    rvMarcarPestanaTocada();
+    switchToPodcasts(true);
+  };
+  $p('btnViewRadios').onclick = () => {
+    rvMarcarPestanaTocada();
+    switchToRadios(true);
+  };
   window.addEventListener('popstate', () => {
     if (history.state?.musicScreen) window.restoreMusicHistory?.(history.state);
     else if (history.state?.podcastScreen) restorePodcastHistory(history.state);
-    else switchToRadios();
+    else switchToRadios(true);
   });
   const pa = $p('podcastAudio');
   window._podPrevVol = 0.8;

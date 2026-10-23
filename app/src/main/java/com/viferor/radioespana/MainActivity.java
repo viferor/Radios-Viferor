@@ -70,6 +70,14 @@ public class MainActivity extends Activity {
         audioOutput.start();
         musicEditor = new MusicEditor(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
         setupWebView(START_URL);
+        // Los fallos al leer los archivos de música se apuntan en el registro de errores de la
+        // web (Ajustes → Registro de errores), que es donde se ve el porqué de un corte.
+        LocalMusic.setDiag((what, detail) -> {
+            if (webView == null || !bridgeTrusted) return;
+            final String js = "try{window.logError&&window.logError('MUSIC_IO'," + JSONObject.quote(what)
+                    + ",''," + JSONObject.quote(detail) + ");}catch(e){}";
+            webView.post(() -> { if (webView != null) webView.evaluateJavascript(js, null); });
+        });
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
         handleNotificationIntent(getIntent());
@@ -323,20 +331,32 @@ public class MainActivity extends Activity {
         });
     }
 
+    /**
+     * El widget pide abrir una sección concreta («openSection»). Solo se cambia de pestaña
+     * cuando el intent lo pide de verdad: antes, al abrir la app desde el icono, también se
+     * «recordaba» la última sección (y dos veces, a los 1,8 s y a los 3,5 s), así que si
+     * estabas en Música y tocabas Radios, la app te devolvía a Música. Ahora la última
+     * pestaña la restaura la propia web (window.viferorIrAPestana solo se usa aquí).
+     */
     private void handleWidgetOpenIntent(Intent intent) {
         if (intent == null || webView == null) return;
+        if (!intent.hasExtra("openSection")) return;
         String section = intent.getStringExtra("openSection");
-        if (section == null || section.isEmpty()) {
-            section = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
-        }
-        final String js = "podcast".equalsIgnoreCase(section)
-                ? "window.switchToPodcasts&&window.switchToPodcasts();"
-                : "music".equalsIgnoreCase(section)
-                ? "window.switchToMusic&&window.switchToMusic();"
-                : "window.switchToRadios&&window.switchToRadios();";
-        webView.postDelayed(() -> webView.evaluateJavascript(js, null), 1800);
-        webView.postDelayed(() -> webView.evaluateJavascript(js, null), 3500);
         intent.removeExtra("openSection");
+        if (section == null || section.isEmpty()) return;
+        deliverSection(section, 0);
+    }
+
+    /** Pide a la web que cambie de pestaña y reintenta mientras la web no esté lista. */
+    private void deliverSection(String section, int attempt) {
+        if (webView == null) return;
+        String js = "(function(){try{return !!(window.viferorIrAPestana&&window.viferorIrAPestana("
+                + JSONObject.quote(section) + "));}catch(e){return false;}})()";
+        webView.evaluateJavascript(js, r -> {
+            if (!"true".equals(r) && attempt < 6 && webView != null) {
+                webView.postDelayed(() -> deliverSection(section, attempt + 1), 700);
+            }
+        });
     }
 
     private void handleNotificationIntent(Intent intent) {
@@ -463,6 +483,13 @@ public class MainActivity extends Activity {
             if (!bridgeTrusted) return;
             String safe = "podcast".equalsIgnoreCase(section) ? "podcast" : "music".equalsIgnoreCase(section) ? "music" : "radio";
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_PLAYBACK_SECTION, safe).apply();
+        }
+
+        /** Sección en la que sonaba algo la última vez (la web decide si vuelve a ella). */
+        @JavascriptInterface
+        public String lastPlaybackSection() {
+            if (!bridgeTrusted) return "radio";
+            return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_PLAYBACK_SECTION, "radio");
         }
 
         @JavascriptInterface

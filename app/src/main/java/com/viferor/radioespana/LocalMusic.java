@@ -23,7 +23,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
-import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -49,6 +48,25 @@ final class LocalMusic {
     static final String PREFIX = "/__music/";
 
     private LocalMusic() {}
+
+    // ---- Avisos al registro de errores de la web (para saber por qué falló una lectura) ----
+    interface Diag {
+        void log(String what, String detail);
+    }
+
+    private static volatile Diag diag;
+
+    static void setDiag(Diag d) {
+        diag = d;
+    }
+
+    private static void apuntar(String what, String detail) {
+        Diag d = diag;
+        if (d == null) return;
+        try {
+            d.log(what, detail);
+        } catch (Exception ignored) {}
+    }
 
     static String permissionName() {
         return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_AUDIO : Manifest.permission.READ_EXTERNAL_STORAGE;
@@ -230,6 +248,7 @@ final class LocalMusic {
                 return new WebResourceResponse("image/jpeg", null, 200, "OK", h, new ByteArrayInputStream(jpg));
             }
         } catch (Exception e) {
+            apuntar("Música: error al servir un archivo", String.valueOf(e.getMessage()) + " " + path);
             return json(500, "Error", "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}");
         }
         return empty(404, "Not Found");
@@ -263,11 +282,22 @@ final class LocalMusic {
         String mime = knownMime;
         if (TextUtils.isEmpty(mime) || "*/*".equals(mime)) mime = cr.getType(u);
         if (TextUtils.isEmpty(mime)) mime = "audio/mpeg";
-        AssetFileDescriptor afd = cr.openAssetFileDescriptor(u, "r");
-        if (afd == null) return empty(404, "Not Found");
-        long len = afd.getLength();
-        if (len < 0) len = afd.getParcelFileDescriptor().getStatSize();
-        long start = 0, end = len - 1;
+        long len;
+        try (AssetFileDescriptor probe = cr.openAssetFileDescriptor(u, "r")) {
+            if (probe == null) return empty(404, "Not Found");
+            long declarado = probe.getLength();
+            long real = probe.getParcelFileDescriptor().getStatSize();
+            // El tamaño que declara MediaStore puede quedarse corto (por ejemplo, si el archivo
+            // se reescribió al editar las etiquetas). Si el reproductor cree que el archivo es
+            // más pequeño, al llegar a esa altura se queda sin datos y da
+            // «PIPELINE_ERROR_READ: data source error», que es el corte que se oía. Manda el
+            // tamaño real del archivo.
+            if (real > 0 && declarado > 0 && real != declarado) {
+                apuntar("Música: el tamaño del archivo no cuadra", "declarado=" + declarado + " real=" + real + " " + u);
+            }
+            len = real > 0 ? real : declarado;
+        }
+        long start = 0, end = len > 0 ? len - 1 : -1;
         boolean partial = false;
         if (range != null && len > 0) {
             String r = range.trim().toLowerCase(Locale.ROOT);
@@ -286,48 +316,110 @@ final class LocalMusic {
                     partial = true;
                 } catch (NumberFormatException ignored) {}
                 if (start >= len || start > end) {
-                    afd.close();
                     Map<String, String> h = new HashMap<>();
                     h.put("Content-Range", "bytes */" + len);
                     return new WebResourceResponse(mime, null, 416, "Range Not Satisfiable", h, new ByteArrayInputStream(new byte[0]));
                 }
             }
         }
-        FileInputStream in = afd.createInputStream();
-        if (start > 0) in.getChannel().position(afd.getStartOffset() + start);
         long count = len > 0 ? end - start + 1 : -1;
-        InputStream body = new Bounded(in, count, afd);
         Map<String, String> h = new HashMap<>();
         h.put("Accept-Ranges", "bytes");
         h.put("Cache-Control", "no-store");
+        // La longitud solo se declara si se sabe de verdad: si no, es mejor dejar que el
+        // reproductor lea hasta el final del archivo.
         if (count >= 0) h.put("Content-Length", String.valueOf(count));
         if (partial) h.put("Content-Range", "bytes " + start + "-" + end + "/" + len);
+        InputStream body;
+        try {
+            body = new TrackBody(c, u, start, count);
+        } catch (IOException e) {
+            apuntar("Música: no se pudo abrir el audio", String.valueOf(e.getMessage()) + " " + u);
+            return empty(500, "Error");
+        }
         return new WebResourceResponse(mime, null, partial ? 206 : 200, partial ? "Partial Content" : "OK", h, body);
     }
 
-    private static final class Bounded extends FilterInputStream {
-        private long left;
-        private final AssetFileDescriptor afd;
-        Bounded(InputStream in, long count, AssetFileDescriptor afd) {
-            super(in);
-            this.left = count;
-            this.afd = afd;
+    /**
+     * Cuerpo de la respuesta. Si la lectura del archivo falla (en el registro del móvil
+     * aparecían «PIPELINE_ERROR_READ: data source error» a mitad de canción, incluso con
+     * datos todavía en el búfer), se vuelve a abrir el archivo en el punto donde iba y se
+     * sigue leyendo: un fallo pasajero de MediaStore ya no tira la canción.
+     */
+    private static final class TrackBody extends InputStream {
+        private final Context ctx;
+        private final Uri uri;
+        private final long count; // -1 = hasta el final del archivo
+        private long sent;
+        private long pos;
+        private FileInputStream in;
+        private AssetFileDescriptor afd;
+        private int reabiertos;
+
+        TrackBody(Context c, Uri u, long start, long count) throws IOException {
+            this.ctx = c;
+            this.uri = u;
+            this.count = count;
+            this.pos = start;
+            open();
         }
-        @Override public int read() throws IOException {
-            if (left == 0) return -1;
-            int b = super.read();
-            if (b >= 0 && left > 0) left--;
-            return b;
+
+        private void open() throws IOException {
+            afd = ctx.getContentResolver().openAssetFileDescriptor(uri, "r");
+            if (afd == null) throw new IOException("no se pudo abrir el archivo");
+            in = afd.createInputStream();
+            long base = afd.getStartOffset();
+            if (base + pos > 0) in.getChannel().position(base + pos);
         }
-        @Override public int read(byte[] b, int off, int len) throws IOException {
-            if (left == 0) return -1;
-            if (left > 0) len = (int) Math.min(len, left);
-            int n = super.read(b, off, len);
-            if (n > 0 && left > 0) left -= n;
+
+        private boolean reabrir() {
+            if (reabiertos >= 2) return false;
+            reabiertos++;
+            try { if (in != null) in.close(); } catch (Exception ignored) {}
+            try { if (afd != null) afd.close(); } catch (Exception ignored) {}
+            try {
+                open();
+                apuntar("Música: la lectura falló y se ha reabierto el archivo", "byte=" + pos + " " + uri);
+                return true;
+            } catch (IOException e) {
+                apuntar("Música: no se pudo reabrir el audio", String.valueOf(e.getMessage()) + " byte=" + pos + " " + uri);
+                return false;
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] uno = new byte[1];
+            int n = read(uno, 0, 1);
+            return n <= 0 ? -1 : (uno[0] & 0xff);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (count >= 0 && sent >= count) return -1;
+            if (len <= 0) return 0;
+            if (count >= 0) len = (int) Math.min(len, count - sent);
+            int n;
+            try {
+                n = in.read(b, off, len);
+            } catch (IOException e) {
+                if (!reabrir()) throw e;
+                n = in.read(b, off, len);
+            }
+            if (n > 0) {
+                sent += n;
+                pos += n;
+            }
             return n;
         }
-        @Override public void close() throws IOException {
-            try { super.close(); } finally { try { afd.close(); } catch (Exception ignored) {} }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                if (in != null) in.close();
+            } finally {
+                try { if (afd != null) afd.close(); } catch (Exception ignored) {}
+            }
         }
     }
 

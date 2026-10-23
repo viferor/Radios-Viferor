@@ -12,6 +12,52 @@
 // savePodcastQueue, podcastFeedUrl…), que se cargan antes.
 
 /* ---------------------------------------------------------------------------
+   Pestaña en la que estabas (Radios / Podcasts / Música)
+---------------------------------------------------------------------------
+   Se recuerda para volver a ella al abrir la app, pero la decide la web y UNA sola vez.
+   Las APK 1.15.0 y anteriores la pedían desde Java a los 1,8 s y a los 3,5 s de abrir
+   (MainActivity.handleWidgetOpenIntent, sin distinguir un arranque normal de un toque en
+   el widget), y eso te devolvía a Música aunque ya hubieras tocado Radios. Aquellas
+   llamadas se hacen sin argumentos; las de la web llevan siempre al menos uno, así que
+   se pueden distinguir y se ignoran (ver rvPestanaForzadaPorApkAntigua). */
+const RV_LAST_TAB_KEY = 'radios_viferor_last_tab_v1';
+const RV_ARRANQUE_MS = Date.now();
+let rvPestanaTocada = false;
+function rvGuardarPestana(v) {
+  try {
+    localStorage.setItem(RV_LAST_TAB_KEY, String(v || ''));
+  } catch {}
+}
+function rvPestanaGuardada() {
+  try {
+    return localStorage.getItem(RV_LAST_TAB_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+// El usuario ha tocado una pestaña a mano: a partir de aquí no se le cambia sola.
+function rvMarcarPestanaTocada() {
+  rvPestanaTocada = true;
+}
+// ¿Es una de aquellas llamadas antiguas del APK? (sin argumentos, o en el arranque, o
+// después de que ya hayas elegido pestaña). Las de la web llevan siempre argumentos.
+function rvPestanaForzadaPorApkAntigua(veces) {
+  if (veces > 0) return false;
+  return rvPestanaTocada || Date.now() - RV_ARRANQUE_MS < 6000;
+}
+// Pestaña a la que volver al abrir: la última que usaste o, la primera vez, la sección
+// que estaba sonando (APK nuevas, Android.lastPlaybackSection).
+function rvPestanaAlAbrir() {
+  const guardada = rvPestanaGuardada();
+  if (guardada) return guardada;
+  try {
+    return String(window.Android?.lastPlaybackSection?.() || '');
+  } catch {
+    return '';
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Utilidades: avisos, menús inferiores, textos
 --------------------------------------------------------------------------- */
 let podToastTimer = null;
@@ -897,7 +943,7 @@ function moveQueueItem(from, to) {
   savePodcastQueue();
 }
 function renderPodcastQueue(fromHistory = false) {
-  if (!podcastsViewActive()) switchToPodcasts();
+  if (!podcastsViewActive()) switchToPodcasts(true);
   if (!fromHistory) pushPodcastState('queue');
   podcastState.screen = 'queue';
   setPodcastLayout(true);
@@ -1038,7 +1084,7 @@ function listMeta(l) {
   return l.items.length ? episodesSummary(l.items) : 'Vacía';
 }
 function renderPodcastLists(fromHistory = false) {
-  if (!podcastsViewActive()) switchToPodcasts();
+  if (!podcastsViewActive()) switchToPodcasts(true);
   if (!fromHistory) pushPodcastState('lists');
   podcastState.screen = 'lists';
   setPodcastLayout(true);
@@ -1201,7 +1247,7 @@ function sortListMenu(l) {
 async function renderPodcastList(id, fromHistory = false, { force = false } = {}) {
   const l = listById(id);
   if (!l) return renderPodcastLists(fromHistory);
-  if (!podcastsViewActive()) switchToPodcasts();
+  if (!podcastsViewActive()) switchToPodcasts(true);
   if (!fromHistory) pushPodcastState('list:' + id);
   podcastState.screen = 'list:' + id;
   const token = podcastNavToken;

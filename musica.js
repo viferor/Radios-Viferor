@@ -686,7 +686,9 @@ async function prepareTrack(t, pos = 0) {
   musicState.current = t;
   const src = await trackSrc(t);
   if (!src) return;
-  a.preload = 'metadata';
+  // «auto» (y no «metadata»): el móvil carga por delante mientras suena, y así no se queda
+  // sin datos a mitad de canción, que es lo que producía los microcortes.
+  a.preload = 'auto';
   a.src = src;
   // Volver a leer el archivo de verdad: si la dirección es la misma que ya tenía, el
   // navegador no recargaría nada y ni la recuperación ni la vigilancia de reanudar servirían.
@@ -739,9 +741,9 @@ async function startTrack(t, { pos = 0 } = {}) {
    en el registro del móvil la misma canción falla en el segundo 53 y vuelve a sonar bien
    después. Antes se tiraba la canción y se saltaba a la siguiente al primer fallo; ahora se
    vuelve a cargar en el mismo punto y se sigue. Solo si tampoco arranca se pasa a la
-   siguiente. El límite por minuto evita el bucle si el archivo sí está roto. */
+   siguiente (2 intentos; si la canción vuelve a sonar 20 s, se perdona el fallo). */
 const MUS_MAX_RETRIES = 2;
-let musicRetry = { id: '', tries: 0, since: 0 };
+let musicRetry = { id: '', tries: 0, since: 0, pos: 0 };
 // Segundos que quedan cargados por delante de la posición actual (-1 si no se sabe).
 function musBufferedAhead(a) {
   try {
@@ -750,31 +752,90 @@ function musBufferedAhead(a) {
   } catch {}
   return -1;
 }
+// Espera a que una platina tenga datos suficientes para sonar (o dice que no llegaron).
+function musWaitCanPlay(el, ms = 9000) {
+  return new Promise(resolve => {
+    if (!el) return resolve(false);
+    if (el.readyState >= 3) return resolve(true);
+    let hecho = false,
+      timer = 0;
+    const fin = ok => {
+      if (hecho) return;
+      hecho = true;
+      clearTimeout(timer);
+      el.removeEventListener('canplay', bien);
+      el.removeEventListener('loadeddata', bien);
+      el.removeEventListener('error', mal);
+      resolve(ok);
+    };
+    const bien = () => fin(true);
+    const mal = () => fin(false);
+    el.addEventListener('canplay', bien);
+    el.addEventListener('loadeddata', bien);
+    el.addEventListener('error', mal);
+    timer = setTimeout(() => fin(el.readyState >= 2), ms);
+  });
+}
 function musicCanRetry(t) {
   if (!t || musicUserPaused || musicInterrupted) return false;
   if (musicState.current?.id !== t.id) return false;
   const now = Date.now();
-  if (musicRetry.id !== t.id || now - musicRetry.since > 60000) musicRetry = { id: t.id, tries: 0, since: now };
+  const cur = Number(musicAudio()?.currentTime) || 0;
+  if (musicRetry.id !== t.id || now - musicRetry.since > 120000) musicRetry = { id: t.id, tries: 0, since: now, pos: cur };
+  // Si desde el último intento ha vuelto a sonar un buen rato, aquel fallo fue pasajero y
+  // se le perdona: así una canción con un mal momento no se salta a la tercera.
+  else if (musicRetry.tries && cur - musicRetry.pos > 20) {
+    musicRetry.tries = 0;
+    musicRetry.pos = cur;
+  }
   return musicRetry.tries < MUS_MAX_RETRIES;
 }
+/* Recuperar la misma canción donde iba SIN tocar la platina que suena: se carga en la otra
+   y, cuando ya tiene datos, se cambia a ella. Antes se pausaba la que sonaba, se recargaba y
+   se llamaba a play() sin esperar: de ahí los «AbortError: la recarga no arrancó» y los
+   «vuelve al segundo 0» que salían en el registro del móvil. */
 async function musicRetrySameTrack(t, a, why) {
   if (!musicCanRetry(t)) return false;
   musicRetry.tries++;
   musicRetry.since = Date.now();
   const pos = Math.max(0, (Number(a?.currentTime) || 0) - 2);
+  musicRetry.pos = pos;
   window.logError?.('MUSIC_AUDIO', `Música: se vuelve a cargar la misma canción (${why})`, t.file || t.id, `t=${pos.toFixed(1)} intento=${musicRetry.tries}/${MUS_MAX_RETRIES}`);
+  const from = musicState.deck,
+    to = otherDeckIndex(),
+    b = musDecks[to];
+  if (!b) return false;
   try {
-    musicUserPaused = true; // que el pause() de la recarga no cuente como interrupción
-    musicAudio()?.pause();
-    await prepareTrack(t, pos);
-    musicUserPaused = false;
-    await musicAudio().play();
-    return true;
+    musicState.preload = null; // esa platina se va a usar para recuperar
+    b.src = await trackSrc(t, to);
+    b.load();
+    if (!(await musWaitCanPlay(b))) throw Error('sin datos');
+    try {
+      b.currentTime = pos;
+    } catch {}
+    deckLevel(to, 1, 0);
+    deckLevel(from, 1, 0);
+    await b.play();
   } catch (e) {
-    musicUserPaused = false;
     window.logError?.('MUSIC_AUDIO', `Música: la recarga no arrancó (${e?.name || e})`, t.file || t.id);
+    try {
+      b.pause();
+    } catch {}
+    deckLevel(to, 1, 0);
     return false;
   }
+  // Ya suena en la otra platina, en el mismo punto: se cambia sin hueco ni reinicio.
+  musicState.deck = to;
+  musicState.current = t;
+  musicState.xf = null;
+  try {
+    a?.pause();
+  } catch {}
+  saveMusicResume();
+  updateMusicNowUI();
+  syncMusicAndroid(true);
+  updateMediaSession();
+  return true;
 }
 function musicTrackFailed(t, a) {
   const buf = a ? musBufferedAhead(a) : -1;
@@ -882,16 +943,21 @@ function watchMusicResume(reason) {
     if (ctxBad) fx.ctx.resume().catch(() => {});
     if (silent) deckLevel(musicState.deck, 1, 0);
     if (!moved && tries++ < 2) {
-      const p = a.currentTime || pos;
-      musicUserPaused = true;
-      try {
-        a.pause();
-      } catch {}
-      await prepareTrack(t, p);
-      musicUserPaused = false;
-      musicAudio()
-        .play()
-        .catch(e => window.logError?.('media', `Música: play() rechazado al recargar: ${e?.name || e}`, t.file || t.id));
+      // Recuperar en la otra platina (sin pausar ni perder el punto donde iba).
+      const ok = await musicRetrySameTrack(t, a, 'reanudar');
+      if (!ok) {
+        // Si no se puede (no hay otra platina), el último recurso: recargar la misma.
+        const p = a.currentTime || pos;
+        musicUserPaused = true;
+        try {
+          a.pause();
+        } catch {}
+        await prepareTrack(t, p);
+        musicUserPaused = false;
+        musicAudio()
+          .play()
+          .catch(e => window.logError?.('media', `Música: play() rechazado al recargar: ${e?.name || e}`, t.file || t.id));
+      }
       musResumeTimer = setTimeout(check, 6000);
     }
   };
@@ -1650,10 +1716,12 @@ function backFromMusic() {
     }
     return;
   }
-  switchToRadios();
+  switchToRadios(true);
 }
 window.backFromMusic = backFromMusic;
 function switchToMusic(fromHistory = false) {
+  // Las APK antiguas pedían la pestaña sin argumentos: se ignoran (ver podcast-listas.js).
+  if (rvPestanaForzadaPorApkAntigua(arguments.length)) return;
   ['viewFav', 'viewSearch', 'viewPodcasts'].forEach(id => $m(id)?.classList.remove('active'));
   $m('viewMusic')?.classList.add('active');
   document.body.classList.remove('podcasts-active', 'podcast-detail-active', 'podcast-subs-fullscreen', 'podcast-results-active', 'pod-adding');
@@ -1668,8 +1736,36 @@ function switchToMusic(fromHistory = false) {
   }
   renderMusicScreen();
   ensureMusicLibrary();
+  rvGuardarPestana('music');
 }
 window.switchToMusic = switchToMusic;
+// Al abrir la app, vuelve a la pestaña donde estabas (Radios, Podcasts o Música).
+// Lo hace la web y una sola vez; antes lo pedía Java a los 1,8 s y a los 3,5 s y te
+// devolvía a Música aunque ya hubieras tocado Radios. En el navegador del PC se abre
+// en Radios, como siempre.
+function restaurarPestanaAlAbrir() {
+  if (!isAndroidApp()) return;
+  // Si el widget ya ha pedido una pestaña (se abre la app desde el widget), manda esa.
+  if (window.__rvPestanaPedida) return;
+  const v = rvPestanaAlAbrir();
+  if (v === 'music') switchToMusic(false);
+  else if (v === 'podcasts') switchToPodcasts(true);
+}
+window.restaurarPestanaAlAbrir = restaurarPestanaAlAbrir;
+// Las APK nuevas piden cambiar de pestaña con esto (widget y avisos): es un toque tuyo,
+// así que se cambia siempre, sin las precauciones de arriba. Devuelve true si lo ha hecho.
+window.viferorIrAPestana = function (seccion) {
+  const s = String(seccion || '').toLowerCase();
+  try {
+    window.__rvPestanaPedida = true;
+    if (s === 'music' || s === 'musica' || s === 'música') switchToMusic(false);
+    else if (s === 'podcast' || s === 'podcasts') switchToPodcasts(true);
+    else switchToRadios(true);
+    return true;
+  } catch {
+    return false;
+  }
+};
 function setMusicTab(tab) {
   musicState.tab = tab;
   saveMusicUi({ tab });
@@ -2576,7 +2672,7 @@ async function openExternalAudio(info) {
   }
   if (!info) return;
   if (info.error) return podToast('No se pudo abrir el archivo: ' + info.error);
-  if (!musicViewActive()) switchToMusic();
+  if (!musicViewActive()) switchToMusic(false);
   await waitMusicLibrary();
   // Lista M3U: se crea una lista con las canciones que estén en el móvil.
   if (info.playlist) {
@@ -3520,7 +3616,10 @@ window.closeMusicExpanded = closeMusicExpanded;
 function initMusic() {
   loadMusicLists();
   musicState.tab = musicUi().tab;
-  $m('btnViewMusic')?.addEventListener('click', () => switchToMusic());
+  $m('btnViewMusic')?.addEventListener('click', () => {
+    rvMarcarPestanaTocada();
+    switchToMusic(false);
+  });
   document.querySelectorAll('#musTabs [data-tab]').forEach(b => (b.onclick = () => setMusicTab(b.dataset.tab)));
   $m('musSearch')?.addEventListener('input', e => {
     clearTimeout(musSearchTimer);
@@ -3616,8 +3715,36 @@ function initMusic() {
       `t=${(a.currentTime || 0).toFixed(1)} buf=${musBufferedAhead(a).toFixed(1)} rs=${a.readyState} ns=${a.networkState} gan=${musDeckLevel[musicState.deck].toFixed(2)}`
     );
   };
-  on('waiting', a => logMusStall('sin datos para seguir', a));
-  on('stalled', a => logMusStall('la lectura se ha quedado parada', a));
+  // Si la lectura se queda parada (waiting/stalled) y a los 8 s no ha vuelto, se recupera
+  // sola en la otra platina. Antes solo se apuntaba en el registro y la canción se quedaba
+  // muda (en el registro aparecían «microcorte (sin datos para seguir)» y no volvía).
+  let musStallTimer = null,
+    musStallPos = 0;
+  const vigilanciaParada = a => {
+    if (musStallTimer || a.paused || musicUserPaused || musicInterrupted) return;
+    musStallPos = a.currentTime;
+    musStallTimer = setTimeout(async () => {
+      musStallTimer = null;
+      const el = musicAudio();
+      if (el !== a || el.paused || el.ended || musicUserPaused || musicInterrupted) return;
+      if (el.currentTime - musStallPos > 1) return; // ha vuelto a sonar solo
+      const t = musicState.current;
+      if (!t) return;
+      window.rvAnotar?.(`Música: 8 s sin datos, se recupera (${t.file || t.id})`);
+      const ok = await musicRetrySameTrack(t, el, 'parada de 8 s');
+      if (!ok && musicErrors++ < 3 && musicState.queue.length) nextTrack(true);
+    }, 8000);
+  };
+  on('waiting', a => {
+    logMusStall('sin datos para seguir', a);
+    vigilanciaParada(a);
+  });
+  on('stalled', a => {
+    logMusStall('la lectura se ha quedado parada', a);
+    vigilanciaParada(a);
+  });
+  on('playing', () => clearTimeout(musStallTimer));
+  on('ended', () => clearTimeout(musStallTimer));
   on('loadedmetadata', updateMusicPlayerUI);
   on('ended', async () => {
     const t = musicState.current;
@@ -3732,6 +3859,12 @@ function initMusic() {
   });
   window.addEventListener('pagehide', saveMusicResume);
   updateMusicPlayerUI();
+  // Por último (y una sola vez): volver a la pestaña donde estabas al abrir la app.
+  try {
+    restaurarPestanaAlAbrir();
+  } catch (e) {
+    window.logError?.('MUSIC_UI', 'No se pudo volver a la última pestaña: ' + (e?.message || e));
+  }
 }
 
 /* ===========================================================================

@@ -4,9 +4,9 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.28.0** (compilación 12800) · APK
-> **1.15.0** (versionCode 11500) · commit `427ee52` · rama de respaldo
-> **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-15.
+> **Estado de referencia (todo funcionando):** web **1.29.0** (compilación 12900) · APK
+> **1.16.0** (versionCode 11600) · rama de respaldo
+> **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
 ---
 
@@ -126,7 +126,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 | `scripts/version.mjs` | Cambia versión de la web y las marcas `?v=` de `index.html`. |
 | `vercel.json` | Cabeceras, `maxDuration` de `api/music.js`, **rewrites** de las subfunciones. |
 | `.vercelignore` | Excluye `tests/` y este archivo del despliegue. |
-| `tests/` | Pruebas automáticas (Playwright) — ver `tests/README.md`. |
+| `tests/` | Pruebas automáticas (Playwright) — ver `tests/README.md`. `tests/smoke/` no necesita Python. |
 | `README.md` | **Historial de versiones** (la más nueva arriba). Mantenerlo. |
 
 ### API (`api/`)
@@ -178,6 +178,9 @@ timeout), `readLimited`, `rateLimited`, `HttpError`. `api/_lib/body.js`: `readJs
 3. Comprueba sintaxis: `node --check archivo.js` (cada JS tocado); Java: compila en Android
    Studio o deja que lo haga GitHub Actions.
 4. Prueba: ejecuta las pruebas de `tests/` relacionadas (y añade casos nuevos para lo nuevo).
+   Si en el entorno no hay Python/Playwright, usa `powershell -ExecutionPolicy Bypass -File
+   tests\smoke\run.ps1`: monta la web con un Android simulado, la abre en el Chromium que ya
+   está instalado y comprueba pestañas y recuperación de la música (no necesita red).
 5. Versión: `node scripts/version.mjs 1.28.1 12810` (la compilación sigue el patrón
    `1.28.1 → 12810`, `1.29.0 → 12900`). Si tocas `app/`, sube `versionCode` (+100 por menor,
    p. ej. 11500 → 11600) y `versionName` en `app/build.gradle`.
@@ -239,13 +242,16 @@ El usuario también puede poner su clave de IA en el propio móvil (se guarda en
 `editMusicFile(reqId, id, json)`, `takeOpenedAudio()`, `audioOutput()`, `audioState()`
 (`call`/`busy`/`free`), `canResumeAudio()`, `reloadApp`, `sharePodcast`,
 `syncPodcastSubscriptions`, `areNotificationsEnabled`, `requestNotificationPermission`,
-`openNotificationSettings`, `saveTextFile`.
+`openNotificationSettings`, `saveTextFile`, `lastPlaybackSection()` (APK 1.16+, §9).
 
 **Android → web** (funciones globales que la web debe mantener con el mismo nombre):
 `viferorNativeRadio{Play,Pause}`, `viferorNativePodcast{Play,Pause,Next,Previous,Seek,SetPosition}`,
 `viferorNativeMusic{Play,Pause,Next,Previous,Seek,SetPosition}`, `onAndroidMusicPermission`,
 `onAndroidMusicDeleted`, `onAndroidMusicEdited`, `onAndroidAudioOutput`, `viferorOpenAudio`,
-`handleAndroidBack`, `switchToRadios/Podcasts/Music`, `onAndroidNotificationPermissionResult`, `openPodcastFromNotification`.
+`viferorIrAPestana(seccion)` (APK 1.16+: cambia de pestaña, lo usa el widget),
+`handleAndroidBack`, `switchToRadios/Podcasts/Music` (compatibilidad; solo se usan sin
+argumentos desde APK ≤ 1.15 y en ese caso se ignoran), `onAndroidNotificationPermissionResult`,
+`openPodcastFromNotification`.
 
 **Si cambias un nombre de un lado, rompes el otro** (y los APK ya instalados).
 
@@ -257,7 +263,8 @@ El usuario también puede poner su clave de IA en el propio móvil (se guarda en
 
 - Radios: `mis_radios_favoritas_v1`, `radio_espana_logos_v1`, `radio_resume_state`.
 - General: `radios_viferor_playback_resume_v1`, `radios_viferor_autoresume`,
-  `radios_viferor_resume_after_interrupt`, `radios_viferor_theme`, `radios_viferor_error_log_v1`.
+  `radios_viferor_resume_after_interrupt`, `radios_viferor_theme`, `radios_viferor_error_log_v1`,
+  `radios_viferor_last_tab_v1` (última pestaña: `radios`/`podcasts`/`music`).
 - Podcasts: `radios_viferor_podcasts_v1` (suscripciones), `…_podcast_favs_v1`,
   `…_podcast_queue_v2` (y `_v1` antiguo), `…_podcast_queue_opts_v1`, `…_podcast_history_v1`,
   `…_podcast_progress_v1`, `…_podcast_done_v1`, `…_podcast_resume_v3`, `…_podcast_playlists_v1`,
@@ -286,10 +293,24 @@ elegida en navegador; se puede perder sin daño.
 - **Clasificar pausas**: una pausa es del usuario si pasa por los botones (flags
   `musicUserPaused`/`podcastUserPaused`/`radioUserPaused`) o hubo un toque hace < 1,5 s
   (`rvPausaDelUsuario`). Respeta esos flags en todo código nuevo que pause o reanude.
-- **Web Audio** (ecualizador) solo se crea tras un toque del usuario; con él activo el volumen
-  va por `GainNode`, no por `audio.volume`. Fundidos: `deckLevel(i, nivel, segundos)`.
+- **«Me devuelve a Música y tengo que tocar Radios varias veces»**: `MainActivity` pedía la
+  pestaña en cada arranque y dos veces (1,8 s y 3,5 s). Ahora solo se cambia de pestaña si
+  el intent trae `openSection` (widget) y la última pestaña la restaura la web una vez
+  (`restaurarPestanaAlAbrir`). **Cualquier llamada nueva a `switchToMusic`/`switchToPodcasts`/
+  `switchToRadios` desde la web debe llevar argumentos**; sin argumentos se ignora (es la
+  firma de las APK antiguas).
+- **Música: recuperar sin reiniciar**. Para volver a cargar una canción se usa
+  `musicRetrySameTrack`, que la carga en la **otra platina** en el punto donde iba y luego
+  cambia a ella. **No volver a hacer `pause()` + `prepareTrack()` + `play()`**: así salían
+  los «AbortError» y las canciones que volvían al segundo 0.
+- **`PIPELINE_ERROR_READ` en `/__music/track/…`**: el tamaño que declara MediaStore puede
+  quedarse corto. `LocalMusic` usa el tamaño real (`getStatSize()`), no declara longitud si
+  no la sabe y reabre el archivo si una lectura falla. Los fallos se anotan como `MUSIC_IO`
+  en el registro (`LocalMusic.setDiag`).
 - **Dos platinas** en música (`musicAudio` y `musicAudio2`): los eventos solo cuentan para la
   activa (`on(ev, fn)` en `initMusic`). No escuches eventos de `#musicAudio` directamente.
+- **Web Audio** (ecualizador) solo se crea tras un toque del usuario; con él activo el volumen
+  va por `GainNode`, no por `audio.volume`. Fundidos: `deckLevel(i, nivel, segundos)`.
 - **Caché del móvil**: sin subir versión (marcas `?v=`), el móvil ejecuta JS viejo.
 - **Java 25** rompe Gradle: usar JDK 17.
 - **Deezer ya no da artistas relacionados** → ListenBrainz. **LRCLIB** a veces da 5xx →
@@ -304,10 +325,18 @@ elegida en navegador; se puede perder sin daño.
 
 ## 10. Pendiente / sin verificar en el móvil
 
-Funciona en las pruebas pero el usuario aún debe confirmarlo en el móvil (APK 1.15.0):
+Funciona en las pruebas pero el usuario aún debe confirmarlo en el móvil (APK 1.16.0):
 borrar archivos, editar nombre/ID3, abrir audio desde otras apps, ajustes por salida de audio,
 que no vuelva a sonar sola tras interrupciones. El feed «Comandante Lara»
 (`feeds.asound.co`) devolvía 502 desde Vercel: ya no provoca bucle, pero la causa no se sabe.
+
+**1.29.0 — cortes de música**: el registro del móvil (23-10-2026) demostró que los cortes eran
+`PIPELINE_ERROR_READ: FFmpegDemuxer: data source error` al leer `/__music/track/…`, y que la
+recuperación reiniciaba la canción (`AbortError`, vuelta al segundo 0). Está cambiado, pero
+**falta saber si sigue apareciendo `MUSIC_IO` en el registro del móvil** y con qué detalle
+(tamaño que no cuadra, reapertura, byte). Si vuelve a cortarse, pedir el registro y mirar esas
+líneas antes de tocar nada más.
+
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.
 
