@@ -87,7 +87,25 @@
     musicRetry = { id: cancion.id, tries: 2, since: Date.now(), pos: 45 };
     check('sin avanzar, no se reintenta sin fin', musicCanRetry(cancion) === false, 'tries=' + musicRetry.tries);
 
-    // ---- 9. El registro de errores no tiene fallos de JavaScript
+    // ---- 9. Pulsar la carátula abre la cola (o la lista, si suena una lista tuya); la letra
+    //         sigue en su botón.
+    musicState.current = musicState.tracks[0];
+    musicState.listId = null;
+    document.getElementById('musExpArt').click();
+    check('la carátula abre la cola', musicState.screen === 'queue', 'pantalla=' + musicState.screen);
+    check('la cola enseña lo que suena', /Sonando ahora/.test(document.getElementById('musicContent').textContent));
+    check('el botón «🎤 Letra» sigue en su sitio', !!document.getElementById('musExpLyrics'));
+    const lista = createMusicList('Prueba carátula', musicState.tracks);
+    setPlayingList(lista.id);
+    document.getElementById('musExpArt').click();
+    check('si suena una lista, la carátula abre la lista', musicState.screen === 'list:' + lista.id, 'pantalla=' + musicState.screen);
+    // Con aleatorio el orden de la lista no es el que suena: manda la cola.
+    setMusicOpt('shuffle', true);
+    document.getElementById('musExpArt').click();
+    check('con aleatorio, la carátula abre la cola', musicState.screen === 'queue', 'pantalla=' + musicState.screen);
+    setMusicOpt('shuffle', false);
+
+    // ---- 10. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {

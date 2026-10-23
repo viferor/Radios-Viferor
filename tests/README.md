@@ -40,9 +40,10 @@ powershell -ExecutionPolicy Bypass -File tests\smoke\run.ps1
 
 Ahora comprueba: la app abre en Radios, la última pestaña se recuerda **una sola vez**, las
 llamadas de las APK antiguas (`switchToMusic()` sin argumentos) se ignoran, `viferorIrAPestana`
-funciona y la recuperación de la música **no reinicia la canción** (usa dos platinas
-simuladas). Monta `tests/smoke/test.html` a partir de `index.html`; no se sube a Vercel
-(`tests/` está en `.vercelignore`).
+funciona, la recuperación de la música **no reinicia la canción** (usa dos platinas
+simuladas) y **tocar la carátula abre la lista o la cola** (con aleatorio, la cola). Monta
+`tests/smoke/test.html` a partir de `index.html`; no se sube a Vercel (`tests/` está en
+`.vercelignore`).
 
 Nota: no se reproduce audio de verdad porque `--virtual-time-budget` se queda colgado
 mientras hay reproducción. Por eso la recuperación se prueba con platinas simuladas.

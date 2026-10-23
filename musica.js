@@ -3482,7 +3482,7 @@ function initMusicSwipe() {
     const { dx, on, t } = g;
     g = null;
     if (!on) return;
-    // Que el gesto no cuente además como pulsación (abrir la letra, botones…).
+    // Que el gesto no cuente además como pulsación (abrir la lista o la cola, botones…).
     const block = ev => (ev.stopPropagation(), ev.preventDefault());
     window.addEventListener('click', block, { capture: true, once: true });
     setTimeout(() => window.removeEventListener('click', block, { capture: true }), 350);
@@ -3609,6 +3609,24 @@ function closeMusicExpanded() {
   $m('musExpanded').hidden = true;
 }
 window.closeMusicExpanded = closeMusicExpanded;
+/* Pulsar la carátula del reproductor ampliado muestra lo que está sonando: la lista, si
+   empezaste por una de tus listas, y si no, la cola (lo que suena ahora y lo que viene).
+   La letra se queda en su botón «🎤 Letra», donde estaba. */
+function musAbrirListaSonando() {
+  if (!musicState.current) return;
+  closeMusicExpanded();
+  const l = musicState.listId ? musicListById(musicState.listId) : null;
+  // Solo listas normales y sin aleatorio: con reglas o barajado el orden de la lista no es
+  // el que está sonando, así que lo que interesa es la cola.
+  if (l && l.type === 'manual' && !musicOpts().shuffle) openMusicScreen('list:' + l.id);
+  else openMusicScreen('queue');
+  // En una lista o cola larga, la canción que suena puede quedar fuera de la pantalla.
+  requestAnimationFrame(() => {
+    const row = $m('musicContent')?.querySelector('.mus-row.is-current');
+    row?.scrollIntoView?.({ block: 'center' });
+  });
+}
+window.musAbrirListaSonando = musAbrirListaSonando;
 
 /* ===========================================================================
    Arranque
@@ -3817,13 +3835,14 @@ function initMusic() {
     c.scrollTop = sc;
   });
   $m('musExpMore').onclick = () => musicState.current && openTrackMenu(musicState.current);
-  // Pulsar la carátula del reproductor abre la letra.
+  // Pulsar la carátula muestra la lista o la cola de lo que está sonando. La letra tiene su
+  // propio botón («🎤 Letra») justo debajo, así que no se pierde.
   const expArt = $m('musExpArt');
   expArt.setAttribute('role', 'button');
   expArt.tabIndex = 0;
-  expArt.title = 'Ver la letra';
-  expArt.setAttribute('aria-label', 'Ver la letra');
-  expArt.onclick = () => musicState.current && window.openLyrics?.(musicState.current);
+  expArt.title = 'Ver la lista o la cola';
+  expArt.setAttribute('aria-label', 'Ver la lista o la cola de lo que está sonando');
+  expArt.onclick = () => musAbrirListaSonando();
   expArt.onkeydown = e => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), expArt.click());
   $m('musExpMute').onclick = () => setMusicVolume(musUserVolume > 0 ? 0 : lsGet(MUS_KEYS.volume, 80));
   $m('musExpVolume').addEventListener('input', e => setMusicVolume(e.target.value));

@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.0** (compilación 12900) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.1** (compilación 12910) · APK
 > **1.16.0** (versionCode 11600) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
@@ -316,8 +316,10 @@ elegida en navegador; se puede perder sin daño.
 - **Deezer ya no da artistas relacionados** → ListenBrainz. **LRCLIB** a veces da 5xx →
   reintento + consulta directa desde el móvil. **Gemini** da 503 a veces → reintento y modelos
   de respaldo.
-- **Gestos**: deslizar la carátula ← = siguiente, → = anterior; deslizar en la pantalla
-  principal ← = pestaña de la derecha (Radios → Podcasts → Música).
+- **Gestos**: deslizar la carátula ← = siguiente, → = anterior; **tocar la carátula** abre la
+  cola o la lista que está sonando (`musAbrirListaSonando()`); la letra está en su botón
+  «🎤 Letra» del reproductor ampliado. Deslizar en la pantalla principal ← = pestaña de la
+  derecha (Radios → Podcasts → Música).
 - **Pruebas Playwright**: no devuelvas funciones/promesas pendientes en `page.evaluate` (`; 0`).
 - El repo «se movió»: la URL canónica es `https://github.com/viferor/Radios-Viferor`.
 

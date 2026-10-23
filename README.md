@@ -1,6 +1,18 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.1 — Pulsar la carátula enseña la lista o la cola de lo que está sonando
+
+- En el reproductor de música, **tocar la carátula** abre **lo que está sonando**: la **cola**
+  («Sonando ahora» + «A continuación» + «Escuchado hace poco») o, si empezaste por una de tus
+  **listas normales** y no hay aleatorio, esa lista. La canción que suena se lleva a la vista,
+  para no tener que buscarla en listas largas.
+- Con **aleatorio** activo, o si la lista es **inteligente** (de reglas), se abre siempre la
+  cola: el orden de la lista no sería el que estás oyendo.
+- La **letra** ya no se abre tocando la carátula: sigue en su botón **«🎤 Letra»**, en el
+  mismo sitio de siempre. Deslizar la carátula (izquierda = siguiente, derecha = anterior) no
+  cambia.
+
 ## 1.29.0 · APK 1.16.0 — La pestaña ya no se vuelve a cambiar sola y la música no se reinicia al recuperarse
 
 - **La app te devolvía a Música al abrir, y a veces dos veces.** `MainActivity` pedía a la
