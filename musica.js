@@ -3801,6 +3801,13 @@ function initMusic() {
         { icon: '🎚️', label: 'Sonido y ecualizador', hint: 'Corrección de auriculares, fundidos, nivelador…', on: () => window.openFxPanel?.() },
         { icon: '⏱', label: 'Buscar canciones cortas o rotas…', hint: 'Las que duran menos de lo que elijas', disabled: !musicState.tracks.length, on: chooseShortTracks },
         { icon: '👯', label: 'Buscar canciones duplicadas', hint: 'Copias de la misma canción', disabled: !musicState.tracks.length, on: () => openDuplicates() },
+        {
+          icon: '🩺',
+          label: 'Comprobar la lectura de los archivos',
+          hint: 'Mira si el móvil sirve bien la música (solo en la app Android)',
+          disabled: !isAndroidApp() || !musicState.tracks.length,
+          on: probarLecturaMusica
+        },
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
         Object.keys(musicHiddenMap()).length && { icon: '🙈', label: 'Canciones quitadas de la biblioteca', hint: plural(Object.keys(musicHiddenMap()).length, 'canción', 'canciones'), on: openHiddenTracks },
@@ -4286,6 +4293,70 @@ function renderFolderManager(root) {
   root.append(list);
 }
 
+/* ---------------------------------------------------------------------------
+   Comprobar que el móvil sirve los archivos de música bien (byte a byte)
+   ---------------------------------------------------------------------------
+   Los cortes que salían en el registro eran «PIPELINE_ERROR_READ», es decir, Chromium se
+   queda sin datos a mitad de canción. Un reproductor nativo (Poweramp) toca los mismos
+   archivos sin problema, así que la duda es si el fallo está al servir el archivo desde la
+   app (esta prueba) o en el reproductor del WebView. Se pide el mismo trozo dos veces con
+   rangos solapados y se comparan los bytes; si algo no cuadra, queda anotado como MUSIC_IO
+   en el registro de errores con el nombre del archivo. */
+async function probarLecturaMusica() {
+  const lista = (musicState.tracks || []).filter(t => t.id && !t.external && t.src);
+  if (!lista.length) return podToast('Esta prueba solo funciona en la app Android, con tus canciones');
+  // Se prefieren las canciones pequeñas: la prueba se traga el archivo entero para comparar
+  // su tamaño con el que tiene la biblioteca (así se pilla si se sirve a medias).
+  const muestra = [...lista].sort((a, b) => (a.size || 0) - (b.size || 0)).slice(0, 3);
+  const iguales = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  const esAudio = a => {
+    const h4 = String.fromCharCode(...a.subarray(0, 4));
+    const b4 = String.fromCharCode(...a.subarray(4, 8));
+    return ['ID3', 'OggS', 'fLaC', 'RIFF'].includes(h4) || b4 === 'ftyp' || a[0] === 0xff;
+  };
+  let bien = 0,
+    mal = 0;
+  for (const t of muestra) {
+    try {
+      const pedir = async r => new Uint8Array(await (await fetch(t.src, { headers: { Range: r } })).arrayBuffer());
+      const entero = await pedir('bytes=0-');
+      // 1) ¿Llega el archivo entero? (si MediaStore declara una longitud corta, se corta).
+      const tam = Number(t.size) || 0;
+      const completo = !tam || entero.length === tam;
+      // 2) ¿Los bytes son los mismos al pedirlos por partes? (desalineación).
+      const a = await pedir('bytes=0-65535');
+      const b = await pedir('bytes=32768-98303');
+      const mismos = a.length >= 65536 && b.length >= 32768 && iguales(a.subarray(32768, 65536), b.subarray(0, 32768));
+      if (completo && mismos && esAudio(entero)) bien++;
+      else {
+        mal++;
+        window.logError?.(
+          'MUSIC_IO',
+          'Música: la lectura del archivo no cuadra',
+          t.file || t.id,
+          `completo=${completo ? 'sí' : 'NO'} (${entero.length}/${tam || '?'} bytes) mismos=${mismos} cabecera_audio=${esAudio(entero)}`
+        );
+      }
+    } catch (e) {
+      mal++;
+      window.logError?.('MUSIC_IO', 'Música: no se pudo leer el archivo', t.file || t.id, String(e?.message || e));
+    }
+  }
+  musicState.lecturaPrueba = { bien, mal, total: muestra.length };
+  window.logError?.(
+    'MUSIC_IO',
+    `Música: prueba de lectura ${bien}/${muestra.length} bien`,
+    '',
+    mal ? 'HAY PROBLEMAS al servir los archivos: mira las líneas anteriores' : 'el móvil sirve bien los archivos'
+  );
+  podToast(
+    mal
+      ? `⚠️ ${mal} de ${muestra.length} canciones se leen mal. Mándame el registro.`
+      : `✅ La lectura de los archivos es correcta (${bien} de ${muestra.length})`,
+    { ms: mal ? 6000 : 3000 }
+  );
+}
+window.probarLecturaMusica = probarLecturaMusica;
 function updateMusicStrip() {}
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initMusic);
 else initMusic();

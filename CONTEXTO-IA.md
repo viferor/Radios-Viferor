@@ -4,8 +4,8 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.4** (compilación 12940) · APK
-> **1.16.0** (versionCode 11600) · rama de respaldo
+> **Estado de referencia (todo funcionando):** web **1.29.5** (compilación 12950) · APK
+> **1.16.1** (versionCode 11601) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
 ---
@@ -309,6 +309,15 @@ elegida en navegador; se puede perder sin daño.
   quedarse corto. `LocalMusic` usa el tamaño real (`getStatSize()`), no declara longitud si
   no la sabe y reabre el archivo si una lectura falla. Los fallos se anotan como `MUSIC_IO`
   en el registro (`LocalMusic.setDiag`).
+  **Nunca usar `AssetFileDescriptor.createInputStream()`** para servir audio: corta la lectura
+  en la longitud *declarada* (desfasada a veces) y salta el `startOffset` por su cuenta; el
+  cuerpo termina antes de lo que dice `Content-Length` y Chromium da `PIPELINE_ERROR_READ` a
+  mitad de canción (y `play()` se queda colgado). Se lee el descriptor directamente con
+  `new FileInputStream(afd.getFileDescriptor())` + `getChannel().position()`.
+- **🩺 Prueba de lectura** (Mi música → ⋯ → «Comprobar la lectura de los archivos»,
+  `probarLecturaMusica()`): compara bytes de rangos solapados de 3 canciones y lo anota como
+  `MUSIC_IO`. Es la forma de distinguir «falla al servir el archivo» de «falla el
+  reproductor del WebView», sin tener el móvil en mano.
 - **Música: una sola recuperación a la vez** (`musicRecuperando` / `musicRecuperar`): la
   vigilancia de reanudar y el aviso de error se lanzaban juntos, se peleaban por las platinas
   y gastaban los 2 intentos sin arreglar nada (`AbortError`). **No volver a llamar a

@@ -183,7 +183,16 @@
     check('la lista tiene el botón «Ordenar»', await pinchar('Ordenar', '#musicContent'));
     check('ordena la lista por título', (await pinchar('Título', '.pod-sheet')) && lista2.items[0].id === tA.id, lista2.items.map(x => x.title).join(' | '));
 
-    // ---- 11. El registro de errores no tiene fallos de JavaScript
+    // ---- 12. La prueba de lectura de archivos (Música → ⋯ → «Comprobar la lectura»)
+    musicState.tracks.forEach(t => (t.src = '/__music/track/' + String(t.id).replace(/^a/, '')));
+    await probarLecturaMusica();
+    check(
+      'la prueba de lectura de archivos da todo bien',
+      musicState.lecturaPrueba && musicState.lecturaPrueba.mal === 0 && musicState.lecturaPrueba.bien === 2,
+      JSON.stringify(musicState.lecturaPrueba)
+    );
+
+    // ---- 13. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {

@@ -1,6 +1,32 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.5 · APK 1.16.1 — La app dejaba de leer el archivo antes de tiempo (y una prueba para comprobarlo)
+
+Pista clave del usuario: **Poweramp reproduce esos mismos archivos sin cortarse nunca**. Si un
+reproductor nativo va bien y el nuestro no, el archivo está bien y el fallo está en **cómo lo
+leemos nosotros**.
+
+- **Causa encontrada (nativa)**: `LocalMusic` leía el audio con
+  `AssetFileDescriptor.createInputStream()`, que **corta la lectura en la longitud que declara
+  MediaStore** (que puede estar desfasada) y además **salta el principio del archivo por su
+  cuenta**. Si esa longitud se queda corta, el cuerpo de la respuesta termina antes de lo que
+  dice la cabecera `Content-Length` y Chromium lo denuncia como
+  **`PIPELINE_ERROR_READ: data source error`** a mitad de canción — incluso con datos de sobra
+  en el búfer (así salía en el registro) y con `play()` colgado hasta 34 s. Ahora se lee el
+  **descriptor del archivo directamente** y se busca con el canal (`FileInputStream` +
+  `getChannel().position()`): se llega siempre al **final real** del archivo.
+- **Nuevo: 🩺 Comprobar la lectura de los archivos** (Mi música → ⋯). Con las 3 canciones más
+  pequeñas: (1) **pide el archivo entero y compara los bytes recibidos con el tamaño que tiene
+  la biblioteca** — así se pilla si se sirve a medias, que es justo el fallo de arriba —, (2)
+  pide **el mismo trozo dos veces con rangos solapados** y compara byte a byte (desalineación),
+  y (3) mira que la cabecera sea de audio (ID3, ftyp, RIFF, fLaC, OggS…). Si algo no cuadra,
+  queda anotado en el registro como **`MUSIC_IO`** con el archivo y los números. Sirve para
+  saber si el problema está al servir el archivo (nuestro lado) o en el reproductor del
+  WebView (el decodificador de Chromium).
+- Esta prueba **no necesita instalar nada** para funcionar, pero el arreglo del principio sí:
+  va en el **APK 1.16.1** (si en el pie pone «App Android 1.16.0» o menos, con ⚠️, instálalo).
+
 ## 1.29.4 — Una sola recuperación a la vez, y ver qué versión de APK tienes
 
 El registro del 23-10 (16:15) enseñó dos cosas que sí dependían de la web:

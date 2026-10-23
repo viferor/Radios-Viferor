@@ -367,7 +367,14 @@ final class LocalMusic {
         private void open() throws IOException {
             afd = ctx.getContentResolver().openAssetFileDescriptor(uri, "r");
             if (afd == null) throw new IOException("no se pudo abrir el archivo");
-            in = afd.createInputStream();
+            // OJO: afd.createInputStream() NO vale aquí. Devuelve un flujo que se corta en la
+            // longitud *declarada* por MediaStore (que puede estar desfasada) y que salta el
+            // principio del archivo por su cuenta. Si esa longitud se queda corta, el flujo
+            // termina antes de lo que dice la cabecera Content-Length y Chromium lo denuncia
+            // como «PIPELINE_ERROR_READ: data source error» a mitad de canción (con la música
+            // ya cargada por delante). Se lee el descriptor tal cual y se busca con el canal:
+            // así se llega siempre al final REAL del archivo.
+            in = new FileInputStream(afd.getFileDescriptor());
             long base = afd.getStartOffset();
             if (base + pos > 0) in.getChannel().position(base + pos);
         }
