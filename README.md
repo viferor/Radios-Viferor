@@ -42,6 +42,8 @@ leemos nosotros**.
   WebView (el decodificador de Chromium).
 - Esta prueba **no necesita instalar nada** para funcionar, pero el arreglo del principio sí:
   va en el **APK 1.16.1** (si en el pie pone «App Android 1.16.0» o menos, con ⚠️, instálalo).
+- **✅ Confirmado en el móvil (23-10-2026, APK 1.16.1): las canciones que antes se cortaban ya
+  suenan bien.**
 
 ## 1.29.4 — Una sola recuperación a la vez, y ver qué versión de APK tienes
 

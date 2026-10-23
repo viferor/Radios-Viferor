@@ -366,25 +366,30 @@ elegida en navegador; se puede perder sin daño.
 
 ## 10. Pendiente / sin verificar en el móvil
 
-Funciona en las pruebas pero el usuario aún debe confirmarlo en el móvil (APK 1.16.0):
+Funciona en las pruebas pero el usuario aún debe confirmarlo en el móvil (APK 1.16.1):
 borrar archivos, editar nombre/ID3, abrir audio desde otras apps, ajustes por salida de audio,
 que no vuelva a sonar sola tras interrupciones. El feed «Comandante Lara»
 (`feeds.asound.co`) devolvía 502 desde Vercel: ya no provoca bucle, pero la causa no se sabe.
 
-**1.29.0 — cortes de música**: el registro del móvil (23-10-2026) demostró que los cortes eran
-`PIPELINE_ERROR_READ: FFmpegDemuxer: data source error` al leer `/__music/track/…`, y que la
-recuperación reiniciaba la canción (`AbortError`, vuelta al segundo 0). Está cambiado, pero
-**falta saber si sigue apareciendo `MUSIC_IO` en el registro del móvil** y con qué detalle
-(tamaño que no cuadra, reapertura, byte). Si vuelve a cortarse, pedir el registro y mirar esas
-líneas antes de tocar nada más.
+**✅ RESUELTO (23-10-2026) — cortes de música.** Historia completa, por si vuelve a pasar:
+1. Los cortes eran `PIPELINE_ERROR_READ: FFmpegDemuxer: data source error` al leer
+   `/__music/track/…`, a veces con 200 s ya cargados por delante, y con `play()` colgado
+   hasta 34 s.
+2. La pista definitiva la dio el usuario: **Poweramp reproduce esos mismos archivos sin
+   cortarse**, así que los archivos y el almacenamiento estaban bien.
+3. **Causa**: `LocalMusic` servía el audio con `AssetFileDescriptor.createInputStream()`, que
+   corta la lectura en la longitud **declarada** por MediaStore (desfasada a veces) y salta el
+   `startOffset` por su cuenta. El cuerpo terminaba antes de lo que decía `Content-Length` y
+   Chromium lo daba por error a mitad de canción.
+4. **Arreglo (APK 1.16.1)**: `new FileInputStream(afd.getFileDescriptor())` +
+   `getChannel().position()` → se llega siempre al final real del archivo. Más tamaño real
+   (`getStatSize()`), reintento con reapertura y avisos `MUSIC_IO` en el registro.
+5. **Confirmado por el usuario** con las canciones que fallaban (APK 1.16.1): ya suenan bien.
+   Si algún día vuelve a cortarse, pedir el registro y mirar `MUSIC_IO` antes de tocar nada.
 
-**1.29.2 — la canción se quedó parada (registro del 23-10, 15:57)**: `Fresh – Kool & The Gang`
-falló al leer en el segundo 186 en las **dos** platinas y, con la cola vacía, se quedó muda
-hasta pulsar «anterior». La web ya no deja ese caso, pero **la causa de la lectura sigue
-siendo nativa**: sin APK 1.16.0 instalada no hay reintento de lectura ni reapertura del
-archivo. Confirmar en el registro si aparecen líneas `MUSIC_IO` (tamaño que no cuadra,
-reapertura, byte) — si no aparecen, el móvil tiene una APK anterior. También había un
-`play()` que tardó 34 s y una platina con `gan=0.00` (ya corregido).
+**Herramienta**: Mi música → ⋯ → 🩺 «Comprobar la lectura de los archivos» (`probarLecturaMusica`)
+pide el archivo entero, compara el tamaño con la biblioteca y compara trozos solapados de 3
+canciones; deja el resultado en el registro como `MUSIC_IO`.
 
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.
@@ -393,12 +398,17 @@ la vez; presets de ecualización para el altavoz del móvil.
 
 ## 11. 🚨 Recuperación ante catástrofe (volver a como está hoy)
 
-**Punto seguro:** rama `respaldo/estable-2026-10-15` = commit `427ee52` (web 1.28.0, APK 1.15.0).
+**Punto seguro (el bueno de hoy):** commit `6e43374` — **web 1.29.6, APK 1.16.1**
+(23-10-2026). Aquí ya está arreglado lo de los cortes de música (ver §10) y la pestaña que se
+cambiaba sola. Es el despliegue al que volver si algo se rompe.
+
+**Punto seguro antiguo:** rama `respaldo/estable-2026-10-15` = commit `427ee52` (web 1.28.0,
+APK 1.15.0). Solo si hay que volver mucho atrás (no tiene los arreglos de música).
 
 ### A. La web se ha roto (lo más rápido, sin tocar código)
 Vercel → proyecto **radiosviferor** → **Deployments** → busca el despliegue del commit
-`427ee52` («Que no se ponga a sonar sola…») → **⋯ → Promote to Production / Instant
-Rollback**. La web vuelve al instante. Después arregla el código con calma.
+`6e43374` (web 1.29.6) → **⋯ → Promote to Production / Instant Rollback**. La web vuelve al
+instante. (Si el problema viene de mucho antes, usa el despliegue de `427ee52`.)
 
 ### B. Volver el código de `main` a hoy (sin perder el historial)
 En PowerShell, en la carpeta del repo:
@@ -406,7 +416,7 @@ En PowerShell, en la carpeta del repo:
 git fetch origin
 git checkout main
 git pull
-git revert --no-edit 427ee52..HEAD     # deshace todo lo posterior con commits nuevos
+git revert --no-edit 6e43374..HEAD     # deshace todo lo posterior con commits nuevos
 git push
 ```
 (Si el revert da conflictos y no se aclara: `git revert --abort` y usa la opción C.)
