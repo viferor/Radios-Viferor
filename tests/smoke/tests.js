@@ -87,6 +87,22 @@
     musicRetry = { id: cancion.id, tries: 2, since: Date.now(), pos: 45 };
     check('sin avanzar, no se reintenta sin fin', musicCanRetry(cancion) === false, 'tries=' + musicRetry.tries);
 
+    // ---- 8b. Si una canción no se puede leer, la música NO se queda muda: sigue con la
+    //          siguiente de lo que estabas escuchando (en el móvil se quedó parada).
+    const t1 = musicState.tracks[0],
+      t2 = musicState.tracks[1];
+    musicState.queue = [];
+    musicState.history = [];
+    musicState.context = [t1, t2];
+    musicState.current = t1;
+    musicRetry = { id: t1.id, tries: 2, since: Date.now(), pos: 0 }; // sin reintentos
+    const fallo = cubo();
+    fallo.currentTime = 0; // así tampoco puede «saltar un trozo»
+    musDecks[musicState.deck] = fallo;
+    musicTrackFailed(t1, fallo);
+    await esperar(300);
+    check('tras un fallo sigue con otra canción', musicState.current && musicState.current.id === t2.id, 'suena=' + (musicState.current && musicState.current.id));
+
     // ---- 9. Pulsar la carátula abre la cola (o la lista, si suena una lista tuya); la letra
     //         sigue en su botón.
     musicState.current = musicState.tracks[0];

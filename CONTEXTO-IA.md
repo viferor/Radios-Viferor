@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.1** (compilación 12910) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.2** (compilación 12920) · APK
 > **1.16.0** (versionCode 11600) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
@@ -307,6 +307,18 @@ elegida en navegador; se puede perder sin daño.
   quedarse corto. `LocalMusic` usa el tamaño real (`getStatSize()`), no declara longitud si
   no la sabe y reabre el archivo si una lectura falla. Los fallos se anotan como `MUSIC_IO`
   en el registro (`LocalMusic.setDiag`).
+- **Música: una canción que no se puede leer no deja la música muda.** Escalera de
+  recuperación en `musicTrackFailed`: (1) `musicRetrySameTrack` en la otra platina y en el
+  mismo punto; (2) `musicSaltarTrozo` 20 s más adelante (2 veces por canción); (3)
+  `musicContinuarTrasFallo`: cola → siguiente/anterior del `musicState.context` → última del
+  historial, con tope de 3 fallos seguidos (`musicFallosSeguidos`, se pone a 0 al sonar).
+  **No volver a dejar el caso «fallo + cola vacía = silencio»**.
+- **Nunca dejar una platina a volumen 0**: `deckLevel` sube en el cambio de platina
+  (`switchToOtherDeck`, con red de seguridad a los 2,5 s), al reanudar (`toggleMusicPlay`) y
+  al pausar (el fundido de pausa siempre devuelve el nivel). En el registro salía `gan=0.00`
+  y la canción «sonaba» en silencio.
+- **Microcortes con datos cargados** (`waiting` con `buf` de 50-180 s): `vigilanciaParada`
+  vuelve a llamar a `play()` a los 2,5 s y solo recarga en la otra platina a los 9 s.
 - **Dos platinas** en música (`musicAudio` y `musicAudio2`): los eventos solo cuentan para la
   activa (`on(ev, fn)` en `initMusic`). No escuches eventos de `#musicAudio` directamente.
 - **Web Audio** (ecualizador) solo se crea tras un toque del usuario; con él activo el volumen
@@ -338,6 +350,14 @@ recuperación reiniciaba la canción (`AbortError`, vuelta al segundo 0). Está 
 **falta saber si sigue apareciendo `MUSIC_IO` en el registro del móvil** y con qué detalle
 (tamaño que no cuadra, reapertura, byte). Si vuelve a cortarse, pedir el registro y mirar esas
 líneas antes de tocar nada más.
+
+**1.29.2 — la canción se quedó parada (registro del 23-10, 15:57)**: `Fresh – Kool & The Gang`
+falló al leer en el segundo 186 en las **dos** platinas y, con la cola vacía, se quedó muda
+hasta pulsar «anterior». La web ya no deja ese caso, pero **la causa de la lectura sigue
+siendo nativa**: sin APK 1.16.0 instalada no hay reintento de lectura ni reapertura del
+archivo. Confirmar en el registro si aparecen líneas `MUSIC_IO` (tamaño que no cuadra,
+reapertura, byte) — si no aparecen, el móvil tiene una APK anterior. También había un
+`play()` que tardó 34 s y una platina con `gan=0.00` (ya corregido).
 
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.

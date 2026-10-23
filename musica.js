@@ -503,6 +503,7 @@ function applyDeckVolume(i) {
 }
 function deckLevel(i, level, secs = 0) {
   clearInterval(musDeckAnim[i]);
+  musDeckAnim[i] = 0;
   if (window.musicFx?.active) {
     musDeckLevel[i] = level;
     window.musicFx.setDeckGain(i, level, secs);
@@ -519,7 +520,10 @@ function deckLevel(i, level, secs = 0) {
     const k = Math.min(1, (performance.now() - t0) / (secs * 1000));
     musDeckLevel[i] = from + (level - from) * k;
     applyDeckVolume(i);
-    if (k >= 1) clearInterval(musDeckAnim[i]);
+    if (k >= 1) {
+      clearInterval(musDeckAnim[i]);
+      musDeckAnim[i] = 0;
+    }
   }, 30);
 }
 // Cancela un fundido o una precarga (al cambiar de canción a mano, saltar, etc.).
@@ -569,7 +573,16 @@ async function switchToOtherDeck(nx, secs) {
     b.currentTime = 0;
     deckLevel(to, secs ? 0 : 1, 0);
     window.musicFx?.resume?.();
-    await b.play();
+    // Red de seguridad: si play() tarda (o el archivo se atasca), el fundido no puede dejar
+    // la platina a 0 para siempre: se oiría el silencio y la canción «no volvería».
+    const rescate = setTimeout(() => {
+      if (!musicState.xf && musDeckLevel[to] < 0.05) deckLevel(to, 1, 0);
+    }, 2500);
+    try {
+      await b.play();
+    } finally {
+      clearTimeout(rescate);
+    }
   } catch (e) {
     musicState.preload = null;
     return false;
@@ -793,17 +806,14 @@ function musicCanRetry(t) {
 /* Recuperar la misma canción donde iba SIN tocar la platina que suena: se carga en la otra
    y, cuando ya tiene datos, se cambia a ella. Antes se pausaba la que sonaba, se recargaba y
    se llamaba a play() sin esperar: de ahí los «AbortError: la recarga no arrancó» y los
-   «vuelve al segundo 0» que salían en el registro del móvil. */
-async function musicRetrySameTrack(t, a, why) {
-  if (!musicCanRetry(t)) return false;
-  musicRetry.tries++;
-  musicRetry.since = Date.now();
-  const pos = Math.max(0, (Number(a?.currentTime) || 0) - 2);
-  musicRetry.pos = pos;
-  window.logError?.('MUSIC_AUDIO', `Música: se vuelve a cargar la misma canción (${why})`, t.file || t.id, `t=${pos.toFixed(1)} intento=${musicRetry.tries}/${MUS_MAX_RETRIES}`);
+   «vuelve al segundo 0» que salían en el registro del móvil.
+   La platina nueva se carga EN MUDO y solo se sube cuando play() responde: si la lectura se
+   atasca (en el registro hubo un play() que tardó 34 s), no se queda nada sonando a la vez. */
+async function musicCargarEnOtra(t, pos, why) {
   const from = musicState.deck,
     to = otherDeckIndex(),
-    b = musDecks[to];
+    b = musDecks[to],
+    vieja = musDecks[from];
   if (!b) return false;
   try {
     musicState.preload = null; // esa platina se va a usar para recuperar
@@ -813,15 +823,22 @@ async function musicRetrySameTrack(t, a, why) {
     try {
       b.currentTime = pos;
     } catch {}
-    deckLevel(to, 1, 0);
+    deckLevel(to, 0, 0);
     deckLevel(from, 1, 0);
-    await b.play();
+    const p = b.play();
+    p.catch(() => {});
+    await Promise.race([
+      p,
+      new Promise((_, ko) => setTimeout(() => ko(Object.assign(Error('play sin respuesta'), { name: 'TimeoutError' })), 10000))
+    ]);
+    deckLevel(to, 1, 0);
   } catch (e) {
-    window.logError?.('MUSIC_AUDIO', `Música: la recarga no arrancó (${e?.name || e})`, t.file || t.id);
+    window.logError?.('MUSIC_AUDIO', `Música: la recarga no arrancó (${e?.name || e})`, t.file || t.id, why || '');
     try {
       b.pause();
     } catch {}
-    deckLevel(to, 1, 0);
+    deckLevel(to, 0, 0);
+    deckLevel(from, 1, 0);
     return false;
   }
   // Ya suena en la otra platina, en el mismo punto: se cambia sin hueco ni reinicio.
@@ -829,7 +846,7 @@ async function musicRetrySameTrack(t, a, why) {
   musicState.current = t;
   musicState.xf = null;
   try {
-    a?.pause();
+    vieja?.pause();
   } catch {}
   saveMusicResume();
   updateMusicNowUI();
@@ -837,20 +854,83 @@ async function musicRetrySameTrack(t, a, why) {
   updateMediaSession();
   return true;
 }
+// Vuelve a cargar la misma canción en el punto donde iba (2 intentos como mucho).
+async function musicRetrySameTrack(t, a, why) {
+  if (!musicCanRetry(t)) return false;
+  musicRetry.tries++;
+  musicRetry.since = Date.now();
+  const pos = Math.max(0, (Number(a?.currentTime) || 0) - 2);
+  musicRetry.pos = pos;
+  window.logError?.('MUSIC_AUDIO', `Música: se vuelve a cargar la misma canción (${why})`, t.file || t.id, `t=${pos.toFixed(1)} intento=${musicRetry.tries}/${MUS_MAX_RETRIES}`);
+  return musicCargarEnOtra(t, pos, why);
+}
+/* Un trozo del archivo que no se puede leer no tiene por qué estropear la canción entera:
+   en el registro, la misma canción fallaba dos veces en el mismo segundo y luego sonaba bien.
+   Se sigue desde 20 s más adelante (2 veces como mucho por canción). */
+let musicSalto = { id: '', hechos: 0 };
+async function musicSaltarTrozo(t, a) {
+  if (!t) return false;
+  const dur = Number(a?.duration) || Number(t.dur) || 0;
+  const pos = Number(a?.currentTime) || 0;
+  if (!dur || pos <= 1 || pos + 25 >= dur) return false;
+  if (musicSalto.id !== t.id) musicSalto = { id: t.id, hechos: 0 };
+  if (musicSalto.hechos >= 2) return false;
+  musicSalto.hechos++;
+  const desde = Math.min(pos + 20, Math.max(0, dur - 2));
+  window.logError?.('MUSIC_AUDIO', 'Música: se salta un trozo que no se puede leer', t.file || t.id, `de ${pos.toFixed(1)} a ${desde.toFixed(1)}`);
+  podToast(`«${t.title}» no se puede leer ahí: se salta un trozo`, { ms: 3500 });
+  return musicCargarEnOtra(t, desde, 'salto');
+}
+// Canciones seguidas que no se pueden leer: si pasan de 3 se deja de intentar (para no
+// saltar sin parar por toda la biblioteca si la música no está accesible). Se pone a 0 en
+// cuanto algo vuelve a sonar.
+let musicFallosSeguidos = 0;
 function musicTrackFailed(t, a) {
   const buf = a ? musBufferedAhead(a) : -1;
   window.logError?.(
     'MUSIC_AUDIO',
     'No se pudo reproducir ' + (t?.id || ''),
     t?.file || '',
-    `t=${(Number(a?.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a?.readyState ?? '?'} ns=${a?.networkState ?? '?'}`
+    `t=${(Number(a?.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a?.readyState ?? '?'} ns=${a?.networkState ?? '?'} tam=${Number(t?.size) || 0}`
   );
-  musicRetrySameTrack(t, a, 'error de lectura').then(ok => {
-    if (ok) return; // sigue sonando la misma canción, donde iba
+  (async () => {
+    if (await musicRetrySameTrack(t, a, 'error de lectura')) return; // sigue sonando la misma, donde iba
+    if (await musicSaltarTrozo(t, a)) return; // sigue sonando la misma, un poco más adelante
     musicErrors++;
     podToast(`No se pudo reproducir «${t?.title || 'canción'}»`);
-    if (musicErrors < 5 && musicState.queue.length) setTimeout(() => nextTrack(true), 1200);
-  });
+    musicContinuarTrasFallo(t);
+  })().catch(e => window.logError?.('MUSIC_AUDIO', 'Música: fallo al recuperar la canción: ' + (e?.message || e), t?.file || ''));
+}
+/* Que una canción no se pueda leer no debe dejar la música muda para siempre: se sigue con
+   lo que había (en el registro del móvil se quedó parada y hubo que darle a «anterior»). */
+function musicContinuarTrasFallo(t) {
+  musicFallosSeguidos++;
+  if (musicFallosSeguidos > 3) {
+    musicUserPaused = true;
+    try {
+      musicAudio()?.pause();
+    } catch {}
+    updateMusicPlayerUI();
+    window.logError?.('MUSIC_AUDIO', 'Música: se deja de intentar (3 canciones seguidas que no se pueden leer)', t?.file || t?.id || '');
+    podToast('No se puede leer esta música. Mira el registro de errores.', { ms: 5000 });
+    return;
+  }
+  // 1) Lo siguiente de la cola.
+  if (musicState.queue.length) return void nextTrack(true);
+  // 2) Si la cola está vacía, lo siguiente (o lo anterior) de lo que estabas escuchando.
+  const ctx = musicState.context || [];
+  const i = ctx.findIndex(x => x && x.id === t?.id);
+  const sig = (i >= 0 && ctx[i + 1]) || (i > 0 && ctx[i - 1]) || null;
+  if (sig && sig.id !== t?.id) {
+    window.logError?.('AUTO', 'Música: se sigue con otra canción tras el fallo', sig.file || sig.id, `fallos=${musicFallosSeguidos}`);
+    return void playTrackNow(sig);
+  }
+  // 3) Y si no, la última que sonó.
+  if (musicState.history.length) {
+    window.logError?.('AUTO', 'Música: se vuelve a la anterior tras el fallo', '', `fallos=${musicFallosSeguidos}`);
+    return void prevTrack(true);
+  }
+  podToast('No hay más canciones que reproducir');
 }
 function playTrackNow(t) {
   if (!t) return;
@@ -985,8 +1065,15 @@ function toggleMusicPlay() {
     else {
       const d = musicState.deck;
       if (fade) deckLevel(d, 0, 0);
-      // Si el play() tarda en responder, que no se quede sonando a volumen 0.
-      const guard = fade ? setTimeout(() => musicState.deck === d && musDeckLevel[d] < 0.5 && deckLevel(d, 1, 0), 1500) : 0;
+      // Si el play() tarda en responder, que no se quede sonando a volumen 0. Se mira la
+      // platina que suena en ese momento: si entretanto se ha recuperado en la otra, la que
+      // se quedó a 0 es la vieja y el nivel hay que devolverlo a la de ahora.
+      const guard = fade
+        ? setTimeout(() => {
+            const cur = musicState.deck;
+            if (!musicState.xf && !musDeckAnim[cur] && musDeckLevel[cur] < 0.5) deckLevel(cur, 1, 0);
+          }, 1500)
+        : 0;
       a.play()
         .then(() => fade && deckLevel(d, 1, 0.35))
         .catch(e => {
@@ -1004,6 +1091,8 @@ function toggleMusicPlay() {
       deckLevel(i, 0, 0.25);
       setTimeout(() => {
         if (musicUserPaused && musicState.deck === i) a.pause();
+        // El nivel se devuelve SIEMPRE (aunque entretanto haya cambiado la platina): si se
+        // quedaba a 0, al volver a darle a ▶ la canción «sonaba» en silencio.
         deckLevel(i, 1, 0);
       }, 260);
     } else {
@@ -3675,6 +3764,8 @@ function initMusic() {
   on('playing', () => {
     finMusicInterrupt();
     musicUserPaused = false;
+    // Vuelve a sonar: se perdona el contador de fallos seguidos.
+    musicFallosSeguidos = 0;
   });
   on('pause', a => {
     saveMusicResume();
@@ -3733,25 +3824,42 @@ function initMusic() {
       `t=${(a.currentTime || 0).toFixed(1)} buf=${musBufferedAhead(a).toFixed(1)} rs=${a.readyState} ns=${a.networkState} gan=${musDeckLevel[musicState.deck].toFixed(2)}`
     );
   };
-  // Si la lectura se queda parada (waiting/stalled) y a los 8 s no ha vuelto, se recupera
-  // sola en la otra platina. Antes solo se apuntaba en el registro y la canción se quedaba
-  // muda (en el registro aparecían «microcorte (sin datos para seguir)» y no volvía).
+  // Si la lectura se queda parada (waiting/stalled): a los 2,5 s se le vuelve a pedir que
+  // suene (en el registro salían microcortes con 50-180 s ya cargados y el reproductor
+  // «esperando», y ese empujón basta para que siga) y, si a los 9 s tampoco, se recupera en
+  // la otra platina. Antes solo se apuntaba en el registro y la canción se quedaba muda.
   let musStallTimer = null,
+    musStallKick = null,
     musStallPos = 0;
+  const pararVigilancia = () => {
+    clearTimeout(musStallTimer);
+    clearTimeout(musStallKick);
+    musStallTimer = null;
+    musStallKick = null;
+  };
   const vigilanciaParada = a => {
-    if (musStallTimer || a.paused || musicUserPaused || musicInterrupted) return;
+    if (musStallTimer || musStallKick || a.paused || musicUserPaused || musicInterrupted) return;
     musStallPos = a.currentTime;
+    musStallKick = setTimeout(() => {
+      musStallKick = null;
+      const el = musicAudio();
+      if (el !== a || el.paused || el.ended || musicUserPaused || musicInterrupted) return;
+      if (el.currentTime - musStallPos > 0.5) return; // ha vuelto a sonar solo
+      window.rvAnotar?.(`Música: parada de 2,5 s, se vuelve a pedir que suene (${musicState.current?.file || ''})`);
+      el.play().catch(() => {});
+    }, 2500);
     musStallTimer = setTimeout(async () => {
       musStallTimer = null;
+      clearTimeout(musStallKick);
       const el = musicAudio();
       if (el !== a || el.paused || el.ended || musicUserPaused || musicInterrupted) return;
       if (el.currentTime - musStallPos > 1) return; // ha vuelto a sonar solo
       const t = musicState.current;
       if (!t) return;
-      window.rvAnotar?.(`Música: 8 s sin datos, se recupera (${t.file || t.id})`);
-      const ok = await musicRetrySameTrack(t, el, 'parada de 8 s');
-      if (!ok && musicErrors++ < 3 && musicState.queue.length) nextTrack(true);
-    }, 8000);
+      window.rvAnotar?.(`Música: 9 s sin datos, se recupera (${t.file || t.id})`);
+      const ok = await musicRetrySameTrack(t, el, 'parada de 9 s');
+      if (!ok) musicContinuarTrasFallo(t);
+    }, 9000);
   };
   on('waiting', a => {
     logMusStall('sin datos para seguir', a);
@@ -3761,8 +3869,8 @@ function initMusic() {
     logMusStall('la lectura se ha quedado parada', a);
     vigilanciaParada(a);
   });
-  on('playing', () => clearTimeout(musStallTimer));
-  on('ended', () => clearTimeout(musStallTimer));
+  on('playing', pararVigilancia);
+  on('ended', pararVigilancia);
   on('loadedmetadata', updateMusicPlayerUI);
   on('ended', async () => {
     const t = musicState.current;

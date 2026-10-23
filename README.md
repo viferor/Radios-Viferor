@@ -1,6 +1,36 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.2 — Si una canción no se puede leer, la música sigue (no se queda muda)
+
+El registro del móvil del 23-10 enseñó lo que pasaba: la canción fallaba al leer el archivo
+(`PIPELINE_ERROR_READ`) en el segundo 186, el reintento en la otra platina también fallaba en
+el mismo punto y, como la cola estaba vacía, **la música se quedaba parada** hasta que se
+pulsaba «anterior».
+
+- **Ya no se queda muda**: si una canción no se puede reproducir, se sigue con **lo siguiente
+  de la cola**; si la cola está vacía, con **la siguiente (o la anterior) de lo que estabas
+  escuchando** (álbum, carpeta, lista); y si tampoco, con **la última que sonó**. Si pasan
+  3 canciones seguidas sin poder sonar, se para y avisa («No se puede leer esta música…»)
+  para no saltar sin fin por toda la biblioteca.
+- **Se salta el trozo que no se puede leer**: si el archivo falla siempre en el mismo punto,
+  se continúa **20 s más adelante** (2 veces como mucho por canción) en vez de tirar la
+  canción entera. Se avisa con un aviso corto.
+- **Microcortes con datos cargados** (el registro tenía varios con 50-180 s por delante y el
+  reproductor «esperando»): a los 2,5 s se le vuelve a pedir que suene, y solo si a los 9 s
+  sigue parado se recupera en la otra platina.
+- **Nunca se queda a volumen 0**: si un fundido se queda a medias (la platina marcaba
+  `gan=0.00` en el registro) ahora se devuelve el volumen al darle a ▶, al pausar y en el
+  cambio de platina. Y la platina nueva de la recuperación se sube **solo cuando play()
+  responde**, así que no se oyen dos canciones a la vez.
+- El registro anota ahora también el **tamaño del archivo** (`tam=`) cuando no se puede
+  reproducir, para poder compararlo con el tamaño real (lo apunta la APK nueva como
+  `MUSIC_IO`).
+
+> **La causa del corte está en la parte nativa**: para que la lectura del archivo no falle
+> hace falta el **APK 1.16.0**. Si en el registro no aparece ninguna línea `MUSIC_IO`, el
+> móvil sigue con una APK anterior.
+
 ## 1.29.1 — Pulsar la carátula enseña la lista o la cola de lo que está sonando
 
 - En el reproductor de música, **tocar la carátula** abre **lo que está sonando**: la **cola**
