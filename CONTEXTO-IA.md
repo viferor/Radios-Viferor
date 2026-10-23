@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.6** (compilación 12960) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.7** (compilación 12970) · APK
 > **1.16.1** (versionCode 11601) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
 
@@ -318,6 +318,14 @@ elegida en navegador; se puede perder sin daño.
   cuerpo termina antes de lo que dice `Content-Length` y Chromium da `PIPELINE_ERROR_READ` a
   mitad de canción (y `play()` se queda colgado). Se lee el descriptor directamente con
   `new FileInputStream(afd.getFileDescriptor())` + `getChannel().position()`.
+- **La música se reproduce desde una COPIA ENTERA (blob)** — esto es lo que quitó los cortes
+  de verdad: aunque el servidor ya sirviera bien el archivo (sin líneas `MUSIC_IO`), el lector
+  del WebView seguía dando `PIPELINE_ERROR_READ` a mitad de canción **con 100 s ya cargados**
+  (23-10, 17:22, APK 1.16.1). `musFuenteBlob(t)` trae la canción entera con `fetch`, la
+  convierte en blob y `trackSrc()` devuelve un `blob:` URL: el reproductor ya no pide trozos.
+  Se guardan 3 copias (`MUS_BLOB_KEEP`), no se copian las de más de 60 MB (`MUS_BLOB_MAX`) y
+  si falla dos veces se vuelve a los trozos. `prepareTrack` deja la dirección ligera (al abrir
+  la app) y `musCambiarACopiaEntera()` cambia a la copia al darle a ▶.
 - **🩺 Prueba de lectura** (Mi música → ⋯ → «Comprobar la lectura de los archivos»,
   `probarLecturaMusica()`): compara bytes de rangos solapados de 3 canciones y lo anota como
   `MUSIC_IO`. Es la forma de distinguir «falla al servir el archivo» de «falla el

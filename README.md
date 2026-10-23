@@ -1,6 +1,26 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.7 — La música suena desde una copia entera del archivo (fin de los cortes al leer)
+
+El registro del 23-10 a las 17:22 lo dejó claro: **con el APK 1.16.1 ya instalado** seguían
+saliendo `PIPELINE_ERROR_READ`… y **sin ninguna línea `MUSIC_IO`**. O sea: la app ya servía el
+archivo entero y correcto. El que se rompía era **el lector del WebView**, que va pidiendo
+trozos al archivo y da el error por bueno aunque tenga 100 s cargados por delante (por eso
+Poweramp, que lee el archivo directamente, nunca fallaba).
+
+- **Ahora la canción se trae entera de una vez y se reproduce desde una copia (blob)**: el
+  reproductor lee de su propio almacén y **no vuelve a pedir trozos**, así que no hay lecturas
+  a medias ni cortes. De propina, **buscar dentro de la canción es instantáneo**.
+- Se guardan **las 3 últimas copias** (la que suena, la siguiente y la anterior) y **la
+  siguiente se prepara sola** en cuanto empieza la actual, para que el cambio no se note.
+- **Archivos de más de 60 MB** se siguen oyendo por trozos (no se copian enteros, para no
+  llenar el móvil).
+- Si traer la copia falla dos veces, se vuelve a los trozos: mejor eso que no sonar. Queda
+  anotado en el registro como `MUSIC_IO`.
+- La copia se reutiliza al recuperar una canción, así que la recuperación es instantánea.
+- **No hace falta instalar ningún APK nuevo**: esto es solo web.
+
 ## 1.29.6 — Ordenar por varios niveles (fecha → artista → más escuchadas…)
 
 - El botón **⇅ Ordenar** de la **cola** y de cada **lista** admite ahora **hasta 4 niveles**:

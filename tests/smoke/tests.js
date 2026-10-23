@@ -69,7 +69,7 @@
     musDecks[1] = a1;
     musicState.deck = 0;
     const cancion = musicState.tracks[0];
-    cancion.src = 'tono-simulado.wav';
+    cancion.src = '/__music/track/1001';
     musicState.current = cancion;
     a0.paused = false; // estaba sonando cuando falló la lectura
     a0.currentTime = 42.5;
@@ -223,7 +223,18 @@
       JSON.stringify(musicState.lecturaPrueba)
     );
 
-    // ---- 13. El registro de errores no tiene fallos de JavaScript
+    // ---- 13. La música suena desde una COPIA ENTERA del archivo (blob), no pidiendo trozos
+    musicState.tracks.forEach(t => (t.src = '/__music/track/' + String(t.id).replace(/^a/, '')));
+    const u1 = await musFuenteBlob(musicState.tracks[0]);
+    const u2 = await musFuenteBlob(musicState.tracks[0]);
+    check('trae la canción entera y reutiliza la copia', String(u1).startsWith('blob:') && u1 === u2, String(u1).slice(0, 30));
+    const enorme = { id: 'a999', title: 'Enorme', src: '/__music/track/999', size: 80 * 1024 * 1024 };
+    check('las de más de 60 MB se oyen por trozos', (await musFuenteBlob(enorme)) === '');
+    startTrack(musicState.tracks[1]);
+    await esperar(400);
+    check('el reproductor usa la copia entera', String(musicAudio().src).startsWith('blob:'), String(musicAudio().src).slice(0, 40));
+
+    // ---- 14. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {

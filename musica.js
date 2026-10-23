@@ -360,8 +360,66 @@ async function scanFolderHandle(dir) {
     musicState.loading = false;
   }
 }
+/* ---------------------------------------------------------------------------
+   Reproducir desde una copia entera de la canción (blob)
+   ---------------------------------------------------------------------------
+   En la app Android el WebView pide el audio por trozos a la app
+   (shouldInterceptRequest). Ese camino es el que fallaba: «PIPELINE_ERROR_READ: data source
+   error» a mitad de canción, incluso con 100 s ya cargados por delante, y con un reproductor
+   nativo (Poweramp) los mismos archivos van perfectos. Ahora la canción se trae **entera de
+   una vez** y se reproduce desde un blob: el reproductor lee de su propio almacén y no vuelve
+   a pedir trozos, así que no hay lecturas a medias ni saltos.
+   · Los archivos de más de 60 MB se siguen oyendo por trozos (no se copian enteros).
+   · Se guardan las 3 últimas copias: la que suena, la siguiente y la anterior.
+   · Si traerla entera falla dos veces, se vuelve a los trozos (mejor eso que no sonar). */
+const MUS_BLOB_MAX = 60 * 1024 * 1024;
+const MUS_BLOB_KEEP = 3;
+const musBlobs = new Map(); // id → { promesa }
+async function musFuenteBlob(t) {
+  if (!t?.id || !t.src || !isAndroidApp()) return '';
+  const tam = Number(t.size) || 0;
+  if (tam > MUS_BLOB_MAX) return '';
+  const ya = musBlobs.get(t.id);
+  if (ya) return ya.promesa;
+  const promesa = (async () => {
+    for (let intento = 0; intento < 2; intento++) {
+      try {
+        const r = await fetch(t.src, { cache: 'no-store' });
+        if (!r.ok) throw Error('HTTP ' + r.status);
+        const blob = await r.blob();
+        if (!blob.size) throw Error('llegó vacío');
+        if (tam && blob.size < tam) {
+          window.logError?.('MUSIC_IO', 'Música: la canción llega a medias', t.file || t.id, `${blob.size}/${tam} bytes`);
+        }
+        return URL.createObjectURL(blob);
+      } catch (e) {
+        if (intento) {
+          window.logError?.('MUSIC_IO', 'Música: no se pudo traer la canción entera', t.file || t.id, String(e?.message || e));
+          return '';
+        }
+        await new Promise(r2 => setTimeout(r2, 400));
+      }
+    }
+    return '';
+  })();
+  musBlobs.set(t.id, { promesa });
+  // Solo se guardan las últimas copias, para no llenar el móvil.
+  while (musBlobs.size > MUS_BLOB_KEEP) {
+    const viejo = musBlobs.keys().next().value;
+    const e = musBlobs.get(viejo);
+    musBlobs.delete(viejo);
+    e?.promesa.then(u => u && URL.revokeObjectURL(u)).catch(() => {});
+  }
+  const url = await promesa;
+  if (!url) musBlobs.delete(t.id);
+  return url;
+}
 async function trackSrc(t, deck = musicState.deck) {
-  if (t.src) return t.src;
+  if (t.src) {
+    // Primero la copia entera (ver arriba); si no se puede, los trozos de siempre.
+    const copia = await musFuenteBlob(t).catch(() => '');
+    return copia || t.src;
+  }
   const h = musicState.files.get(t.id);
   if (!h) return '';
   const f = h instanceof File ? h : await h.getFile();
@@ -697,7 +755,9 @@ async function prepareTrack(t, pos = 0) {
   const a = musicAudio();
   if (!a || !t) return;
   musicState.current = t;
-  const src = await trackSrc(t);
+  // Aquí solo se deja «preparada» (sin sonar) al abrir la app, así que se carga la dirección
+  // ligera: la copia entera se trae al darle a ▶ (ver musCambiarACopiaEntera).
+  const src = t.src && isAndroidApp() ? t.src : await trackSrc(t);
   if (!src) return;
   // «auto» (y no «metadata»): el móvil carga por delante mientras suena, y así no se queda
   // sin datos a mitad de canción, que es lo que producía los microcortes.
@@ -749,6 +809,9 @@ async function startTrack(t, { pos = 0 } = {}) {
   saveMusicQueue();
   syncMusicAndroid(true);
   updateMediaSession();
+  // Se va preparando la siguiente (entera) para que el cambio no se note.
+  const siguiente = musicState.queue[0];
+  if (siguiente?.src) setTimeout(() => musFuenteBlob(siguiente).catch(() => {}), 1200);
 }
 /* Un fallo de lectura a mitad de canción casi nunca quiere decir que el archivo esté roto:
    en el registro del móvil la misma canción falla en el segundo 53 y vuelve a sonar bien
@@ -1067,6 +1130,17 @@ function musicPlayFailed(e, where) {
   if (e?.name === 'AbortError') return; // una pausa interrumpió el play(): normal
   window.logError?.('media', `Música: play() rechazado (${where}): ${e?.name || ''} ${e?.message || e}`, musicState.current?.file || '');
 }
+/* Si la canción está preparada con la dirección por trozos (la que fallaba al leer),
+   antes de darle a ▶ se cambia a la copia entera y sigue desde el mismo punto. */
+function musCambiarACopiaEntera() {
+  const a = musicAudio();
+  const t = musicState.current;
+  if (!a || !t || !isAndroidApp()) return false;
+  const src = String(a.src || '');
+  if (!src || src.startsWith('blob:') || !src.includes('/__music/')) return false;
+  startTrack(t, { pos: Number(a.currentTime) || 0 });
+  return true;
+}
 function toggleMusicPlay() {
   const a = musicAudio();
   if (!a) return;
@@ -1081,6 +1155,7 @@ function toggleMusicPlay() {
     musicUserPaused = false;
     finMusicInterrupt();
     window.musicFx?.resume?.();
+    if (musCambiarACopiaEntera()) return;
     if (!a.src) startTrack(musicState.current);
     else {
       const d = musicState.deck;
@@ -1476,6 +1551,7 @@ window.viferorNativeMusicPlay = () => {
     finMusicInterrupt();
     window.musicFx?.resume?.();
     if (!musicState.xf) deckLevel(musicState.deck, 1, 0);
+    if (musCambiarACopiaEntera()) return;
     if (!a.src) return startTrack(musicState.current);
     a.play().catch(e => musicPlayFailed(e, 'notificación'));
     watchMusicResume('notificación');
