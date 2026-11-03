@@ -49,7 +49,7 @@
     // ---- 6. La biblioteca de música carga
     window.viferorIrAPestana('music');
     for (let i = 0; i < 40 && !musicState.loaded; i++) await esperar(100);
-    check('la biblioteca de música carga', musicState.loaded && musicState.tracks.length === 2, `${musicState.loaded}/${musicState.tracks.length}`);
+    check('la biblioteca de música carga', musicState.loaded && musicState.tracks.length === 4, `${musicState.loaded}/${musicState.tracks.length}`);
 
     // ---- 7. Recuperación de un fallo de lectura con dos platinas simuladas:
     //         cambia de platina, NO vuelve al segundo 0 y no pausa nada antes de tiempo.
@@ -219,7 +219,7 @@
     await probarLecturaMusica();
     check(
       'la prueba de lectura de archivos da todo bien',
-      musicState.lecturaPrueba && musicState.lecturaPrueba.mal === 0 && musicState.lecturaPrueba.bien === 2,
+      musicState.lecturaPrueba && musicState.lecturaPrueba.mal === 0 && musicState.lecturaPrueba.bien === 3,
       JSON.stringify(musicState.lecturaPrueba)
     );
 
@@ -234,7 +234,34 @@
     await esperar(400);
     check('el reproductor usa la copia entera', String(musicAudio().src).startsWith('blob:'), String(musicAudio().src).slice(0, 40));
 
-    // ---- 14. El registro de errores no tiene fallos de JavaScript
+    // ---- 14. Tocar una canción de una lista sigue con el resto de la lista
+    const lSeg = createMusicList('Prueba seguir', musicState.tracks.slice(0, 4));
+    openMusicScreen('list:' + lSeg.id);
+    await esperar(80);
+    let filas = [...document.querySelectorAll('#musicContent .pod-qlist .mus-row')];
+    filas[1].querySelector('.pod-qinfo').click(); // segunda de la lista
+    await esperar(250);
+    check(
+      'la lista sigue desde la canción elegida',
+      musicState.current && musicState.current.id === musicState.tracks[1].id && musicState.queue.map(t => t.id).join() === musicState.tracks.slice(2, 4).map(t => t.id).join(),
+      `suena=${musicState.current && musicState.current.id} cola=${musicState.queue.map(t => t.id).join()}`
+    );
+
+    // ---- 15. Tocar una canción de la COLA sigue desde ahí (antes volvía a la anterior)
+    musicState.queue = [musicState.tracks[1], musicState.tracks[2], musicState.tracks[3]];
+    openMusicScreen('queue');
+    await esperar(80);
+    filas = [...document.querySelectorAll('#musicContent .pod-qlist .mus-row')];
+    check('la cola pinta sus 3 canciones', filas.length === 3, 'filas=' + filas.length);
+    filas[1].querySelector('.pod-qinfo').click(); // la segunda de la cola
+    await esperar(250);
+    check(
+      'la cola sigue desde ahí y descarta lo anterior',
+      musicState.current && musicState.current.id === musicState.tracks[2].id && musicState.queue.map(t => t.id).join() === musicState.tracks[3].id,
+      `suena=${musicState.current && musicState.current.id} cola=${musicState.queue.map(t => t.id).join()}`
+    );
+
+    // ---- 16. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {

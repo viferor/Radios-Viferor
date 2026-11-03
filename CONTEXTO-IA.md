@@ -4,9 +4,9 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.7** (compilación 12970) · APK
-> **1.16.1** (versionCode 11601) · rama de respaldo
-> **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-10-23.
+> **Estado de referencia (todo funcionando):** web **1.29.8** (compilación 12980) · APK
+> **1.16.2** (versionCode 11602) · rama de respaldo
+> **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
 ---
 
@@ -261,6 +261,15 @@ argumentos desde APK ≤ 1.15 y en ese caso se ignoran), `onAndroidNotificationP
 
 **Si cambias un nombre de un lado, rompes el otro** (y los APK ya instalados).
 
+**Órdenes de reproducción desde fuera (widget, notificación, auriculares)**: se mandan con un
+intent a `MainActivity` que lleva el extra `mediaAction` (`EXTRA_MEDIA_ACTION`, APK 1.16.2+);
+`setPendingMediaAction` espera a que la web tenga `window.viferorNativeMusicPlay` y entonces
+llama a `handleMediaControlAction` **una sola vez** (con «siguiente» duplicado se saltarían dos
+canciones). El widget, cuando no suena nada, usa un `PendingIntent.getActivity` que **abre la
+app** con esa orden: la música la reproduce la web y sin pantalla no hay reproductor (por eso
+no se puede «sonar sin abrir la app» salvo con un motor nativo). `MainActivity.onDestroy` para
+el servicio, quita la notificación y deja el widget en «reproducir».
+
 ---
 
 ## 8. Datos del usuario (no romper)
@@ -398,6 +407,12 @@ que no vuelva a sonar sola tras interrupciones. El feed «Comandante Lara»
 **Herramienta**: Mi música → ⋯ → 🩺 «Comprobar la lectura de los archivos» (`probarLecturaMusica`)
 pide el archivo entero, compara el tamaño con la biblioteca y compara trozos solapados de 3
 canciones; deja el resultado en el registro como `MUSIC_IO`.
+
+**1.29.8 · APK 1.16.2 — sin verificar en el móvil**: (a) tocar una canción de la **cola** ahora
+reproduce desde ahí y descarta lo anterior (`playQueueFrom`); en las **listas** ya se hacía
+(`playCollection` en la posición; hay prueba). (b) El **widget**: si no suena nada, ▶ **abre la
+app** y reproduce (antes no hacía nada con la app cerrada). Comprobar que abre y arranca, y que
+al cerrar la app el widget vuelve a mostrar ▶ y desaparece la notificación.
 
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.

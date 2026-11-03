@@ -1032,6 +1032,20 @@ function playTrackNow(t) {
   saveMusicQueue();
   startTrack(t);
 }
+/* Reproducir una canción de la COLA desde ahí: lo que venía antes en la cola se descarta y,
+   al terminar, sigue con lo que quedaba por detrás. Antes se reproducía sola y después la
+   cola continuaba por donde estaba (volvía al sitio anterior), que es lo que no gustaba. */
+function playQueueFrom(i) {
+  const q = musicState.queue;
+  const t = q[i];
+  if (!t) return;
+  const resto = q.slice(i + 1);
+  if (musicState.current && musicState.current.id !== t.id) pushMusicHistory(musicState.current);
+  musicState.queue = resto;
+  saveMusicQueue();
+  startTrack(t);
+}
+window.playQueueFrom = playQueueFrom;
 async function nextTrack(auto = false) {
   const o = musicOpts();
   const cur = musicState.current;
@@ -3702,7 +3716,7 @@ function renderMusicQueue(root) {
       ]
     ])
   );
-  root.append(musEl('h3', 'pod-list-h', `A continuación${q.length ? ' <small>arrastra ⠿ para ordenar</small>' : ''}`));
+  root.append(musEl('h3', 'pod-list-h', `A continuación${q.length ? ' <small>arrastra ⠿ para ordenar · toca una canción para seguir desde ahí</small>' : ''}`));
   if (!q.length) {
     root.append(musEl('div', 'pod-empty pod-empty-small', `<p>La cola está vacía.${o.repeat === 'all' && musicState.context.length ? ' Con «Repetir: todo» volverá a empezar lo que estás escuchando.' : ' Usa ⋯ en cualquier canción, álbum o carpeta para añadir.'}</p>`));
   } else {
@@ -3713,7 +3727,7 @@ function renderMusicQueue(root) {
         trackRow(t, i, {
           num: i + 1,
           handle: true,
-          onPlay: () => playTrackNow(t),
+          onPlay: () => playQueueFrom(i),
           onRemove: k => {
             const before = [...musicState.queue];
             musicState.queue.splice(k, 1);
@@ -3721,6 +3735,7 @@ function renderMusicQueue(root) {
             podToast('Quitada de la cola', { action: 'Deshacer', onAction: () => ((musicState.queue = before), saveMusicQueue()) });
           },
           menuExtra: (tt, k) => [
+            { icon: '▶', label: 'Seguir la cola desde aquí', hint: 'Lo anterior se descarta', on: () => playQueueFrom(k) },
             k > 0 && { icon: '⤒', label: 'Subir al principio', on: () => ((musicState.queue = moveInArray(musicState.queue, k, 0)), saveMusicQueue()) },
             k < musicState.queue.length - 1 && { icon: '⤓', label: 'Bajar al final', on: () => ((musicState.queue = moveInArray(musicState.queue, k, musicState.queue.length - 1)), saveMusicQueue()) }
           ].filter(Boolean)

@@ -1,6 +1,24 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.8 · APK 1.16.2 — Seguir la cola desde una canción, y el widget arranca la música
+
+- **Tocar una canción de la cola reproduce desde ahí**: lo que venía antes en la cola se
+  descarta y, al terminar, sigue con lo que quedaba por detrás. Antes sonaba solo esa canción
+  y después la cola continuaba por donde estaba (volvía al sitio anterior). También está en
+  **⋯ → «Seguir la cola desde aquí»**, y la cabecera de la cola lo recuerda.
+- En una **lista** ya funcionaba así (se reproduce la lista desde la canción que tocas); queda
+  cubierto con una prueba para que no se estropee.
+- **Widget**: si no está sonando nada, el botón **▶ abre la app y empieza a reproducir**. Antes
+  no hacía nada si la app estaba cerrada, porque el reproductor vive dentro de la web (sin app
+  no hay reproductor). Al cerrar la app se para el servicio, se quita la notificación y el
+  widget vuelve a mostrar ▶.
+- La orden del widget/notificación se manda **cuando la web ya está cargada** (antes se mandaba
+  a ciegas a los 1,5 s y en un arranque en frío se perdía) y **una sola vez**, para que
+  «siguiente» no salte dos canciones.
+- La app Android sube a **1.16.2**: hace falta instalarla para lo del widget (la parte de la
+  cola es solo web).
+
 ## 1.29.7 — La música suena desde una copia entera del archivo (fin de los cortes al leer)
 
 El registro del 23-10 a las 17:22 lo dejó claro: **con el APK 1.16.1 ya instalado** seguían

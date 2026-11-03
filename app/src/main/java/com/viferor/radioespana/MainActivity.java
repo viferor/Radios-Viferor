@@ -44,6 +44,9 @@ public class MainActivity extends Activity {
     private static final String PREFS_NAME = "radio_viferor_prefs";
     private static final String PREF_PODCAST_SUBS = "podcast_subscriptions_json";
     private static final String PREF_PLAYBACK_SECTION = "playback_section";
+    /** Orden de reproducción que trae un intent del widget/notificación («play», «next»…). */
+    static final String EXTRA_MEDIA_ACTION = "mediaAction";
+    private String pendingMediaAction;
     private PodcastMediaController podcastMediaController;
     private static MainActivity activeInstance;
 
@@ -80,8 +83,66 @@ public class MainActivity extends Activity {
         });
         String initialAction = getIntent() == null ? null : getIntent().getAction();
         if (initialAction != null) webView.postDelayed(() -> handleMediaControlAction(initialAction), 1500);
+        // El widget (y la notificación) pueden pedir «reproduce»: se espera a que la web esté
+        // cargada y entonces se manda la orden, en vez de a ciegas a los 1,5 s.
+        setPendingMediaAction(getIntent());
         handleNotificationIntent(getIntent());
         if (!handleOpenAudioIntent(getIntent())) handleWidgetOpenIntent(getIntent());
+    }
+
+    /**
+     * Abre la aplicación pidiendo que empiece a sonar. La música y la radio las reproduce la
+     * web, que vive dentro de esta pantalla: sin app no hay reproductor, así que el widget
+     * abre la app en vez de quedarse en un botón que no hace nada.
+     */
+    static boolean startWithMediaAction(Context context, String action) {
+        try {
+            Intent i = new Intent(context, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    .putExtra(EXTRA_MEDIA_ACTION, action);
+            context.startActivity(i);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Guarda la orden que trae el intent (widget/notificación) y la manda cuando la web esté. */
+    private void setPendingMediaAction(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getStringExtra(EXTRA_MEDIA_ACTION);
+        intent.removeExtra(EXTRA_MEDIA_ACTION);
+        if (action == null) {
+            String a = intent.getAction();
+            if (a != null && a.startsWith("com.viferor.radioespana.WIDGET_")) action = a;
+        }
+        if (action == null) return;
+        pendingMediaAction = action;
+        deliverPendingMediaAction(0);
+    }
+
+    /**
+     * Manda la orden pendiente en cuanto la web tiene sus funciones listas (al abrir la app
+     * fría, los scripts tardan un par de segundos). Se manda UNA sola vez: «siguiente» dos
+     * veces saltaría dos canciones.
+     */
+    private void deliverPendingMediaAction(int attempt) {
+        if (webView == null || pendingMediaAction == null) return;
+        if (!bridgeTrusted) {
+            if (attempt < 25) webView.postDelayed(() -> deliverPendingMediaAction(attempt + 1), 400);
+            return;
+        }
+        webView.evaluateJavascript(
+                "(function(){try{return !!(window.viferorNativeMusicPlay);}catch(e){return false;}})()",
+                r -> {
+                    if ("true".equals(r)) {
+                        String action = pendingMediaAction;
+                        pendingMediaAction = null;
+                        if (action != null) handleMediaControlAction(action);
+                    } else if (attempt < 25 && webView != null) {
+                        webView.postDelayed(() -> deliverPendingMediaAction(attempt + 1), 400);
+                    }
+                });
     }
 
     private void setupWebView(String url) {
@@ -115,6 +176,19 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (activeInstance == this) activeInstance = null;
         if (audioOutput != null) audioOutput.stop();
+        // La reproducción vive en la web, dentro de esta pantalla: al cerrarse la app ya no
+        // suena nada, así que se para el servicio, se quita la notificación y el widget
+        // vuelve a mostrar «reproducir».
+        try {
+            MediaPlaybackService.stop(this);
+            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(PodcastMediaController.NOTIFICATION_ID);
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean("widget_playing", false)
+                    .putString("widget_subtitle", "Sin reproducción").apply();
+            WidgetProvider.updateAll(this);
+        } catch (Exception ignored) {}
+        pendingMediaAction = null;
         if (filePathCallback != null) {
             filePathCallback.onReceiveValue(null);
             filePathCallback = null;
@@ -289,7 +363,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent != null) handleMediaControlAction(intent.getAction());
+        setPendingMediaAction(intent);
         handleNotificationIntent(intent);
         if (!handleOpenAudioIntent(intent)) handleWidgetOpenIntent(intent);
     }
