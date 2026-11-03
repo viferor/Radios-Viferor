@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.9** (compilación 12990) · APK
+> **Estado de referencia (todo funcionando):** web **1.30.0** (compilación 13000) · APK
 > **1.16.2** (versionCode 11602) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
@@ -372,6 +372,12 @@ elegida en navegador; se puede perder sin daño.
 - **Deezer ya no da artistas relacionados** → ListenBrainz. **LRCLIB** a veces da 5xx →
   reintento + consulta directa desde el móvil. **Gemini** da 503 a veces → reintento y modelos
   de respaldo.
+- **Un fallo de lectura NUNCA debe poner a sonar** una platina que está en pausa: al abrir la
+  app la última canción se deja «preparada» (`restoreMusicSession` → `prepareTrack`, sin
+  `play()`), y si esa carga fallaba (`PIPELINE_ERROR_READ`) la recuperación hacía `play()` y la
+  música arrancaba sola (visto en el registro del 03-11, `t=271.1` sin «▶ desde Android»).
+  `musicTrackFailed` ahora sale sin tocar nada si `a.paused` y no hay interrupción. **Cualquier
+  recuperación nueva debe respetar eso.**
 - **Una sola pestaña activa**: `rvVistaExclusiva('viewFav'|'viewSearch'|'viewPodcasts'|'viewMusic')`
   (en `app.js`) desactiva las demás SIEMPRE. Antes cada `switchTo*`/`cambiarVista` activaba la
   suya y desactivaba unas cuantas a mano; si Radios se reactivaba al arrancar (o al volver de

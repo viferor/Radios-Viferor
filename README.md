@@ -1,6 +1,22 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.30.0 — La música ya no se pone a sonar sola al abrir la app
+
+- **Por qué pasaba**: al abrir la app, la última canción se deja **preparada** en el segundo
+  donde ibas, sin sonar. Si al leer ese archivo fallaba algo (`PIPELINE_ERROR_READ`, que es lo
+  que sale en el registro), **la recuperación automática hacía `play()`** y la música empezaba
+  a sonar sola. El registro lo enseñaba claro: error de lectura en `t=271.1` (el segundo
+  guardado) **sin ningún «▶ desde Android»** detrás, y acto seguido «se vuelve a cargar».
+- **Arreglo**: si la platina está **en pausa** (canción solo preparada, o pausada por ti), un
+  fallo de lectura ya **no reproduce nada**: se apunta en el registro («fallo al preparar la
+  canción, sigue en pausa») y se queda quieta. Solo se recupera si de verdad estaba sonando.
+- Además, la canción «preparada» ya no se descarga entera al abrir la app: solo los datos. La
+  copia completa se trae al darle a ▶, así que hay menos lecturas y menos ocasiones de toparse
+  con un archivo problemático.
+- Lo que **sí** sigue sonando solo, porque está activado en Ajustes: «Reanudar al abrir» y
+  «Volver a sonar tras una llamada o aviso».
+
 ## 1.29.9 — La cola (y cualquier pantalla) ya no se parte: una sola pestaña a la vez
 
 - **El fallo**: al abrir la cola, la pantalla salía partida — Radios arriba y la cola en un

@@ -98,10 +98,28 @@
     musicRetry = { id: t1.id, tries: 2, since: Date.now(), pos: 0 }; // sin reintentos
     const fallo = cubo();
     fallo.currentTime = 0; // así tampoco puede «saltar un trozo»
+    fallo.paused = false; // estaba sonando cuando falló la lectura
     musDecks[musicState.deck] = fallo;
     musicTrackFailed(t1, fallo);
     await esperar(300);
     check('tras un fallo sigue con otra canción', musicState.current && musicState.current.id === t2.id, 'suena=' + (musicState.current && musicState.current.id));
+
+    // ---- 8b2. Un fallo de lectura NO pone a sonar una canción que solo estaba «preparada»
+    //           (al abrir la app se deja donde iba, sin darle a ▶).
+    const prep = cubo();
+    prep.paused = true; // preparada, sin sonar
+    prep.currentTime = 271;
+    musicState.current = musicState.tracks[0];
+    musicRetry = { id: '', tries: 0, since: 0, pos: 0 };
+    musDecks[musicState.deck] = prep;
+    const platinaPrevia = musicState.deck;
+    musicTrackFailed(musicState.current, prep);
+    await esperar(300);
+    check(
+      'un fallo al preparar no la pone a sonar',
+      musicState.deck === platinaPrevia && prep.paused && musicRetry.tries === 0,
+      `platina=${musicState.deck}/${platinaPrevia} pausada=${prep.paused} intentos=${musicRetry.tries}`
+    );
 
     // ---- 8c. Un error de DECODIFICAR no se reintenta en el mismo segundo: se salta el trozo
     const antes = musicState.deck;

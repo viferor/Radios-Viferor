@@ -756,12 +756,10 @@ async function prepareTrack(t, pos = 0) {
   if (!a || !t) return;
   musicState.current = t;
   // Aquí solo se deja «preparada» (sin sonar) al abrir la app, así que se carga la dirección
-  // ligera: la copia entera se trae al darle a ▶ (ver musCambiarACopiaEntera).
+  // ligera y solo los datos: la copia entera se trae al darle a ▶ (ver musCambiarACopiaEntera).
   const src = t.src && isAndroidApp() ? t.src : await trackSrc(t);
   if (!src) return;
-  // «auto» (y no «metadata»): el móvil carga por delante mientras suena, y así no se queda
-  // sin datos a mitad de canción, que es lo que producía los microcortes.
-  a.preload = 'auto';
+  a.preload = 'metadata';
   a.src = src;
   // Volver a leer el archivo de verdad: si la dirección es la misma que ya tenía, el
   // navegador no recargaría nada y ni la recuperación ni la vigilancia de reanudar servirían.
@@ -975,6 +973,18 @@ function musicTrackFailed(t, a) {
   // 1 cancelado · 2 red · 3 decodificación · 4 formato no soportado.
   const codigo = a?.error?.code || 0;
   const deDecodificar = codigo === 3 || codigo === 4;
+  // Si la platina está en PAUSA porque la canción solo estaba «preparada» (al abrir la app se
+  // deja donde iba, sin sonar) o porque la has pausado tú, un fallo de lectura NO debe ponerse
+  // a reproducir. Antes sí: la recuperación hacía play() y la música arrancaba sola.
+  if (a && a.paused && !musicInterrupted) {
+    window.logError?.(
+      'MUSIC_AUDIO',
+      'Música: fallo al preparar la canción (sigue en pausa, no se toca)',
+      t?.file || t?.id || '',
+      `t=${(Number(a.currentTime) || 0).toFixed(1)} buf=${buf < 0 ? '?' : buf.toFixed(1)} rs=${a.readyState ?? '?'} codigo=${codigo} tam=${Number(t?.size) || 0}`
+    );
+    return;
+  }
   window.logError?.(
     'MUSIC_AUDIO',
     'No se pudo reproducir ' + (t?.id || ''),
