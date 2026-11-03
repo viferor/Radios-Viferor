@@ -1,6 +1,20 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.29.9 — La cola (y cualquier pantalla) ya no se parte: una sola pestaña a la vez
+
+- **El fallo**: al abrir la cola, la pantalla salía partida — Radios arriba y la cola en un
+  trozo abajo (parecía «a un cuarto de pantalla», y se veía parte de Radios y Podcasts). La
+  causa: cada pestaña se activaba y desactivaba por su cuenta, y **podían quedar dos activas a
+  la vez** (por ejemplo si Radios se reactivaba al arrancar o al volver de otra pantalla); las
+  dos se repartían el alto de la pantalla.
+- **Arreglo**: la visibilidad de las pestañas se decide en un solo sitio (`rvVistaExclusiva`):
+  al activar una se desactivan **siempre** las demás. Además, la pestaña recordada se restaura
+  la última, así que ninguna otra puede volver a ponerse encima.
+- Los botones de acciones con texto largo («Guardar como lista») ya no se salen de la pantalla:
+  se recortan con puntos suspensivos.
+- Afecta a las tres pestañas (Radios, Podcasts y Música usan ahora el mismo cambio de vista).
+
 ## 1.29.8 · APK 1.16.2 — Seguir la cola desde una canción, y el widget arranca la música
 
 - **Tocar una canción de la cola reproduce desde ahí**: lo que venía antes en la cola se

@@ -1925,8 +1925,7 @@ window.backFromMusic = backFromMusic;
 function switchToMusic(fromHistory = false) {
   // Las APK antiguas pedían la pestaña sin argumentos: se ignoran (ver podcast-listas.js).
   if (rvPestanaForzadaPorApkAntigua(arguments.length)) return;
-  ['viewFav', 'viewSearch', 'viewPodcasts'].forEach(id => $m(id)?.classList.remove('active'));
-  $m('viewMusic')?.classList.add('active');
+  rvVistaExclusiva('viewMusic');
   document.body.classList.remove('podcasts-active', 'podcast-detail-active', 'podcast-subs-fullscreen', 'podcast-results-active', 'pod-adding');
   document.body.classList.add('music-active');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.toggle('active', b.id === 'btnViewMusic'));
@@ -4241,12 +4240,16 @@ function initMusic() {
   });
   window.addEventListener('pagehide', saveMusicResume);
   updateMusicPlayerUI();
-  // Por último (y una sola vez): volver a la pestaña donde estabas al abrir la app.
-  try {
-    restaurarPestanaAlAbrir();
-  } catch (e) {
-    window.logError?.('MUSIC_UI', 'No se pudo volver a la última pestaña: ' + (e?.message || e));
-  }
+  // Por último (y una sola vez): volver a la pestaña donde estabas al abrir la app. Se deja
+  // para el final del todo para que ninguna otra parte (por ejemplo el arranque de Radios)
+  // vuelva a poner otra pestaña encima.
+  setTimeout(() => {
+    try {
+      restaurarPestanaAlAbrir();
+    } catch (e) {
+      window.logError?.('MUSIC_UI', 'No se pudo volver a la última pestaña: ' + (e?.message || e));
+    }
+  }, 0);
 }
 
 /* ===========================================================================

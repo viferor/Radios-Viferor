@@ -15,3 +15,5 @@ tests/smoke/test.html
 tests/smoke/dump.html
 tests/smoke/dump.err
 tests/smoke/out.html
+tests/smoke/shot.html
+tests/smoke/captura*.png

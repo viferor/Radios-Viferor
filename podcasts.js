@@ -1755,14 +1755,8 @@ function importPodcastOPML(ev) {
 function switchToPodcasts(desdeLaWeb = false) {
   // Las APK antiguas pedían la pestaña sin argumentos: se ignoran (ver podcast-listas.js).
   if (rvPestanaForzadaPorApkAntigua(arguments.length)) return;
-  const fav = document.getElementById('viewFav'),
-    search = document.getElementById('viewSearch'),
-    pods = document.getElementById('viewPodcasts'),
-    btn = $p('btnViewPodcasts');
-  fav?.classList.remove('active');
-  search?.classList.remove('active');
-  pods?.classList.add('active');
-  document.getElementById('viewMusic')?.classList.remove('active');
+  const btn = $p('btnViewPodcasts');
+  rvVistaExclusiva('viewPodcasts');
   document.body.classList.remove('music-active', 'mus-detail');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
@@ -1777,15 +1771,9 @@ function switchToRadios(desdeLaWeb = false) {
     'podcast-subs-fullscreen',
     'podcast-results-active'
   );
-  const pods = document.getElementById('viewPodcasts'),
-    search = document.getElementById('viewSearch'),
-    fav = document.getElementById('viewFav'),
-    btn = $p('btnViewRadios');
-  pods?.classList.remove('active');
-  search?.classList.remove('active');
-  document.getElementById('viewMusic')?.classList.remove('active');
+  const btn = $p('btnViewRadios');
+  rvVistaExclusiva('viewFav');
   document.body.classList.remove('music-active', 'mus-detail');
-  fav?.classList.add('active');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
   btn?.classList.add('active');
   if (typeof renderFavoritas === 'function') renderFavoritas();

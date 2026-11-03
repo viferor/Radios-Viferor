@@ -593,6 +593,17 @@ function configurarGestoRadiosPodcasts() {
   );
 }
 
+/* Solo se ve UNA pestaña a la vez. Antes cada pestaña se activaba por su cuenta y, si algo
+   llamaba a cambiarVista('fav') con Música abierta (por ejemplo al arrancar), las dos
+   quedaban «active»: la pantalla se partía y se veía Radios arriba y la música/la cola en un
+   trozo abajo. Ahora se desactivan todas las demás siempre. */
+function rvVistaExclusiva(id) {
+  ['viewFav', 'viewSearch', 'viewPodcasts', 'viewMusic'].forEach(x => {
+    if (x !== id) document.getElementById(x)?.classList.remove('active');
+  });
+  if (id) document.getElementById(id)?.classList.add('active');
+}
+
 function cambiarVista(v) {
   currentView = v;
   if (v === 'fav' || v === 'search') {
@@ -603,10 +614,7 @@ function cambiarVista(v) {
       'podcast-results-active'
     );
   }
-  const fav = document.getElementById('viewFav'),
-    search = document.getElementById('viewSearch');
-  fav?.classList.toggle('active', v === 'fav');
-  search?.classList.toggle('active', v === 'search');
+  rvVistaExclusiva(v === 'search' ? 'viewSearch' : 'viewFav');
   document.getElementById('btnViewRadios')?.classList.toggle('active', v === 'fav' || v === 'search');
   if (v === 'fav') renderFavoritas();
   else if (loadedStations.length) renderSearch();

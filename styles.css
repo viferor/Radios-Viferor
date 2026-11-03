@@ -1320,7 +1320,7 @@ body{height:100%;height:100dvh;min-height:0}
 .pod-list-h{font-size:.8rem;font-weight:800;color:#55606a;margin:14px 2px 7px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .pod-list-h small{font-weight:600;color:#8a949d;font-size:.7rem}
 .pod-list-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
-.pod-list-actions button{flex:1 1 auto;border:1px solid #d8dde2;background:#fff;color:var(--text);border-radius:10px;padding:9px 10px;font-weight:800;font-size:.78rem;cursor:pointer;white-space:nowrap}
+.pod-list-actions button{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;border:1px solid #d8dde2;background:#fff;color:var(--text);border-radius:10px;padding:9px 10px;font-weight:800;font-size:.78rem;cursor:pointer;white-space:nowrap}
 .pod-list-actions button.primary{background:var(--primary);border-color:var(--primary);color:#fff}
 .pod-list-actions button.danger{color:#c62828}
 .pod-list-actions button:disabled{opacity:.45;cursor:default}

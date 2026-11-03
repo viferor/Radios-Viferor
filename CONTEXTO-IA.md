@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.29.8** (compilación 12980) · APK
+> **Estado de referencia (todo funcionando):** web **1.29.9** (compilación 12990) · APK
 > **1.16.2** (versionCode 11602) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
@@ -372,6 +372,13 @@ elegida en navegador; se puede perder sin daño.
 - **Deezer ya no da artistas relacionados** → ListenBrainz. **LRCLIB** a veces da 5xx →
   reintento + consulta directa desde el móvil. **Gemini** da 503 a veces → reintento y modelos
   de respaldo.
+- **Una sola pestaña activa**: `rvVistaExclusiva('viewFav'|'viewSearch'|'viewPodcasts'|'viewMusic')`
+  (en `app.js`) desactiva las demás SIEMPRE. Antes cada `switchTo*`/`cambiarVista` activaba la
+  suya y desactivaba unas cuantas a mano; si Radios se reactivaba al arrancar (o al volver de
+  otra pantalla) quedaban **dos vistas activas** y la pantalla se partía (Radios arriba, Música
+  o la cola en un trozo abajo). **Cualquier vista nueva debe activarse con `rvVistaExclusiva`.**
+  La pestaña recordada se restaura al final de todo (`setTimeout(...,0)` en `initMusic`) para
+  que ninguna otra se ponga encima después.
 - **Gestos**: deslizar la carátula ← = siguiente, → = anterior; **tocar la carátula** abre la
   cola o la lista que está sonando (`musAbrirListaSonando()`); la letra está en su botón
   «🎤 Letra» del reproductor ampliado. Deslizar en la pantalla principal ← = pestaña de la
@@ -414,8 +421,20 @@ reproduce desde ahí y descarta lo anterior (`playQueueFrom`); en las **listas**
 app** y reproduce (antes no hacía nada con la app cerrada). Comprobar que abre y arranca, y que
 al cerrar la app el widget vuelve a mostrar ▶ y desaparece la notificación.
 
+**1.29.9 — sin verificar en el móvil**: la cola (y cualquier pantalla) salía partida porque
+podían quedar **dos vistas activas** a la vez (Radios arriba + Música/cola abajo). Arreglado con
+`rvVistaExclusiva`. Comprobar en el móvil que al abrir la cola se ve a pantalla completa y que
+no se cuela nada de Radios/Podcasts. Para verlo sin el móvil: `tests/smoke/shot.ps1` saca
+capturas de la cola, una lista, el reproductor y la cola de podcasts.
+
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.
+
+**Pendiente de decidir (importante)**: el usuario quiere que el **widget reproduzca sin abrir
+la app**. Con el reproductor actual (dentro del WebView) es imposible: sin pantalla no hay
+WebView. Lo único que hace hoy es abrir la app y empezar a sonar. La alternativa real es un
+**motor nativo** (MediaPlayer/ExoPlayer) en `MediaPlaybackService` para radio y podcasts
+(fáciles), y para música haría falta rehacer el ecualizador/AutoEq en nativo (peor calidad).
 
 ---
 

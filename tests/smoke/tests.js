@@ -261,7 +261,19 @@
       `suena=${musicState.current && musicState.current.id} cola=${musicState.queue.map(t => t.id).join()}`
     );
 
-    // ---- 16. El registro de errores no tiene fallos de JavaScript
+    // ---- 16. La cola se ve a pantalla completa (no a un cuarto) y no se mezcla con otra pestaña
+    document.getElementById('musMiniOpen').click(); // abrir el reproductor ampliado
+    await esperar(80);
+    document.getElementById('musExpQueue').click(); // y desde ahí, la cola
+    await esperar(150);
+    const vMusic = document.getElementById('viewMusic').getBoundingClientRect();
+    const vCont = document.getElementById('musicContent').getBoundingClientRect();
+    const alto = window.innerHeight;
+    check('la cola ocupa la pantalla', vCont.height > alto * 0.5 && vMusic.height > alto * 0.5, `view=${Math.round(vMusic.height)} content=${Math.round(vCont.height)} pantalla=${alto}`);
+    check('el reproductor ampliado se cierra al abrir la cola', document.getElementById('musExpanded').hidden);
+    check('sin restos de Podcasts en el fondo', !document.body.classList.contains('podcast-detail-active') && !document.body.classList.contains('podcasts-active'), document.body.className);
+
+    // ---- 17. El registro de errores no tiene fallos de JavaScript
     const errs = (JSON.parse(localStorage.getItem('radios_viferor_error_log_v1') || '[]') || []).filter(x => x.type === 'error');
     check('sin errores de JavaScript', errs.length === 0, JSON.stringify(errs.slice(0, 2)));
   } catch (e) {
