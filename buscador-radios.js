@@ -192,6 +192,9 @@
       ambit: /deportivas/
     },
     autonomica: { nets: ['canal sur'], re: AUTONOMICAS, ambit: null },
+    // 💎 Alta calidad: las emisoras FLAC de stations-data.js (tag «hifi») y las de
+    // radio-browser que lo dicen en el nombre.
+    hifi: { nets: [], re: /\b(hifi|flac|lossless)\b/, ambit: null },
     tematica: {
       nets: [],
       re: /\b(infantil|ninos|babyradio|antenita|cuentos|nanas|religion|catolica|radio maria|esperanza|evangelica|clasica|cultura|cultural|flamenco|jazz|poesia)\b/,

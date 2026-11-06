@@ -1695,3 +1695,9 @@ html.dark-mode .fx-out-item{border-color:#353c44}
 html.dark-mode .mus-edit-tools button{background:#11151a;color:#f5f7f9;border-color:#353c44}
 html.dark-mode .mus-edit-tags{border-color:#353c44}
 html.dark-mode .mus-edit-file b{color:#aab2ba}
+
+/* 1.31.0 — 💎 Alta calidad: botón junto a «Buscar emisoras» */
+.radio-home-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+#btnRadioHifi{border-color:#b9a3e3;background:#f5f0ff;color:#4b2a8a}
+html.dark-mode #btnRadioHifi{background:#2a2238;border-color:#5b4a80;color:#dccfff}
+@media(max-width:420px){.radio-home-toolbar button{padding:7px 8px;font-size:.82rem}}

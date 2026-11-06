@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.30.0** (compilación 13000) · APK
+> **Estado de referencia (todo funcionando):** web **1.31.0** (compilación 13100) · APK
 > **1.16.2** (versionCode 11602) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
@@ -113,7 +113,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 | `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
 | `version.js` | Única fuente de versión (`window.RV_VERSION`). No editar a mano: usar `scripts/version.mjs`. |
 | `diagnostics.js` | Registro de errores (localStorage, agrupa repetidos ×N, errores de `<audio>`, envuelve `fetch`), `window.logError`, menú de ajustes (actualizar, «Reanudar al abrir», «Volver a sonar tras llamada o aviso»). |
-| `stations-data.js` | Catálogo local de emisoras (respaldo). |
+| `stations-data.js` | Catálogo local de emisoras (respaldo) + `RADIO_STATIONS_HIFI`: las de «💎 Alta calidad» (FLAC https con respaldo AAC, tag `hifi`). En `app.js`: `fuentesSegunRed` quita el FLAC con datos móviles si está activado «solo con Wi-Fi». |
 | `buscador-radios.js` | Buscador de emisoras (provincias, comunidades, cadenas, tipos). |
 | `app.js` | **Radios**: catálogo, favoritas (`mis_radios_favoritas_v1`), reproducción (`reproducirRadio`, `intentarFuente`, HLS, reconexión, vigilancia de cortes), «Ahora suena», EPG, interrupciones del sistema (`rvPausaDelUsuario`, `rvInterrupcionPaso`, `rvAnotar`), gesto de deslizar entre pestañas, backup completo, tema. |
 | `podcasts.js` | **Podcasts**: estado `podcastState`, suscripciones, búsqueda, feeds, episodios, reproductor (`podcastAudio`), progreso/reanudar, cola v2, `restoreLastPlayback` («Reanudar al abrir»), puentes `viferorNativePodcast*`, atrás de Android `handleAndroidBack`. |
@@ -276,7 +276,8 @@ el servicio, quita la notificación y deja el widget en «reproducir».
 
 `localStorage` (todo entra en «💾 Backup completo de la aplicación» de Ajustes):
 
-- Radios: `mis_radios_favoritas_v1`, `radio_espana_logos_v1`, `radio_resume_state`.
+- Radios: `mis_radios_favoritas_v1`, `radio_espana_logos_v1`, `radio_resume_state`,
+  `radios_viferor_hifi_wifi_only` (💎 FLAC solo con Wi-Fi; `'0'` = también con datos).
 - General: `radios_viferor_playback_resume_v1`, `radios_viferor_autoresume`,
   `radios_viferor_resume_after_interrupt`, `radios_viferor_theme`, `radios_viferor_error_log_v1`,
   `radios_viferor_last_tab_v1` (última pestaña: `radios`/`podcasts`/`music`).

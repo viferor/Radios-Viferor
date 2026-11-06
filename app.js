@@ -212,6 +212,7 @@ let metadataTimer = null;
 let programTimer = null;
 let logoCache = {};
 let currentStreamUrl = '';
+let currentStreamFormat = '';
 let previousVolume = 0.8;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -630,6 +631,46 @@ function fuentesLocales(s) {
   const seen = new Set();
   return out.filter(o => o?.url && /^https?:\/\//i.test(o.url) && !seen.has(o.url) && seen.add(o.url));
 }
+// --- 💎 Alta calidad (FLAC) -------------------------------------------------------
+// «FLAC solo con Wi-Fi» (activado por defecto): con datos móviles el FLAC gasta
+// ~600 MB/h, así que se quitan las fuentes sin pérdida y suena la AAC de respaldo.
+// Si la emisora no tiene otra fuente, se deja el FLAC (mejor eso que no sonar).
+const HIFI_WIFI_KEY = 'radios_viferor_hifi_wifi_only';
+function esFuenteFlac(f) {
+  return /^flac/i.test(String(f?.format || '')) || /\.flac(?:$|\?)|[-/]flac(?:$|\?|\/)/i.test(String(f?.url || ''));
+}
+function hifiSoloWifi() {
+  try {
+    return localStorage.getItem(HIFI_WIFI_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+function conDatosMoviles() {
+  // navigator.connection existe en el WebView de Android; si no se sabe, se da por Wi-Fi.
+  const c = navigator.connection;
+  return !!c && c.type === 'cellular';
+}
+function fuentesSegunRed(fuentes) {
+  if (!hifiSoloWifi() || !conDatosMoviles()) return fuentes;
+  const conPerdida = fuentes.filter(f => !esFuenteFlac(f));
+  return conPerdida.length ? conPerdida : fuentes;
+}
+function textoHifiWifi() {
+  const b = document.getElementById('btnHifiWifi');
+  if (b) b.textContent = hifiSoloWifi() ? '💎 Radio FLAC solo con Wi-Fi: sí' : '💎 Radio FLAC también con datos: sí';
+}
+function abrirAltaCalidad() {
+  document.getElementById('selectNetwork').value = '';
+  document.getElementById('selectLocation').value = '';
+  document.getElementById('textSearch').value = '';
+  document.getElementById('selectType').value = 'hifi';
+  cambiarVista('search');
+  aplicarFiltros();
+}
+function textoEnDirecto() {
+  return 'En directo ✅' + (currentStreamUrl && esFuenteFlac({ url: currentStreamUrl, format: currentStreamFormat }) ? ' · 💎 FLAC' : '');
+}
 async function resolveRemote(s) {
   try {
     const p = new URLSearchParams({
@@ -975,6 +1016,7 @@ async function reproducirRadio(s, opciones = {}) {
     : 'Conectando... ⏳';
   actualizarCancion('🎵 Buscando información…');
   currentStreamUrl = '';
+  currentStreamFormat = '';
   try {
     let fuentes = Array.isArray(s.options) ? fuentesLocales(s) : [];
     if (!fuentes.length || !s.url) {
@@ -991,6 +1033,7 @@ async function reproducirRadio(s, opciones = {}) {
       }
       fuentes = fuentesLocales(s);
     }
+    fuentes = fuentesSegunRed(fuentes);
     if (!fuentes.length) {
       statusEl.textContent = '❌ Sin stream disponible';
       actualizarCancion('🎵 Emisión no disponible');
@@ -1008,6 +1051,7 @@ async function reproducirRadio(s, opciones = {}) {
           return;
         }
         currentStreamUrl = f.url;
+        currentStreamFormat = f.format || '';
         reconnectAttempts = 0;
         radioWasPlaying = true;
         startRadioWatchdog(token);
@@ -1022,7 +1066,7 @@ async function reproducirRadio(s, opciones = {}) {
           );
         } catch {}
         saveRadioResume(true);
-        statusEl.textContent = 'En directo ✅';
+        statusEl.textContent = textoEnDirecto();
         actualizarCancion('🎵 En directo');
         startRadioPolling(s, f.url);
         return;
@@ -1763,7 +1807,7 @@ function init() {
     radioWasPlaying = true;
     radioUserPaused = false;
     clearTimeout(reconnectTimer);
-    statusEl.textContent = 'En directo ✅';
+    statusEl.textContent = textoEnDirecto();
     startRadioWatchdog(radioToken);
     startRadioPolling(currentStation, currentStreamUrl || audio.currentSrc);
     saveRadioResume(true);
@@ -1836,10 +1880,18 @@ function init() {
       }
     });
   rellenarSelectoresRadio();
-  stations = (window.RADIO_STATIONS || []).map(s => ({ ...s, stationuuid: s.stationuuid || s.uuid }));
+  stations = [...(window.RADIO_STATIONS || []), ...(window.RADIO_STATIONS_HIFI || [])].map(s => ({ ...s, stationuuid: s.stationuuid || s.uuid }));
   loadFavorites();
   document.getElementById('btnViewRadios').addEventListener('click', () => cambiarVista('fav'));
   document.getElementById('btnRadioSearch').addEventListener('click', () => cambiarVista('search'));
+  document.getElementById('btnRadioHifi')?.addEventListener('click', abrirAltaCalidad);
+  textoHifiWifi();
+  document.getElementById('btnHifiWifi')?.addEventListener('click', () => {
+    try {
+      localStorage.setItem(HIFI_WIFI_KEY, hifiSoloWifi() ? '0' : '1');
+    } catch {}
+    textoHifiWifi();
+  });
   document.getElementById('btnBackToRadios').addEventListener('click', () => cambiarVista('fav'));
   document.getElementById('btnExportar').addEventListener('click', exportarFavoritas);
   document.getElementById('fileImportar').addEventListener('change', importarFavoritas);

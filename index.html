@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#d32f2f" />
 <script>try{if(localStorage.getItem('radios_viferor_theme')==='dark')document.documentElement.classList.add('dark-mode')}catch(e){}</script>
 <title>Radios Viferor</title>
-<link rel="stylesheet" href="styles.css?v=13000" />
+<link rel="stylesheet" href="styles.css?v=13100" />
 </head>
 <body>
 <header class="app-header">
@@ -29,6 +29,7 @@
   <button id="btnNotifications" type="button">🔔 Notificaciones: comprobar</button>
   <button id="btnAutoResume" type="button">⏸️ Reanudar al abrir: no</button>
   <button id="btnResumeAfter" type="button">🔁 Volver a sonar tras una llamada o aviso: sí</button>
+  <button id="btnHifiWifi" type="button">💎 Radio FLAC solo con Wi-Fi: sí</button>
   <button id="btnApplyUpdate" type="button" hidden>♻️ Aplicar actualización</button>
 </div>
 </header>
@@ -36,7 +37,10 @@
 <section class="view view-fav active" id="viewFav">
 <div class="radio-home-toolbar">
   <strong>📻 Mis radios</strong>
-  <button id="btnRadioSearch" type="button">🔎 Buscar emisoras</button>
+  <span class="radio-home-actions">
+    <button id="btnRadioHifi" type="button" title="Emisoras de música sin pérdida (FLAC)">💎 Alta calidad</button>
+    <button id="btnRadioSearch" type="button">🔎 Buscar emisoras</button>
+  </span>
 </div>
 <div class="fav-actions">
 <button class="backup-btn" id="btnExportar" type="button">💾 Guardar</button>
@@ -68,6 +72,7 @@
 <select id="selectType" title="Tipo">
 <option value="">🏷️ Tipo</option>
 <option value="musical">🎵 Musical</option>
+<option value="hifi">💎 Alta calidad (FLAC)</option>
 <option value="informativa">📰 Informativa</option>
 <option value="deportiva">⚽ Deportiva</option>
 <option value="autonomica">🏛️ Autonómica</option>
@@ -239,16 +244,16 @@
   </div>
 </div>
 
-<script src="version.js?v=13000"></script>
+<script src="version.js?v=13100"></script>
 <script src="vendor/hls.min.js"></script>
-<script src="stations-data.js?v=13000"></script>
-<script src="buscador-radios.js?v=13000"></script>
-<script src="app.js?v=13000"></script>
-<script src="podcasts.js?v=13000"></script>
-<script src="podcast-listas.js?v=13000"></script>
-<script src="musica.js?v=13000"></script>
-<script src="letras.js?v=13000"></script>
-<script src="ecualizador.js?v=13000"></script>
-<script src="diagnostics.js?v=13000"></script>
+<script src="stations-data.js?v=13100"></script>
+<script src="buscador-radios.js?v=13100"></script>
+<script src="app.js?v=13100"></script>
+<script src="podcasts.js?v=13100"></script>
+<script src="podcast-listas.js?v=13100"></script>
+<script src="musica.js?v=13100"></script>
+<script src="letras.js?v=13100"></script>
+<script src="ecualizador.js?v=13100"></script>
+<script src="diagnostics.js?v=13100"></script>
 </body>
 </html>

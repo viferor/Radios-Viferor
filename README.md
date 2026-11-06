@@ -1,6 +1,23 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.31.0 — Radios: nueva sección «💎 Alta calidad» (FLAC sin pérdida)
+
+- **Botón «💎 Alta calidad»** en Mis radios (junto a «Buscar emisoras») y nuevo tipo
+  «💎 Alta calidad (FLAC)» en el buscador. Abre 13 emisoras de música que emiten **sin
+  pérdida** (calidad CD): Radio Paradise (Main, Mellow, Rock y Global), Naim Radio / Jazz /
+  Classical, ČRo Vltava / D-dur / Jazz, Sveriges Radio P2, SomaFM Groove Salad y JB Radio2.
+  También salen en el tipo «Musical» y se pueden guardar en favoritas como cualquier otra.
+- La lista se ha sacado de audiophile.fm, pero se usan las **direcciones oficiales** de
+  cada emisora y solo las **https** (la app Android bloquea las http; por eso no están, por
+  ejemplo, Radio 90FM Valencia ni Radio Blues Flac).
+- Cada emisora tiene **respaldo AAC (160-320 kbps)**: si el FLAC no arranca, suena la AAC.
+  Cuando suena el FLAC, el reproductor pone «En directo ✅ · 💎 FLAC».
+- **Ajustes → «💎 Radio FLAC solo con Wi-Fi»** (activado): con datos móviles se usa la AAC,
+  porque el FLAC gasta unos 600 MB por hora. Tócalo para permitir FLAC también con datos.
+  Clave nueva en localStorage: `radios_viferor_hifi_wifi_only` (`'0'` = también con datos).
+- Pruebas: `tests/test_hifi.py` (12).
+
 ## 1.30.0 — La música ya no se pone a sonar sola al abrir la app
 
 - **Por qué pasaba**: al abrir la app, la última canción se deja **preparada** en el segundo
