@@ -55,7 +55,6 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
     hifi('hifi-lapfox', 'LapFox Radio', 'EE. UU. · FLAC', 'electrónica', 'lapfoxradio.com', 'https://radio.lapfoxradio.com/radio/8000/stream-flac.flac', ['https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg'], '-'),
     hifi('hifi-distorsion', 'Distorsión FM', 'Chile · FLAC', 'rock,jazz', 'distorsion.fm', 'https://radioemisoras.cl/distorsion.flac'),
     hifi('hifi-djam', 'Djam Radio', 'Francia · FLAC', 'ecléctica,soul,jazz,world', 'djam.radio', 'https://stream10.xdevel.com/audio15s976748-2280/stream/icecast.audio'),
-    hifi('hifi-radio20', 'Radio 2.0', 'Italia · FLAC', 'pop,rock', 'radioduepuntozero.it', 'https://vps.radioduepuntozero.it/stream.ogg'),
-    hifi('hifi-kuat', 'Classical 90.5 (KUAT)', 'EE. UU. · FLAC', 'clásica,classical', 'azpm.org', 'https://hls.azpm.org/t-fmp4/FLAC/KUAT_FLAC.m3u8')
+    hifi('hifi-radio20', 'Radio 2.0', 'Italia · FLAC', 'pop,rock', 'radioduepuntozero.it', 'https://vps.radioduepuntozero.it/stream.ogg')
   ];
 })();

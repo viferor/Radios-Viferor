@@ -43,7 +43,11 @@ const JUNK = /\b(publicidad|anuncio|anuncios|advert|commercial|cuña|cunas|jingl
 // Separa «Artista - Título». Devuelve null si el texto no parece una canción
 // (vacío, el nombre de la emisora, publicidad…).
 export function parseSong(raw, ...stationNames) {
-  let s = clean(raw).replace(/^["'«]+|["'»]+$/g, '');
+  // Sin comillas ni guiones sueltos al principio o al final («Taktovka - »).
+  let s = clean(raw)
+    .replace(/^["'«]+|["'»]+$/g, '')
+    .replace(/^(?:\s*[-–—]\s*)+|(?:\s*[-–—]\s*)+$/g, '')
+    .trim();
   if (!s || s.length < 3 || /^[-\s.]+$/.test(s) || JUNK.test(s)) return null;
   const n = normText(s);
   for (const st of stationNames) {
@@ -228,6 +232,16 @@ async function azuracastSong(streamUrl) {
     title = clean(song.title);
   return { song: artist && title ? `${artist} - ${title}` : clean(song.text), source: 'azuracast', cover: /^https:/.test(song.art || '') ? song.art : '' };
 }
+async function textFrom(url, ms = 3000) {
+  const r = await safeFetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 RadiosViferor/metadata' } }, { timeoutMs: ms });
+  if (!r.ok) {
+    try {
+      await r.body?.cancel();
+    } catch {}
+    throw new Error('HTTP ' + r.status);
+  }
+  return decodeLatin1(await readLimited(r, 200_000));
+}
 async function shoutcastSong(streamUrl) {
   const u = new URL(streamUrl);
   const d = await jsonFrom(u.origin + '/stats?sid=1&json=1');
@@ -235,10 +249,26 @@ async function shoutcastSong(streamUrl) {
   if (!t) throw new Error('sin título');
   return { song: t, source: 'shoutcast' };
 }
+// Shoutcast antiguo (v1) y servidores que imitan su /7.html o /currentsong.
+async function shoutcastV1Song(streamUrl) {
+  const u = new URL(streamUrl);
+  const html = await textFrom(u.origin + '/7.html');
+  const body = clean(html.replace(/<[^>]*>/g, ' '));
+  const parts = body.split(',');
+  const t = clean(parts.length >= 7 ? parts.slice(6).join(',') : '');
+  if (!t) throw new Error('sin título');
+  return { song: t, source: 'shoutcast' };
+}
+async function currentSong(streamUrl) {
+  const u = new URL(streamUrl);
+  const t = clean((await textFrom(u.origin + '/currentsong?sid=1')).replace(/<[^>]*>/g, ' '));
+  if (!t || t.length > 300 || /<|html|not found|error/i.test(t)) throw new Error('sin título');
+  return { song: t, source: 'shoutcast' };
+}
 export async function serverSong(urls) {
   const tries = [];
   for (const u of [...new Set(urls.filter(x => /^https?:\/\//i.test(x || '') && !/\.m3u8(?:$|\?)/i.test(x)))])
-    tries.push(icecastSong(u), azuracastSong(u), shoutcastSong(u));
+    tries.push(icecastSong(u), azuracastSong(u), shoutcastSong(u), shoutcastV1Song(u), currentSong(u));
   if (!tries.length) return null;
   try {
     return await Promise.any(tries);
@@ -329,8 +359,9 @@ export default async function handler(req, res) {
         serverCover = sv.cover || '';
       }
     }
-    // 3) Último recurso: radio-browser.
-    if (!out.song) {
+    // 3) Último recurso: radio-browser (solo emisoras españolas; las de Alta calidad,
+    //    que llegan con «alt», no: allí no están y solo hacía esperar).
+    if (!out.song && !alt) {
       const rb = await radioBrowserSong(name, state, req.query?.stationuuid || '', url);
       if (rb) {
         out.song = rb.song;

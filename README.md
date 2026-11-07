@@ -1,6 +1,14 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.33.1 — 💎 Alta calidad: arreglos tras el comprobador (16/20 → más)
+
+- Sin guiones sueltos en el título («Taktovka - » → «Taktovka»; pasaba en ČRo Vltava y D-dur).
+- «Ahora suena» también desde Shoutcast antiguo (`/7.html`, `/currentsong`), para JB Radio2 y similares.
+- Las emisoras de Alta calidad ya no esperan a radio-browser (solo tiene las españolas):
+  Radio 2.0 se quedaba en «tarda demasiado».
+- Fuera Classical 90.5 (KUAT): su stream no arrancaba (19 emisoras).
+
 ## 1.33.0 — 💎 Alta calidad: «ahora suena» en más emisoras + comprobador
 
 - **Más emisoras con canción y artista.** Si el stream no lleva el título dentro (los FLAC
