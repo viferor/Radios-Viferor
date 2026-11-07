@@ -20,9 +20,14 @@ def route(r):
     u = r.request.url
     if u.startswith(BASE + '/api/'):
         if '/api/stations' in u: return r.fulfill(status=503, body='no')
+        if '/api/metadata' in u:
+            state.setdefault('meta', []).append(u)
+            return r.fulfill(json={'song': 'Artista Prueba - Canción Prueba', 'artist': 'Artista Prueba', 'track': 'Canción Prueba', 'cover': ''})
         return r.fulfill(json={})
     if u.startswith(BASE): return r.continue_()
-    if 'radioparadise.com' in u or 'live-streams.nl' in u:
+    if 'google.com/s2/favicons' in u:
+        return r.fulfill(body=open(os.path.join(HERE, 'art0.png'), 'rb').read(), headers={'content-type': 'image/png'})
+    if 'radioparadise.com' in u or 'live-streams.nl' in u or 'radioemisoras.cl' in u or 'torontocast.com' in u:
         state['streams'].append(u)
         if state['flac_fail'] and ('flac' in u.lower()):
             return r.fulfill(status=404, body='x')
@@ -50,13 +55,29 @@ with sync_playwright() as p:
     pg.screenshot(path=os.path.join(SHOTS, 'hifi_home.png'))
     pg.click('#btnRadioHifi'); pg.wait_for_timeout(500)
     n = pg.locator('#stationsGrid .station-card').count()
-    ok('abre la búsqueda con 13 emisoras FLAC (%d)' % n, n == 13)
+    ok('abre la búsqueda con 20 emisoras FLAC (%d)' % n, n == 20)
+    ok('las emisoras llevan logo', pg.locator('#stationsGrid .station-card img').count() >= 20)
     ok('filtro Tipo = Alta calidad en los chips', 'Alta calidad' in pg.locator('#activeFilters').inner_text())
     pg.screenshot(path=os.path.join(SHOTS, 'hifi_lista.png'))
     pg.locator('#stationsGrid .station-card', has_text='Main Mix').first.click()
     pg.wait_for_timeout(1500)
     st = pg.locator('#status').inner_text() if pg.locator('#status').count() else pg.evaluate('statusEl.textContent')
     ok('suena el FLAC y lo indica (%s)' % st, 'FLAC' in st and state['streams'][-1].endswith('/flac'))
+    pg.wait_for_timeout(800)
+    m = [x for x in state.get('meta', []) if 'Paradise' in x]
+    ok('pide «ahora suena» a la API de Radio Paradise (meta=rp:0)', m and 'meta=rp%3A0' in m[-1] and 'aac-320' in m[-1])
+    ok('muestra artista y canción', 'Artista Prueba' in pg.evaluate('document.body.innerText'))
+    # JB Radio2: FLAC caído -> MP3
+    state['flac_fail'] = True; state['streams'].clear()
+    pg.locator('#stationsGrid .station-card', has_text='JB Radio2').first.click()
+    pg.wait_for_timeout(2000)
+    ok('JB Radio2 sin FLAC suena por el MP3 (%s)' % state['streams'][-1:], state['streams'] and state['streams'][-1].endswith(':8076/mp3'))
+    state['flac_fail'] = False
+    # Emisora sin API ni stream con pérdida: no se pregunta y lo dice
+    state['meta'] = []
+    pg.locator('#stationsGrid .station-card', has_text='Distorsión FM').first.click()
+    pg.wait_for_timeout(1500)
+    ok('Distorsión FM: no pide metadatos y avisa', not state['meta'] and 'no informa de la canción' in pg.evaluate('document.body.innerText'))
     # FLAC caído -> AAC de respaldo
     state['flac_fail'] = True; state['streams'].clear()
     pg.locator('#stationsGrid .station-card', has_text='Naim Jazz').first.click()

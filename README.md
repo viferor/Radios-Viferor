@@ -1,6 +1,21 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.32.0 — 💎 Alta calidad: canción y artista, logos, JB Radio2 y 7 emisoras más
+
+- **«Ahora suena» en las emisoras FLAC.** El FLAC no lleva el título dentro, así que ahora
+  se pide a la API de cada emisora: Radio Paradise (con su carátula), SomaFM, Sveriges Radio
+  P2 y Český rozhlas. Naim, JB Radio2 y Pure Lounge lo dan en su stream con pérdida
+  (AAC/MP3), y se lee de ahí aunque estés escuchando el FLAC. Las que no informan de nada
+  (Distorsión FM, Djam, Radio 2.0, KUAT, LapFox) lo dicen: «Esta emisora no informa de la canción».
+- **Logos**: todas las emisoras de Alta calidad llevan el icono de su web.
+- **JB Radio2** ya no se queda en «Ninguna fuente disponible»: su FLAC va y viene, y detrás
+  tiene ahora MP3 320 y AAC 320 de respaldo.
+- **7 emisoras nuevas** (20 en total): SomaFM Groove Salad sin procesar, Pure Lounge Radio,
+  LapFox Radio, Distorsión FM, Djam Radio, Radio 2.0 y Classical 90.5 (KUAT).
+- `/api/metadata` admite `meta=rp:N|soma:id|sr:id|cro:id` (solo esas APIs fijas).
+- Pruebas: `tests/test_hifi.py` (17).
+
 ## 1.31.0 — Radios: nueva sección «💎 Alta calidad» (FLAC sin pérdida)
 
 - **Botón «💎 Alta calidad»** en Mis radios (junto a «Buscar emisoras») y nuevo tipo

@@ -134,6 +134,49 @@ async function radioBrowserSong(name, state, stationuuid, url) {
   }
   return null;
 }
+// «Ahora suena» de emisoras cuyo stream FLAC no lleva el título dentro: se pide a la
+// API pública de cada emisora. Solo estas direcciones fijas (no es un proxy abierto).
+async function getJson(url) {
+  const r = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'RadiosViferor/metadata' },
+    signal: AbortSignal.timeout(4500)
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+export async function providerSong(meta) {
+  const m = String(meta || '').match(/^(rp|soma|sr|cro):([\w-]{1,40})$/);
+  if (!m) return null;
+  const [, kind, id] = m;
+  let artist = '',
+    title = '',
+    cover = '';
+  if (kind === 'rp') {
+    const d = await getJson('https://api.radioparadise.com/api/now_playing?chan=' + encodeURIComponent(id));
+    artist = d?.artist;
+    title = d?.title;
+    cover = d?.cover || '';
+  } else if (kind === 'soma') {
+    const d = await getJson('https://somafm.com/songs/' + encodeURIComponent(id) + '.json');
+    const x = d?.songs?.[0];
+    artist = x?.artist;
+    title = x?.title;
+  } else if (kind === 'sr') {
+    const d = await getJson('https://api.sr.se/api/v2/playlists/rightnow?format=json&channelid=' + encodeURIComponent(id));
+    const x = d?.playlist?.song;
+    artist = x?.artist;
+    title = x?.title;
+  } else if (kind === 'cro') {
+    const d = await getJson('https://api.rozhlas.cz/data/v2/playlist/now/' + encodeURIComponent(id) + '.json');
+    const x = d?.data || {};
+    artist = x.interpret || x.artist;
+    title = x.track || x.title;
+  }
+  artist = clean(artist);
+  title = clean(title);
+  if (!title) return null;
+  return { artist, title, cover: /^https:\/\//i.test(cover) ? cover : '', source: kind };
+}
 export default async function handler(req, res) {
   if (rateLimited(req, res, 'metadata', 90)) return;
   const url = String(req.query?.url || '');
@@ -143,6 +186,23 @@ export default async function handler(req, res) {
   // El CDN guarda la respuesta 15 s por URL: todos los oyentes de una emisora
   // comparten una sola conexión al stream en lugar de abrir una cada uno.
   res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
+  const meta = String(req.query?.meta || '');
+  if (meta && meta !== 'icy') {
+    try {
+      const p = await providerSong(meta);
+      if (p) {
+        const text = p.artist ? `${p.artist} - ${p.title}` : p.title;
+        return res.status(200).json({
+          song: text,
+          artist: p.artist,
+          track: p.title,
+          cover: p.cover || (await coverFor(p.artist, p.title)),
+          source: p.source
+        });
+      }
+    } catch {}
+    // Si la API de la emisora falla, se sigue con el título del stream (si lo hay).
+  }
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   let reader = null;

@@ -1261,8 +1261,16 @@ async function startMetadata(s, streamUrl) {
     metadataBusy = true;
     let d = null;
     try {
+      // 💎 Emisoras FLAC: el título no va dentro del FLAC; se pide a la API de la
+      // emisora (meta) o se lee del stream con pérdida (metaUrl).
+      if (s.hifi && (!s.meta || s.meta === '-')) {
+        metadataBusy = false;
+        actualizarCancion('🎵 Esta emisora no informa de la canción');
+        return;
+      }
       const q = new URLSearchParams({
-        url: streamUrl,
+        url: (s.hifi && s.metaUrl) || streamUrl,
+        meta: s.meta || '',
         name: s.name || '',
         state: s.state || '',
         stationuuid: s.stationuuid || s.uuid || ''

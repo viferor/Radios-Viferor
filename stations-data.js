@@ -2,13 +2,18 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
 
 // --- 💎 Alta calidad (sin pérdida) ------------------------------------------------
 // Emisoras de música que emiten en FLAC (calidad CD o más). La lista sale de las que
-// recoge audiophile.fm, pero aquí van las direcciones OFICIALES de cada emisora (no
-// las de audiophile.fm). Solo https: la app Android bloquea las http.
-// Cada una lleva su FLAC primero y una versión con pérdida (AAC 160-320 kbps) de
-// respaldo: si el FLAC no arranca, o vas con datos móviles y está activado «FLAC solo
-// con Wi-Fi», suena la AAC. Se buscan con el tipo «💎 Alta calidad» (tag «hifi»).
+// recogen audiophile.fm y hiresaudio.online, pero aquí van las direcciones OFICIALES de
+// cada emisora. Solo https: la app Android bloquea las http.
+// - options: el FLAC primero y, si la emisora la tiene, una versión con pérdida de
+//   respaldo (si el FLAC no arranca, o vas con datos y está «FLAC solo con Wi-Fi»).
+// - meta: de dónde sale «ahora suena». Los FLAC no llevan el título dentro (ICY), así
+//   que /api/metadata lo pide a la API de la emisora («rp:0», «soma:groovesalad»,
+//   «sr:163», «cro:vltava») o lo lee del stream con pérdida («icy»).
+// - logo: el icono de la web de la emisora.
 (function () {
-  const hifi = (uuid, name, city, genre, quality, flac, lossy, lossyFormat) => ({
+  const ico = d => 'https://www.google.com/s2/favicons?sz=128&domain=' + d;
+  const fmt = u => (/\.m3u8(?:$|\?)/i.test(u) ? 'm3u8' : /\.mp3(?:$|\?)|\/mp3$/i.test(u) ? 'mp3' : /\.ogg(?:$|\?)/i.test(u) ? 'ogg' : 'aac');
+  const hifi = (uuid, name, city, genre, web, flac, lossy = [], meta = '') => ({
     uuid,
     name,
     network: '',
@@ -17,28 +22,40 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
     freq: '',
     url: flac,
     hifi: true,
-    quality,
+    meta: meta || (lossy.length ? 'icy' : ''),
+    metaUrl: lossy[0] || '',
+    logo: ico(web),
+    web: 'https://' + web,
     options: [
       { format: /\.m3u8(?:$|\?)/i.test(flac) ? 'flac-hls' : 'flac', url: flac },
-      { format: lossyFormat || 'aac', url: lossy }
+      ...lossy.map(u => ({ format: fmt(u), url: u }))
     ],
     tags: 'hifi,flac,alta calidad,musica,' + genre
   });
   const rp = 'https://stream.radioparadise.com/';
   const naim = 'https://mscp3.live-streams.nl:';
+  const soma = 'https://hls.somafm.com/hls/';
   window.RADIO_STATIONS_HIFI = [
-    hifi('hifi-rp-main', 'Radio Paradise · Main Mix', 'EE. UU. · FLAC', 'ecléctica,rock,pop', 'CD', rp + 'flac', rp + 'aac-320'),
-    hifi('hifi-rp-mellow', 'Radio Paradise · Mellow Mix', 'EE. UU. · FLAC', 'tranquila,chill,pop', 'CD', rp + 'mellow-flac', rp + 'mellow-320'),
-    hifi('hifi-rp-rock', 'Radio Paradise · Rock Mix', 'EE. UU. · FLAC', 'rock', 'CD', rp + 'rock-flac', rp + 'rock-320'),
-    hifi('hifi-rp-global', 'Radio Paradise · Global Mix', 'EE. UU. · FLAC', 'world,músicas del mundo', 'CD', rp + 'global-flac', rp + 'global-320'),
-    hifi('hifi-naim', 'Naim Radio', 'Reino Unido · FLAC', 'ecléctica,jazz,folk', 'CD', naim + '8362/flac.flac', naim + '8362/high.aac'),
-    hifi('hifi-naim-jazz', 'Naim Jazz', 'Reino Unido · FLAC', 'jazz', 'CD', naim + '8342/jazz-flac.flac', naim + '8342/jazz-high.aac'),
-    hifi('hifi-naim-classical', 'Naim Classical', 'Reino Unido · FLAC', 'clásica,classical', 'CD', naim + '8252/class-flac.flac', naim + '8252/class-high.aac'),
-    hifi('hifi-cro-vltava', 'ČRo Vltava', 'Chequia · FLAC', 'clásica,cultura', 'CD', 'https://amp.cesnet.cz:8443/cro3.flac', 'https://rozhlas.stream/vltava_high.aac'),
-    hifi('hifi-cro-ddur', 'ČRo D-dur', 'Chequia · FLAC', 'clásica,classical', 'CD', 'https://amp.cesnet.cz:8443/cro-d-dur.flac', 'https://rozhlas.stream/ddur_high.aac'),
-    hifi('hifi-cro-jazz', 'ČRo Jazz', 'Chequia · FLAC', 'jazz', 'CD', 'https://amp.cesnet.cz:8443/cro-jazz.flac', 'https://rozhlas.stream/jazz_high.aac'),
-    hifi('hifi-sr-p2', 'Sveriges Radio P2', 'Suecia · FLAC', 'clásica,jazz,folk', 'CD', 'https://live1.sr.se/p2-flac', 'https://ljud1-cdn.sr.se/lc/p2.m3u8', 'm3u8'),
-    hifi('hifi-soma-groove', 'SomaFM · Groove Salad', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'CD', 'https://hls.somafm.com/hls/groovesalad/FLAC/program.m3u8', 'https://hls.somafm.com/hls/groovesalad/320k/program.m3u8', 'm3u8'),
-    hifi('hifi-jb-radio2', 'JB Radio2', 'Canadá · FLAC', 'pop,rock,ecléctica', 'CD', 'https://maggie.torontocast.com:8076/flac', 'https://maggie.torontocast.com:8076/aac')
+    hifi('hifi-rp-main', 'Radio Paradise · Main Mix', 'EE. UU. · FLAC', 'ecléctica,rock,pop', 'radioparadise.com', rp + 'flac', [rp + 'aac-320'], 'rp:0'),
+    hifi('hifi-rp-mellow', 'Radio Paradise · Mellow Mix', 'EE. UU. · FLAC', 'tranquila,chill,pop', 'radioparadise.com', rp + 'mellow-flac', [rp + 'mellow-320'], 'rp:1'),
+    hifi('hifi-rp-rock', 'Radio Paradise · Rock Mix', 'EE. UU. · FLAC', 'rock', 'radioparadise.com', rp + 'rock-flac', [rp + 'rock-320'], 'rp:2'),
+    hifi('hifi-rp-global', 'Radio Paradise · Global Mix', 'EE. UU. · FLAC', 'world,músicas del mundo', 'radioparadise.com', rp + 'global-flac', [rp + 'global-320'], 'rp:3'),
+    hifi('hifi-naim', 'Naim Radio', 'Reino Unido · FLAC', 'ecléctica,jazz,folk', 'naimaudio.com', naim + '8362/flac.flac', [naim + '8362/high.aac']),
+    hifi('hifi-naim-jazz', 'Naim Jazz', 'Reino Unido · FLAC', 'jazz', 'naimaudio.com', naim + '8342/jazz-flac.flac', [naim + '8342/jazz-high.aac']),
+    hifi('hifi-naim-classical', 'Naim Classical', 'Reino Unido · FLAC', 'clásica,classical', 'naimaudio.com', naim + '8252/class-flac.flac', [naim + '8252/class-high.aac']),
+    hifi('hifi-cro-vltava', 'ČRo Vltava', 'Chequia · FLAC', 'clásica,cultura', 'vltava.rozhlas.cz', 'https://amp.cesnet.cz:8443/cro3.flac', ['https://rozhlas.stream/vltava_high.aac'], 'cro:vltava'),
+    hifi('hifi-cro-ddur', 'ČRo D-dur', 'Chequia · FLAC', 'clásica,classical', 'ddur.rozhlas.cz', 'https://amp.cesnet.cz:8443/cro-d-dur.flac', ['https://rozhlas.stream/ddur_high.aac'], 'cro:d-dur'),
+    hifi('hifi-cro-jazz', 'ČRo Jazz', 'Chequia · FLAC', 'jazz', 'jazz.rozhlas.cz', 'https://amp.cesnet.cz:8443/cro-jazz.flac', ['https://rozhlas.stream/jazz_high.aac'], 'cro:jazz'),
+    hifi('hifi-sr-p2', 'Sveriges Radio P2', 'Suecia · FLAC', 'clásica,jazz,folk', 'sverigesradio.se', 'https://live1.sr.se/p2-flac', ['https://ljud1-cdn.sr.se/lc/p2.m3u8'], 'sr:163'),
+    hifi('hifi-soma-groove', 'SomaFM · Groove Salad', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'somafm.com', soma + 'groovesalad/FLAC/program.m3u8', [soma + 'groovesalad/320k/program.m3u8'], 'soma:groovesalad'),
+    hifi('hifi-soma-groove-unp', 'SomaFM · Groove Salad (sin procesar)', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'somafm.com', soma + 'gs-unprocessed/FLAC/program.m3u8', [soma + 'gs-unprocessed/320k/program.m3u8'], 'soma:groovesalad'),
+    // JB Radio2: su FLAC va y viene (lo dicen sus propios oyentes); detrás, AAC y MP3 a 320.
+    hifi('hifi-jb-radio2', 'JB Radio2', 'Canadá · FLAC', 'pop,rock,ecléctica', 'jbradio2.com', 'https://maggie.torontocast.com:8076/flac', ['https://maggie.torontocast.com:8076/mp3', 'https://maggie.torontocast.com:8076/aac']),
+    hifi('hifi-pure-lounge', 'Pure Lounge Radio', 'Países Bajos · FLAC', 'lounge,soul,funk,disco,jazz', 'pureloungeradio.com', 'https://mscp4.live-streams.nl:8142/lounge.ogg', ['https://mscp4.live-streams.nl:8142/lounge.mp3']),
+    hifi('hifi-lapfox', 'LapFox Radio', 'EE. UU. · FLAC', 'electrónica', 'lapfoxradio.com', 'https://radio.lapfoxradio.com/radio/8000/stream-flac.flac', ['https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg'], '-'),
+    hifi('hifi-distorsion', 'Distorsión FM', 'Chile · FLAC', 'rock,jazz', 'distorsion.fm', 'https://radioemisoras.cl/distorsion.flac'),
+    hifi('hifi-djam', 'Djam Radio', 'Francia · FLAC', 'ecléctica,soul,jazz,world', 'djam.radio', 'https://stream10.xdevel.com/audio15s976748-2280/stream/icecast.audio'),
+    hifi('hifi-radio20', 'Radio 2.0', 'Italia · FLAC', 'pop,rock', 'radioduepuntozero.it', 'https://vps.radioduepuntozero.it/stream.ogg'),
+    hifi('hifi-kuat', 'Classical 90.5 (KUAT)', 'EE. UU. · FLAC', 'clásica,classical', 'azpm.org', 'https://hls.azpm.org/t-fmp4/FLAC/KUAT_FLAC.m3u8')
   ];
 })();
