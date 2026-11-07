@@ -22,6 +22,7 @@ def route(r):
         if '/api/stations' in u: return r.fulfill(status=503, body='no')
         if '/api/metadata' in u:
             state.setdefault('meta', []).append(u)
+            if 'distorsion' in u: return r.fulfill(json={'song': ''})
             return r.fulfill(json={'song': 'Artista Prueba - Canción Prueba', 'artist': 'Artista Prueba', 'track': 'Canción Prueba', 'cover': ''})
         return r.fulfill(json={})
     if u.startswith(BASE): return r.continue_()
@@ -77,7 +78,14 @@ with sync_playwright() as p:
     state['meta'] = []
     pg.locator('#stationsGrid .station-card', has_text='Distorsión FM').first.click()
     pg.wait_for_timeout(1500)
-    ok('Distorsión FM: no pide metadatos y avisa', not state['meta'] and 'no informa de la canción' in pg.evaluate('document.body.innerText'))
+    ok('Distorsión FM: pregunta también por el FLAC (alt) y, si no hay nada, avisa', state['meta'] and 'alt=https' in state['meta'][-1] and 'no informa de la canción' in pg.evaluate('document.body.innerText'))
+    # Ajustes -> comprobar «ahora suena» de todas
+    pg.evaluate("document.getElementById('btnHifiCheck').click(); 0")
+    pg.wait_for_timeout(2500)
+    txt = pg.locator('#hifiCheck').inner_text()
+    ok('comprobador: 19/20 con información (%s)' % txt.split(chr(10))[0], '19/20' in txt and 'Distorsión FM' in txt and 'sin información' in txt)
+    pg.screenshot(path=os.path.join(SHOTS, 'hifi_check.png'))
+    pg.click('#hifiCheckClose')
     # FLAC caído -> AAC de respaldo
     state['flac_fail'] = True; state['streams'].clear()
     pg.locator('#stationsGrid .station-card', has_text='Naim Jazz').first.click()

@@ -1701,3 +1701,11 @@ html.dark-mode .mus-edit-file b{color:#aab2ba}
 #btnRadioHifi{border-color:#b9a3e3;background:#f5f0ff;color:#4b2a8a}
 html.dark-mode #btnRadioHifi{background:#2a2238;border-color:#5b4a80;color:#dccfff}
 @media(max-width:420px){.radio-home-toolbar button{padding:7px 8px;font-size:.82rem}}
+.hifi-check{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:12px}
+.hifi-check-card{background:#fff;color:#222;border-radius:14px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+.hifi-check-head{display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:0;background:inherit;padding-bottom:6px}
+.hifi-check-head button{border:1px solid #ddd;background:#fff;border-radius:8px;padding:4px 9px}
+.hifi-check ul{list-style:none;margin:0;padding:0}
+.hifi-check li{display:flex;flex-direction:column;padding:7px 0;border-top:1px solid #eee;font-size:.85rem}
+.hifi-check li span{color:#666}.hifi-check li.ok span{color:#1b7a3a}.hifi-check li.ko span{color:#b3261e}
+html.dark-mode .hifi-check-card{background:#1c2025;color:#f1f3f5}html.dark-mode .hifi-check li{border-color:#30353b}html.dark-mode .hifi-check-head button{background:#262b31;color:#f1f3f5;border-color:#30353b}

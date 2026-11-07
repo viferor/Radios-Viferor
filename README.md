@@ -1,6 +1,17 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.33.0 — 💎 Alta calidad: «ahora suena» en más emisoras + comprobador
+
+- **Más emisoras con canción y artista.** Si el stream no lleva el título dentro (los FLAC
+  en Ogg, los HLS…), `/api/metadata` lo pregunta al propio servidor de streaming, en
+  paralelo: Icecast (`/status-json.xsl`, que también da el título de los Ogg FLAC), AzuraCast
+  (`/api/nowplaying`, con carátula) y Shoutcast v2 (`/stats`). Lo hace con el stream con
+  pérdida y con el FLAC (`alt`). Antes, las que no tenían API propia ni ICY se daban por perdidas.
+- **Ajustes → «💎 Comprobar ahora suena de Alta calidad»**: pregunta por las 20 emisoras a la
+  vez y muestra cuáles dan canción, de dónde sale (API, título del stream, Icecast…) y cuáles no.
+- Pruebas: `tests/test_hifi.py` (18).
+
 ## 1.32.0 — 💎 Alta calidad: canción y artista, logos, JB Radio2 y 7 emisoras más
 
 - **«Ahora suena» en las emisoras FLAC.** El FLAC no lleva el título dentro, así que ahora

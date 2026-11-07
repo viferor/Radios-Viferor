@@ -668,6 +668,48 @@ function abrirAltaCalidad() {
   cambiarVista('search');
   aplicarFiltros();
 }
+// Ajustes → «Comprobar ahora suena»: pregunta a la vez por las emisoras de Alta calidad
+// y enseña de dónde sale la canción de cada una (o que no hay nada), para saber cuáles
+// fallan sin tener que ponerlas una a una.
+const HIFI_FUENTE = { rp: 'API Radio Paradise', soma: 'API SomaFM', sr: 'API Sveriges Radio', cro: 'API Český rozhlas', icy: 'título del stream', icecast: 'servidor Icecast', azuracast: 'servidor AzuraCast', shoutcast: 'servidor Shoutcast', 'radio-browser': 'radio-browser' };
+async function comprobarAltaCalidad() {
+  const lista = window.RADIO_STATIONS_HIFI || [];
+  let box = document.getElementById('hifiCheck');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'hifiCheck';
+    box.className = 'hifi-check';
+    document.body.appendChild(box);
+  }
+  const filas = lista.map(s => ({ s, txt: '⏳ comprobando…' }));
+  const pintar = () => {
+    const okN = filas.filter(f => f.ok).length;
+    box.innerHTML = `<div class="hifi-check-card"><div class="hifi-check-head"><strong>💎 «Ahora suena» · ${okN}/${filas.length} con información</strong><button type="button" id="hifiCheckClose">✕</button></div><ul>${filas
+      .map(f => `<li class="${f.ok ? 'ok' : f.done ? 'ko' : ''}"><b>${escapeHtml(f.s.name)}</b><span>${escapeHtml(f.txt)}</span></li>`)
+      .join('')}</ul></div>`;
+    document.getElementById('hifiCheckClose').onclick = () => box.remove();
+  };
+  pintar();
+  let i = 0;
+  const worker = async () => {
+    while (i < filas.length) {
+      const f = filas[i++],
+        s = f.s;
+      try {
+        const q = new URLSearchParams({ url: s.metaUrl || s.url, alt: s.url || '', meta: s.meta && s.meta !== '-' ? s.meta : '', name: s.name, state: '', stationuuid: s.uuid });
+        const r = await fetch('/api/metadata?' + q, { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        const d = r.ok ? await r.json() : null;
+        f.ok = !!d?.song;
+        f.txt = d?.song ? `✅ ${d.song} · ${HIFI_FUENTE[d.source] || d.source || 'stream'}${d.cover ? ' · 🖼️' : ''}` : `❌ sin información${d?.error ? ' (' + d.error + ')' : ''}`;
+      } catch (e) {
+        f.txt = '❌ ' + (e.name === 'TimeoutError' ? 'tarda demasiado' : e.message || 'error');
+      }
+      f.done = true;
+      pintar();
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+}
 function textoEnDirecto() {
   return 'En directo ✅' + (currentStreamUrl && esFuenteFlac({ url: currentStreamUrl, format: currentStreamFormat }) ? ' · 💎 FLAC' : '');
 }
@@ -1263,14 +1305,11 @@ async function startMetadata(s, streamUrl) {
     try {
       // 💎 Emisoras FLAC: el título no va dentro del FLAC; se pide a la API de la
       // emisora (meta) o se lee del stream con pérdida (metaUrl).
-      if (s.hifi && (!s.meta || s.meta === '-')) {
-        metadataBusy = false;
-        actualizarCancion('🎵 Esta emisora no informa de la canción');
-        return;
-      }
+      // alt = el propio FLAC: si no hay ICY, el servidor mira el estado de Icecast/AzuraCast.
       const q = new URLSearchParams({
         url: (s.hifi && s.metaUrl) || streamUrl,
-        meta: s.meta || '',
+        alt: s.hifi ? s.url || '' : '',
+        meta: s.meta && s.meta !== '-' ? s.meta : '',
         name: s.name || '',
         state: s.state || '',
         stationuuid: s.stationuuid || s.uuid || ''
@@ -1282,6 +1321,7 @@ async function startMetadata(s, streamUrl) {
     metadataBusy = false;
     if (radioPollingFor !== s) return;
     setRadioSong(d);
+    if (s.hifi && !d?.song) actualizarCancion('🎵 Esta emisora no informa de la canción');
     clearInterval(metadataTimer);
     // Más a menudo si la emisora informa de canciones; menos si es hablada.
     metadataTimer = setInterval(run, d?.song ? 15000 : 30000);
@@ -1893,6 +1933,7 @@ function init() {
   document.getElementById('btnViewRadios').addEventListener('click', () => cambiarVista('fav'));
   document.getElementById('btnRadioSearch').addEventListener('click', () => cambiarVista('search'));
   document.getElementById('btnRadioHifi')?.addEventListener('click', abrirAltaCalidad);
+  document.getElementById('btnHifiCheck')?.addEventListener('click', () => comprobarAltaCalidad().catch(() => {}));
   textoHifiWifi();
   document.getElementById('btnHifiWifi')?.addEventListener('click', () => {
     try {
