@@ -57,6 +57,13 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
     hifi('hifi-bdpst-rock', 'BDPST Rock', 'Hungría · FLAC', 'rock', 'bdpstrock.hu', 'https://s2.audiostream.hu/bdpstrock_FLAC', ['https://s2.audiostream.hu/bdpstrock_320k']),
     hifi('hifi-youventus', 'Youventus Rádió', 'Hungría · FLAC', 'pop,chill,chillout,éxitos', 'youventusradio.hu', 'https://s2.audiostream.hu/juventus_FLAC', ['https://s2.audiostream.hu/juventus_320k']),
     hifi('hifi-danubius', 'Danubius Rádió', 'Hungría · FLAC', 'pop,éxitos,hits,retro', 'danubiusradio.hu', 'https://danubiusradio.hu/live_HiFi.mp3', ['https://danubiusradio.hu/live_320.mp3']),
+    // House, techno y pop (1.37.0)
+    hifi('hifi-f3-dance', 'Fréquence 3 Dance', 'Francia · FLAC', 'house,dance,electrónica', 'frequence3.com', 'https://frequence3.net-radio.fr/frequence3dance.flac'),
+    hifi('hifi-radar-house', 'Radio Radar House', 'Rusia · FLAC', 'house,deep house,electrónica', 'radioradar.online', 'https://radioradar.online/listen/r_house/r_house.ogg', ['https://radioradar.online/listen/r_house/r_house.aac']),
+    hifi('hifi-maxxima', 'MaXXima', 'Suiza · FLAC', 'techno,tecno,electrónica,house,trance', 'maxxima.ch', 'https://maxxima.mine.nu/maxx.ogg', ['https://maxxima.mine.nu/maxx.mp3']),
+    hifi('hifi-f3', 'Fréquence 3', 'Francia · FLAC', 'pop,éxitos,hits,dance', 'frequence3.com', 'https://frequence3.net-radio.fr/frequence3.flac'),
+    hifi('hifi-lebonmix', 'Le Bon Mix', 'Francia · FLAC', 'pop,funk,disco,soul', 'lebonmix.radio', 'https://stream10.xdevel.com/audio17s976748-2218/stream/icecast.audio', ['https://stream10.xdevel.com/audio13s976748-2017/stream/icecast.audio']),
+    hifi('hifi-aida', 'AIDA Radio', 'Alemania · FLAC', 'pop,éxitos,hits', 'aidaradio.de', 'https://cdn05.radio.cloud:8128/AIDA-OMNIA-GAI'),
     hifi('hifi-pure-lounge', 'Pure Lounge Radio', 'Países Bajos · FLAC', 'lounge,soul,funk,disco,jazz', 'pureloungeradio.com', 'https://mscp4.live-streams.nl:8142/lounge.ogg', ['https://mscp4.live-streams.nl:8142/lounge.mp3']),
     hifi('hifi-lapfox', 'LapFox Radio', 'EE. UU. · FLAC', 'electrónica', 'lapfoxradio.com', 'https://radio.lapfoxradio.com/radio/8000/stream-flac.flac', ['https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg'], '-'),
     hifi('hifi-distorsion', 'Distorsión FM', 'Chile · FLAC', 'rock,jazz', 'distorsion.fm', 'https://radioemisoras.cl/distorsion.flac'),

@@ -1,6 +1,13 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.37.0 — 💎 Alta calidad: house, techno y pop (31 emisoras)
+
+- House/dance: **Fréquence 3 Dance**, **Radio Radar House**. Techno/electrónica: **MaXXima**.
+  Pop: **Fréquence 3**, **Le Bon Mix** (pop, funk, disco) y **AIDA Radio**. FLAC por https;
+  Radio Radar House, MaXXima y Le Bon Mix con respaldo con pérdida.
+- Se encuentran escribiendo «house», «techno»/«tecno» o «pop» en el buscador con el tipo Alta calidad.
+
 ## 1.36.0 — 📻 Corrección de auriculares y ecualizador también en la radio
 
 - La radio usa ahora el mismo sonido que Mi música: corrección de auriculares (AutoEq),
