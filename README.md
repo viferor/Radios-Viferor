@@ -1,6 +1,12 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.34.0 — 💎 Alta calidad: 4 emisoras nuevas (22)
+
+- **ČRo Radio Wave** (alternativa, electrónica, hip hop), **Intense Radio** (dance),
+  **Radio BluesFlac** (blues) y **TME Country** (country, folk, americana). Todas en FLAC por
+  https; Wave e Intense con respaldo AAC.
+
 ## 1.33.2 — 💎 Alta calidad: fuera JB Radio2
 
 - JB Radio2 no cargaba ni con el FLAC ni con los respaldos MP3/AAC (sus servidores fallan

@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.33.2** (compilación 13320) · APK
+> **Estado de referencia (todo funcionando):** web **1.34.0** (compilación 13400) · APK
 > **1.16.2** (versionCode 11602) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
