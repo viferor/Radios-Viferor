@@ -1,6 +1,13 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.35.0 — 💎 Alta calidad: Roxy Rádió y sus hermanas húngaras; fuera TME Country
+
+- **Roxy Rádió** (éxitos actuales, pop, dance), **BDPST Rock** (rock), **Youventus Rádió**
+  (pop chill) y **Danubius Rádió** (éxitos de ayer y de hoy). Grupo húngaro SoundPlus, FLAC
+  por https y MP3 320 de respaldo. 25 emisoras.
+- Fuera **TME Country**: no sonaba.
+
 ## 1.34.0 — 💎 Alta calidad: 4 emisoras nuevas (22)
 
 - **ČRo Radio Wave** (alternativa, electrónica, hip hop), **Intense Radio** (dance),

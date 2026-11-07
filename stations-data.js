@@ -52,7 +52,11 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
     hifi('hifi-soma-groove-unp', 'SomaFM · Groove Salad (sin procesar)', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'somafm.com', soma + 'gs-unprocessed/FLAC/program.m3u8', [soma + 'gs-unprocessed/320k/program.m3u8'], 'soma:groovesalad'),
     hifi('hifi-intense', 'Intense Radio', 'Países Bajos · FLAC', 'dance,electrónica,house,trance', 'intenseradio.net', 'https://secure.live-streams.nl/flac.flac', ['https://intenseradio.live-streams.nl:18000/low']),
     hifi('hifi-bluesflac', 'Radio BluesFlac', 'Canadá · FLAC', 'blues', 'bluesflac.com', 'https://streams.radiomast.io/radioblues-flac'),
-    hifi('hifi-tme', 'TME Country', 'Canadá · FLAC', 'country,folk,americana', 'tmefm.com', 'https://streams.radiomast.io/tmefolk'),
+    // Grupo húngaro SoundPlus (mismo servidor Icecast): FLAC y MP3 320 de respaldo.
+    hifi('hifi-roxy', 'Roxy Rádió', 'Hungría · FLAC', 'pop,dance,house,éxitos,hits', 'roxyradio.hu', 'https://s2.audiostream.hu/roxy_FLAC', ['https://s2.audiostream.hu/roxy_320k']),
+    hifi('hifi-bdpst-rock', 'BDPST Rock', 'Hungría · FLAC', 'rock', 'bdpstrock.hu', 'https://s2.audiostream.hu/bdpstrock_FLAC', ['https://s2.audiostream.hu/bdpstrock_320k']),
+    hifi('hifi-youventus', 'Youventus Rádió', 'Hungría · FLAC', 'pop,chill,chillout,éxitos', 'youventusradio.hu', 'https://s2.audiostream.hu/juventus_FLAC', ['https://s2.audiostream.hu/juventus_320k']),
+    hifi('hifi-danubius', 'Danubius Rádió', 'Hungría · FLAC', 'pop,éxitos,hits,retro', 'danubiusradio.hu', 'https://danubiusradio.hu/live_HiFi.mp3', ['https://danubiusradio.hu/live_320.mp3']),
     hifi('hifi-pure-lounge', 'Pure Lounge Radio', 'Países Bajos · FLAC', 'lounge,soul,funk,disco,jazz', 'pureloungeradio.com', 'https://mscp4.live-streams.nl:8142/lounge.ogg', ['https://mscp4.live-streams.nl:8142/lounge.mp3']),
     hifi('hifi-lapfox', 'LapFox Radio', 'EE. UU. · FLAC', 'electrónica', 'lapfoxradio.com', 'https://radio.lapfoxradio.com/radio/8000/stream-flac.flac', ['https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg'], '-'),
     hifi('hifi-distorsion', 'Distorsión FM', 'Chile · FLAC', 'rock,jazz', 'distorsion.fm', 'https://radioemisoras.cl/distorsion.flac'),
