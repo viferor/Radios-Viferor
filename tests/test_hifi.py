@@ -56,8 +56,8 @@ with sync_playwright() as p:
     pg.screenshot(path=os.path.join(SHOTS, 'hifi_home.png'))
     pg.click('#btnRadioHifi'); pg.wait_for_timeout(500)
     n = pg.locator('#stationsGrid .station-card').count()
-    ok('abre la búsqueda con 19 emisoras FLAC (%d)' % n, n == 19)
-    ok('las emisoras llevan logo', pg.locator('#stationsGrid .station-card img').count() >= 19)
+    ok('abre la búsqueda con 18 emisoras FLAC (%d)' % n, n == 18)
+    ok('las emisoras llevan logo', pg.locator('#stationsGrid .station-card img').count() >= 18)
     ok('filtro Tipo = Alta calidad en los chips', 'Alta calidad' in pg.locator('#activeFilters').inner_text())
     pg.screenshot(path=os.path.join(SHOTS, 'hifi_lista.png'))
     pg.locator('#stationsGrid .station-card', has_text='Main Mix').first.click()
@@ -68,12 +68,6 @@ with sync_playwright() as p:
     m = [x for x in state.get('meta', []) if 'Paradise' in x]
     ok('pide «ahora suena» a la API de Radio Paradise (meta=rp:0)', m and 'meta=rp%3A0' in m[-1] and 'aac-320' in m[-1])
     ok('muestra artista y canción', 'Artista Prueba' in pg.evaluate('document.body.innerText'))
-    # JB Radio2: FLAC caído -> MP3
-    state['flac_fail'] = True; state['streams'].clear()
-    pg.locator('#stationsGrid .station-card', has_text='JB Radio2').first.click()
-    pg.wait_for_timeout(2000)
-    ok('JB Radio2 sin FLAC suena por el MP3 (%s)' % state['streams'][-1:], state['streams'] and state['streams'][-1].endswith(':8076/mp3'))
-    state['flac_fail'] = False
     # Emisora sin API ni stream con pérdida: no se pregunta y lo dice
     state['meta'] = []
     pg.locator('#stationsGrid .station-card', has_text='Distorsión FM').first.click()
@@ -83,7 +77,7 @@ with sync_playwright() as p:
     pg.evaluate("document.getElementById('btnHifiCheck').click(); 0")
     pg.wait_for_timeout(2500)
     txt = pg.locator('#hifiCheck').inner_text()
-    ok('comprobador: 18/19 con información (%s)' % txt.split(chr(10))[0], '18/19' in txt and 'Distorsión FM' in txt and 'sin información' in txt)
+    ok('comprobador: 17/18 con información (%s)' % txt.split(chr(10))[0], '17/18' in txt and 'Distorsión FM' in txt and 'sin información' in txt)
     pg.screenshot(path=os.path.join(SHOTS, 'hifi_check.png'))
     pg.click('#hifiCheckClose')
     # FLAC caído -> AAC de respaldo

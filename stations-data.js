@@ -49,8 +49,6 @@ window.RADIO_STATIONS = [{"uuid":"ser-madrid","name":"SER Madrid","network":"Cad
     hifi('hifi-sr-p2', 'Sveriges Radio P2', 'Suecia · FLAC', 'clásica,jazz,folk', 'sverigesradio.se', 'https://live1.sr.se/p2-flac', ['https://ljud1-cdn.sr.se/lc/p2.m3u8'], 'sr:163'),
     hifi('hifi-soma-groove', 'SomaFM · Groove Salad', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'somafm.com', soma + 'groovesalad/FLAC/program.m3u8', [soma + 'groovesalad/320k/program.m3u8'], 'soma:groovesalad'),
     hifi('hifi-soma-groove-unp', 'SomaFM · Groove Salad (sin procesar)', 'EE. UU. · FLAC', 'chill,ambient,electrónica', 'somafm.com', soma + 'gs-unprocessed/FLAC/program.m3u8', [soma + 'gs-unprocessed/320k/program.m3u8'], 'soma:groovesalad'),
-    // JB Radio2: su FLAC va y viene (lo dicen sus propios oyentes); detrás, AAC y MP3 a 320.
-    hifi('hifi-jb-radio2', 'JB Radio2', 'Canadá · FLAC', 'pop,rock,ecléctica', 'jbradio2.com', 'https://maggie.torontocast.com:8076/flac', ['https://maggie.torontocast.com:8076/mp3', 'https://maggie.torontocast.com:8076/aac']),
     hifi('hifi-pure-lounge', 'Pure Lounge Radio', 'Países Bajos · FLAC', 'lounge,soul,funk,disco,jazz', 'pureloungeradio.com', 'https://mscp4.live-streams.nl:8142/lounge.ogg', ['https://mscp4.live-streams.nl:8142/lounge.mp3']),
     hifi('hifi-lapfox', 'LapFox Radio', 'EE. UU. · FLAC', 'electrónica', 'lapfoxradio.com', 'https://radio.lapfoxradio.com/radio/8000/stream-flac.flac', ['https://radio.lapfoxradio.com/radio/8000/stream-ogg-320.ogg'], '-'),
     hifi('hifi-distorsion', 'Distorsión FM', 'Chile · FLAC', 'rock,jazz', 'distorsion.fm', 'https://radioemisoras.cl/distorsion.flac'),

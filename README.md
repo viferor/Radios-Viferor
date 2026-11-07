@@ -1,6 +1,11 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.33.2 — 💎 Alta calidad: fuera JB Radio2
+
+- JB Radio2 no cargaba ni con el FLAC ni con los respaldos MP3/AAC (sus servidores fallan
+  a menudo). Se quita: quedan 18 emisoras. Si estaba en favoritas, sigue ahí y se puede quitar con ★.
+
 ## 1.33.1 — 💎 Alta calidad: arreglos tras el comprobador (16/20 → más)
 
 - Sin guiones sueltos en el título («Taktovka - » → «Taktovka»; pasaba en ČRo Vltava y D-dur).
