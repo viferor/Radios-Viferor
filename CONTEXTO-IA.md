@@ -4,7 +4,7 @@
 > del asistente que ha construido el proyecto hasta ahora. Aquí está qué es, cómo está hecho,
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
-> **Estado de referencia (todo funcionando):** web **1.35.0** (compilación 13500) · APK
+> **Estado de referencia (todo funcionando):** web **1.36.0** (compilación 13600) · APK
 > **1.16.2** (versionCode 11602) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
@@ -113,6 +113,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 | `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
 | `version.js` | Única fuente de versión (`window.RV_VERSION`). No editar a mano: usar `scripts/version.mjs`. |
 | `diagnostics.js` | Registro de errores (localStorage, agrupa repetidos ×N, errores de `<audio>`, envuelve `fetch`), `window.logError`, menú de ajustes (actualizar, «Reanudar al abrir», «Volver a sonar tras llamada o aviso»). |
+| Radio + ecualizador | Dos `<audio>`: `audioNormal` y `audioFx` (`crossorigin`, conectado a Web Audio por `radioFx` de `ecualizador.js`). `prepararAudioRadio(url)` en `intentarFuente` comprueba CORS (`radioPermiteFx`) y cambia `audio` (`let`); el activo siempre tiene `id="audioPlayer"`. Los listeners van con `enRadio()` (en los dos, solo atiende al activo). Ajuste `radio` en `radios_viferor_music_audio_v1`. |
 | `stations-data.js` | Catálogo local de emisoras (respaldo) + `RADIO_STATIONS_HIFI`: las de «💎 Alta calidad» (FLAC https con respaldo AAC, tag `hifi`). En `app.js`: `fuentesSegunRed` quita el FLAC con datos móviles si está activado «solo con Wi-Fi». Cada una lleva `meta` (de dónde sale «ahora suena»: `rp:N`, `soma:id`, `sr:id`, `cro:id`, `icy` = leer el ICY de `metaUrl`, o vacío/`-` = no informa) y `logo`; `/api/metadata` resuelve `meta` con `providerSong`; si no hay ICY, `serverSong` pregunta a Icecast/AzuraCast/Shoutcast con `url` y `alt` (el FLAC). Ajustes → «Comprobar ahora suena» (`comprobarAltaCalidad`) las prueba todas. |
 | `buscador-radios.js` | Buscador de emisoras (provincias, comunidades, cadenas, tipos). |
 | `app.js` | **Radios**: catálogo, favoritas (`mis_radios_favoritas_v1`), reproducción (`reproducirRadio`, `intentarFuente`, HLS, reconexión, vigilancia de cortes), «Ahora suena», EPG, interrupciones del sistema (`rvPausaDelUsuario`, `rvInterrupcionPaso`, `rvAnotar`), gesto de deslizar entre pestañas, backup completo, tema. |

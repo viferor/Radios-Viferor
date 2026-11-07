@@ -4156,7 +4156,7 @@ function initMusic() {
     if (a.src && musicState.current) musicTrackFailed(musicState.current, a);
   });
   // Si empieza la radio o un podcast, la música se pausa (como pausa del usuario).
-  ['audioPlayer', 'podcastAudio'].forEach(id =>
+  ['audioPlayer', 'audioPlayerFx', 'podcastAudio'].forEach(id =>
     document.getElementById(id)?.addEventListener('play', () => {
       const a = musicAudio();
       if (!a.paused || musicInterrupted) {

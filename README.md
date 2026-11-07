@@ -1,6 +1,23 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.36.0 — 📻 Corrección de auriculares y ecualizador también en la radio
+
+- La radio usa ahora el mismo sonido que Mi música: corrección de auriculares (AutoEq),
+  ecualizador, mono/balance y el perfil de cada salida (altavoz, cable, cada Bluetooth).
+- Solo se puede en las emisoras cuyo servidor deja procesar el audio (CORS). Al poner una
+  emisora, la app lo comprueba (una vez por servidor): si lo deja, suena por el ecualizador
+  y el reproductor pone «· 🎧 tus auriculares»; si no, suena como siempre y pone «· sin ecualizar».
+- Por eso la radio tiene dos `<audio>`: el de siempre (nunca pasa por Web Audio, así una
+  emisora sin CORS no se queda en silencio) y `audioPlayerFx` con `crossorigin`. El que
+  suena siempre se llama `id="audioPlayer"`.
+- En la radio no se aplica el nivelador (las emisiones ya vienen comprimidas).
+- Ajustes → «🎚️ Sonido: auriculares y ecualizador» abre el panel; en él, interruptor
+  «📻 Aplicar también a la radio» (activado). Los cambios se notan al poner o volver a poner la emisora.
+- Al reanudar la radio al abrir la app (sin tocar nada aún) suena sin ecualizar: el
+  navegador no deja arrancar el audio procesado sin un toque.
+- Pruebas: `tests/test_radio_fx.py` (11).
+
 ## 1.35.0 — 💎 Alta calidad: Roxy Rádió y sus hermanas húngaras; fuera TME Country
 
 - **Roxy Rádió** (éxitos actuales, pop, dance), **BDPST Rock** (rock), **Youventus Rádió**

@@ -220,9 +220,95 @@ let radioWatchdogTimer = null;
 let radioWatchdogLastTime = 0;
 let radioWatchdogStalls = 0;
 let metadataBusy = false;
+// La radio tiene dos <audio>: el de siempre y otro con crossorigin que pasa por el
+// ecualizador (ecualizador.js → radioFx). «audio» es el que suena ahora y siempre se
+// llama id="audioPlayer" (otros módulos lo buscan por id para pausar la radio).
+const audioNormal = document.getElementById('audioPlayer');
+const audioFx = document.getElementById('audioPlayerFx') || audioNormal;
+let audio = audioNormal;
+window.__rvAudioActual = () => audio;
+let radioFxEstado = ''; // 'on' | 'no' (la emisora no lo permite) | ''
+// Escucha en los dos, pero solo atiende al que suena.
+function enRadio(tipo, fn, opts) {
+  [...new Set([audioNormal, audioFx])].forEach(el =>
+    el.addEventListener(
+      tipo,
+      e => {
+        if (el === audio) fn(e);
+      },
+      opts
+    )
+  );
+}
+function cambiarAudioRadio(nuevo) {
+  if (nuevo === audio) return;
+  const viejo = audio;
+  try {
+    viejo.pause();
+    viejo.removeAttribute('src');
+    viejo.load();
+  } catch {}
+  nuevo.volume = viejo.volume;
+  nuevo.muted = viejo.muted;
+  viejo.id = viejo === audioNormal ? 'audioPlayerAlt' : 'audioPlayerFx';
+  nuevo.id = 'audioPlayer';
+  audio = nuevo;
+}
+// ¿El servidor deja procesar el audio? (cabecera CORS). Se guarda por servidor.
+const radioCorsCache = new Map();
+async function radioPermiteFx(url) {
+  if (esHls(url)) return true; // si un HLS suena, es que ya permite CORS
+  let host = '';
+  try {
+    const u = new URL(url);
+    host = u.origin + u.pathname;
+  } catch {
+    return false;
+  }
+  if (radioCorsCache.has(host)) return radioCorsCache.get(host);
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 4000);
+  let ok = false;
+  try {
+    const r = await fetch(url, { mode: 'cors', cache: 'no-store', signal: ctl.signal });
+    ok = r.ok || r.status === 206;
+  } catch {
+    ok = false;
+  } finally {
+    clearTimeout(t);
+    try {
+      ctl.abort();
+    } catch {}
+  }
+  radioCorsCache.set(host, ok);
+  return ok;
+}
+// Elige el <audio> para esta fuente: con ecualizador si hace falta y se puede.
+async function prepararAudioRadio(url) {
+  const fx = window.radioFx;
+  // Sin un toque previo el AudioContext no arranca (p. ej. al reanudar al abrir la app).
+  const gesto = navigator.userActivation ? navigator.userActivation.hasBeenActive : true;
+  if (audioFx === audioNormal || !fx?.wanted?.() || !gesto) {
+    radioFxEstado = fx?.wanted?.() ? 'no' : '';
+    cambiarAudioRadio(audioNormal);
+    return;
+  }
+  if ((await radioPermiteFx(url)) && fx.attach(audioFx)) {
+    radioFxEstado = 'on';
+    cambiarAudioRadio(audioFx);
+    fx.resume();
+  } else {
+    radioFxEstado = 'no';
+    cambiarAudioRadio(audioNormal);
+  }
+}
+function textoFxRadio() {
+  if (radioFxEstado === 'on' && audio === audioFx) return ' · ' + (window.radioFx?.label?.() || '🎚️');
+  if (radioFxEstado === 'no') return ' · sin ecualizar';
+  return '';
+}
 const favGrid = document.getElementById('favGrid'),
   stationsGrid = document.getElementById('stationsGrid'),
-  audio = document.getElementById('audioPlayer'),
   currentNameEl = document.getElementById('currentStationName'),
   statusEl = document.getElementById('playerStatus'),
   nowPlayingEl = document.getElementById('nowPlayingTrack'),
@@ -711,7 +797,7 @@ async function comprobarAltaCalidad() {
   await Promise.all([worker(), worker(), worker(), worker()]);
 }
 function textoEnDirecto() {
-  return 'En directo ✅' + (currentStreamUrl && esFuenteFlac({ url: currentStreamUrl, format: currentStreamFormat }) ? ' · 💎 FLAC' : '');
+  return 'En directo ✅' + (currentStreamUrl && esFuenteFlac({ url: currentStreamUrl, format: currentStreamFormat }) ? ' · 💎 FLAC' : '') + textoFxRadio();
 }
 async function resolveRemote(s) {
   try {
@@ -938,6 +1024,7 @@ function startRadioWatchdog(token) {
   }, 10000);
 }
 function waitForAudio(token, timeout = 8000) {
+  const audio = window.__rvAudioActual?.() || audioNormal; // el de ahora, aunque luego cambie
   return new Promise((resolve, reject) => {
     let done = false;
     const finish = (ok, e) => {
@@ -966,6 +1053,7 @@ async function intentarFuente(source, token) {
   audio.removeAttribute('src');
   audio.load();
   const url = source.url;
+  await prepararAudioRadio(url);
   if (esHls(url) && window.Hls && Hls.isSupported()) {
     return new Promise((resolve, reject) => {
       hls = new Hls({ enableWorker: true });
@@ -1838,7 +1926,7 @@ async function cargarCatalogoNacional() {
 function init() {
   configurarGestoRadiosPodcasts();
   audio.volume = 0.8;
-  audio.addEventListener('play', () => {
+  enRadio('play', () => {
     const podcastAudio = document.getElementById('podcastAudio');
     if (podcastAudio && !podcastAudio.paused) {
       try {
@@ -1849,7 +1937,7 @@ function init() {
   });
   // Vuelve a sonar (también con el ▶ nativo del reproductor): se retoma el
   // sondeo de canción/programa y la vigilancia de cortes.
-  audio.addEventListener('playing', () => {
+  enRadio('playing', () => {
     if (!currentStation || radioConnecting || !audio.currentSrc) return;
     finInterrupcionRadio();
     radioWasPlaying = true;
@@ -1860,7 +1948,7 @@ function init() {
     startRadioPolling(currentStation, currentStreamUrl || audio.currentSrc);
     saveRadioResume(true);
   });
-  audio.addEventListener('pause', () => {
+  enRadio('pause', () => {
     // Las pausas internas (cambio de fuente, vigilancia de cortes) no cuentan
     // como pausa del usuario: esas sí deben reconectar.
     const internal = radioConnecting || !radioWasPlaying;
@@ -1891,7 +1979,7 @@ function init() {
       window.__radioMediaStarted = false;
     }
   });
-  audio.addEventListener('ended', () => {
+  enRadio('ended', () => {
     if (currentStation) {
       try {
         window.Android?.stopRadioMedia?.();
@@ -1933,6 +2021,14 @@ function init() {
   document.getElementById('btnViewRadios').addEventListener('click', () => cambiarVista('fav'));
   document.getElementById('btnRadioSearch').addEventListener('click', () => cambiarVista('search'));
   document.getElementById('btnRadioHifi')?.addEventListener('click', abrirAltaCalidad);
+  document.getElementById('btnRadioSonido')?.addEventListener('click', () => {
+    document.getElementById('settingsMenu')?.setAttribute('hidden', '');
+    window.openFxPanel?.();
+  });
+  // El AudioContext del ecualizador se reanuda al sonar la radio por él.
+  enRadio('playing', () => {
+    if (audio === audioFx) window.radioFx?.resume?.();
+  });
   document.getElementById('btnHifiCheck')?.addEventListener('click', () => comprobarAltaCalidad().catch(() => {}));
   textoHifiWifi();
   document.getElementById('btnHifiWifi')?.addEventListener('click', () => {
@@ -1981,7 +2077,7 @@ function init() {
     e.stopPropagation();
     pulsarBotonRadio();
   });
-  ['play', 'playing', 'pause', 'waiting', 'emptied'].forEach(t => audio.addEventListener(t, actualizarBotonRadio));
+  ['play', 'playing', 'pause', 'waiting', 'emptied'].forEach(t => enRadio(t, actualizarBotonRadio));
   setInterval(actualizarBotonRadio, 2000);
   statusEl?.addEventListener('click', e => {
     if (currentStation && audio.paused) {
@@ -2014,7 +2110,7 @@ function init() {
     if (!document.getElementById('radioNowPanel')?.hidden) renderRadioNowPanel();
   }, 30000);
 }
-audio.addEventListener('error', () => {
+enRadio('error', () => {
   if (currentStation && audio.paused && !radioConnecting && !radioUserPaused && !radioInterrupted) scheduleRadioReconnect();
 });
 window.addEventListener('online', () => {

@@ -89,6 +89,7 @@ const FX_DEFAULTS = {
   mono: false,
   custom: [],
   autoOutput: true, // ajustes distintos según por dónde suena (app Android)
+  radio: true, // aplicar también a la radio (en las emisoras que lo permiten)
   profiles: {} // salida → ajustes de sonido
 };
 // Lo que cambia con la salida (lo demás —fundidos, nivelador, presets guardados— es común).
@@ -244,38 +245,19 @@ const musicFx = {
   // Crea la cadena (una sola vez) y conecta las dos platinas.
   ensure() {
     if (this.active) return true;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx || !musDecks.length) return false;
+    if (!musDecks.length) return false;
     try {
-      const ctx = new Ctx({ latencyHint: 'playback' });
-      const mk = () => ctx.createGain();
-      const n = {
-        decks: [],
-        input: mk(),
-        pre: mk(),
-        hp: Array.from({ length: HP_MAX }, () => ctx.createBiquadFilter()),
-        eq: EQ_FREQS.map(() => ctx.createBiquadFilter()),
-        level: ctx.createDynamicsCompressor(),
-        pan: ctx.createStereoPanner ? ctx.createStereoPanner() : mk(),
-        limiter: ctx.createDynamicsCompressor(),
-        volume: mk()
-      };
+      const ctx = fxCtx();
+      if (!ctx) return false;
+      const n = buildFxChain(ctx);
+      n.decks = [];
       musDecks.forEach((el, i) => {
         const src = ctx.createMediaElementSource(el);
-        const g = mk();
+        const g = ctx.createGain();
         g.gain.value = musDeckLevel[i] ?? 1;
         src.connect(g).connect(n.input);
         n.decks.push(g);
       });
-      const chain = [n.input, n.pre, ...n.hp, ...n.eq, n.level, n.pan, n.limiter, n.volume];
-      for (let k = 0; k < chain.length - 1; k++) chain[k].connect(chain[k + 1]);
-      n.volume.connect(ctx.destination);
-      // Limitador: deja pasar todo salvo los picos que saturarían.
-      n.limiter.threshold.value = -1;
-      n.limiter.knee.value = 0;
-      n.limiter.ratio.value = 20;
-      n.limiter.attack.value = 0.002;
-      n.limiter.release.value = 0.12;
       this.ctx = ctx;
       this.nodes = n;
       this.active = true;
@@ -292,6 +274,95 @@ const musicFx = {
   }
 };
 window.musicFx = musicFx;
+
+// Un solo AudioContext para música y radio.
+let fxCtxShared = null;
+function fxCtx() {
+  if (fxCtxShared) return fxCtxShared;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  fxCtxShared = new Ctx({ latencyHint: 'playback' });
+  return fxCtxShared;
+}
+// entrada (mono) ─ preamp ─ auriculares ─ ecualizador ─ nivelador ─ balance ─ limitador ─ volumen ─ salida
+function buildFxChain(ctx) {
+  const mk = () => ctx.createGain();
+  const n = {
+    input: mk(),
+    pre: mk(),
+    hp: Array.from({ length: HP_MAX }, () => ctx.createBiquadFilter()),
+    eq: EQ_FREQS.map(() => ctx.createBiquadFilter()),
+    level: ctx.createDynamicsCompressor(),
+    pan: ctx.createStereoPanner ? ctx.createStereoPanner() : mk(),
+    limiter: ctx.createDynamicsCompressor(),
+    volume: mk()
+  };
+  const chain = [n.input, n.pre, ...n.hp, ...n.eq, n.level, n.pan, n.limiter, n.volume];
+  for (let k = 0; k < chain.length - 1; k++) chain[k].connect(chain[k + 1]);
+  n.volume.connect(ctx.destination);
+  // Limitador: deja pasar todo salvo los picos que saturarían.
+  n.limiter.threshold.value = -1;
+  n.limiter.knee.value = 0;
+  n.limiter.ratio.value = 20;
+  n.limiter.attack.value = 0.002;
+  n.limiter.release.value = 0.12;
+  return n;
+}
+
+/* ---------------------------------------------------------------------------
+   📻 Radio (1.36.0): el mismo sonido que en Mi música —corrección de auriculares,
+   ecualizador y perfil según por dónde suena— en las emisoras cuyo servidor deja
+   procesar el audio (CORS). La radio tiene un segundo <audio> con crossorigin solo
+   para esto: el de siempre nunca pasa por Web Audio, así que una emisora que no lo
+   permite suena igual que antes (si pasara por Web Audio, sonaría en silencio).
+   El volumen sigue siendo el del propio <audio> (Chrome lo aplica antes de la cadena).
+--------------------------------------------------------------------------- */
+const radioFx = {
+  nodes: null,
+  el: null,
+  // ¿Hay algo que aplicar a la radio?
+  wanted() {
+    const s = fxSettings();
+    return s.radio !== false && !!(s.eq || (s.hpOn && s.hp) || s.mono || Math.abs(Number(s.balance) || 0) > 0.001);
+  },
+  attach(el) {
+    if (this.nodes && this.el === el) return true;
+    try {
+      const ctx = fxCtx();
+      if (!ctx) return false;
+      const n = buildFxChain(ctx);
+      ctx.createMediaElementSource(el).connect(n.input);
+      this.nodes = n;
+      this.el = el;
+      applyFxChain(n, radioSettings());
+      this.resume();
+      return true;
+    } catch (e) {
+      try {
+        window.logError?.('RADIO_FX', String(e?.message || e));
+      } catch {}
+      return false;
+    }
+  },
+  resume() {
+    if (fxCtxShared && fxCtxShared.state !== 'running') fxCtxShared.resume().catch(() => {});
+  },
+  // Qué se le está aplicando ahora (para el reproductor).
+  label() {
+    const s = radioSettings();
+    if (s.hpOn && s.hp) return '🎧 ' + (s.hp.label || s.hp.name || 'corrección');
+    if (s.eq) return '🎛️ ' + (s.preset || 'ecualizador');
+    return '🎚️ sonido ajustado';
+  }
+};
+window.radioFx = radioFx;
+// En la radio no se usan el nivelador (comprime la emisión, que ya viene procesada)
+// ni nada si está desactivado «Aplicar también a la radio».
+function radioSettings() {
+  const s = fxSettings();
+  if (s.radio === false) return { ...s, eq: false, hpOn: false, mono: false, balance: 0, level: false };
+  return { ...s, level: false };
+}
 function setBiquad(f, type, fc, gain, q) {
   f.type = type;
   f.frequency.value = Math.max(10, Math.min(22000, fc));
@@ -300,11 +371,23 @@ function setBiquad(f, type, fc, gain, q) {
 }
 function applyFx() {
   const s = fxSettings();
+  if (radioFx.nodes) applyFxChain(radioFx.nodes, radioSettings());
   if (!musicFx.active) {
-    if (!fxNeedsGraph(s)) return;
+    if (!fxNeedsGraph(s)) return drawFxCurve();
+    if (!musicDecksReady()) return drawFxCurve(); // aún no se ha abierto Mi música
     if (!musicFx.ensure()) return podToast('Este dispositivo no permite procesar el audio');
   }
-  const n = musicFx.nodes;
+  applyFxChain(musicFx.nodes, s);
+  drawFxCurve();
+}
+function musicDecksReady() {
+  try {
+    return !!musDecks.length;
+  } catch {
+    return false;
+  }
+}
+function applyFxChain(n, s) {
   // Mono: se mezclan los dos canales en uno (útil con un solo auricular).
   n.input.channelCount = s.mono ? 1 : 2;
   n.input.channelCountMode = s.mono ? 'explicit' : 'max';
@@ -324,7 +407,6 @@ function applyFx() {
   if (s.level) Object.entries({ threshold: -24, knee: 18, ratio: 3, attack: 0.01, release: 0.3 }).forEach(([k, v]) => (n.level[k].value = v));
   else Object.entries({ threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.25 }).forEach(([k, v]) => (n.level[k].value = v));
   if (n.pan.pan) n.pan.pan.value = Math.max(-1, Math.min(1, Number(s.balance) || 0));
-  drawFxCurve();
 }
 
 /* ---------------------------------------------------------------------------
@@ -457,6 +539,9 @@ function renderFxPanel() {
     <canvas id="fxCurve" class="fx-curve" aria-label="Curva de ecualización"></canvas>
     <p class="fx-curve-note">${s.eq || (s.hpOn && s.hp) ? `Preamplificación total ${fmtDb(totalPreamp(s))} · limitador activo para que no sature.` : 'Activa el ecualizador o la corrección de tus auriculares para cambiar el sonido.'}</p>
 
+    <section class="fx-card fx-radio">
+      <label class="fx-switch"><input type="checkbox" data-k="radio" ${s.radio !== false ? 'checked' : ''}><span><b>📻 Aplicar también a la radio</b><small>Corrección y ecualizador también en las emisoras cuyo servidor lo permite (muchas de 💎 Alta calidad). En las demás suena sin cambios. Se nota al poner o volver a poner la emisora.</small></span></label>
+    </section>
     ${fxOutput.supported ? outputCardHtml(s) : ''}
     <section class="fx-card">
       <label class="fx-switch"><input type="checkbox" data-k="hpOn" ${s.hpOn ? 'checked' : ''}><span><b>🎧 Corrección de auriculares</b><small>Ajusta tus auriculares a una curva de referencia (Harman), con mediciones de AutoEq de unos 9.000 modelos.</small></span></label>
