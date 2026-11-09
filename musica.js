@@ -626,32 +626,40 @@ async function preloadNextRun(nx, i, el) {
 // siguiente canción, cada uno volvía a lanzar el cambio: varias cargas a la vez, la nueva
 // canción se reiniciaba y el fundido no se oía. Ahora solo hay un cambio en marcha y, si
 // la precarga aún no ha terminado, se espera a ella en vez de cargar otra vez.
-async function switchToOtherDeck(nx, secs) {
+// manual: cambio pedido por el usuario (siguiente, anterior, una de la cola…): la cola y
+// el historial ya los ha puesto quien llama, y la canción que se deja no cuenta como escuchada.
+async function switchToOtherDeck(nx, secs, { manual = false } = {}) {
   if (musicState.switching) return false;
   musicState.switching = true;
   try {
-    return await switchToOtherDeckRun(nx, secs);
+    return await switchToOtherDeckRun(nx, secs, manual);
   } finally {
     musicState.switching = false;
   }
 }
-async function switchToOtherDeckRun(nx, secs) {
+async function switchToOtherDeckRun(nx, secs, manual) {
   const from = musicState.deck,
     to = otherDeckIndex();
   const b = musDecks[to];
   if (!b) return false;
+  // Si mientras se carga se pide otra canción (startTrack sube el contador), este cambio se abandona.
+  const tok = musicState.switchToken || 0;
+  const vale = () => tok === (musicState.switchToken || 0) && musicState.deck === from;
   try {
     if (musicState.preload?.id === nx.id && !musicState.preload.ready && musicState.preload.p) {
       await musicState.preload.p.catch(() => {});
       // Mientras tanto se cambió de canción a mano: este fundido ya no toca.
-      if (musicState.deck !== from) return false;
+      if (!vale()) return false;
       // El tiempo que quedaba se ha acortado mientras se cargaba.
       const a = musDecks[from];
       const rem = a ? a.duration - a.currentTime : 0;
       if (secs && Number.isFinite(rem)) secs = Math.max(1, Math.min(secs, rem));
     }
     if (!(musicState.preload?.id === nx.id && musicState.preload.ready)) {
-      b.src = await trackSrc(nx, to);
+      const src = await trackSrc(nx, to);
+      if (!vale()) return false;
+      if (!src) throw new Error('sin fuente');
+      b.src = src;
       b.load();
     }
     b.currentTime = 0;
@@ -667,15 +675,22 @@ async function switchToOtherDeckRun(nx, secs) {
     } finally {
       clearTimeout(rescate);
     }
+    if (!vale()) {
+      b.pause();
+      deckLevel(to, 1, 0);
+      return false;
+    }
   } catch (e) {
     musicState.preload = null;
     return false;
   }
   const cur = musicState.current;
-  if (cur && !musicCounted) countMusicPlay(cur);
-  if (musicState.queue[0]?.id === nx.id) musicState.queue.shift();
-  else musicState.queue = musicState.queue.filter(x => x.id !== nx.id);
-  if (cur && cur.id !== nx.id) pushMusicHistory(cur);
+  if (!manual) {
+    if (cur && !musicCounted) countMusicPlay(cur);
+    if (musicState.queue[0]?.id === nx.id) musicState.queue.shift();
+    else musicState.queue = musicState.queue.filter(x => x.id !== nx.id);
+    if (cur && cur.id !== nx.id) pushMusicHistory(cur);
+  }
   musicState.deck = to;
   musicState.current = nx;
   musicState.preload = null;
@@ -796,9 +811,29 @@ async function prepareTrack(t, pos = 0) {
   };
   updateMusicNowUI();
 }
+// Fundido al cambiar de canción a mano: el de Sonido, pero como mucho 4 s (más largo,
+// al tocar «siguiente» parece que la app no responde).
+const MUS_MANUAL_XF_MAX = 4;
 async function startTrack(t, { pos = 0 } = {}) {
   const a = musicAudio();
   if (!a || !t) return;
+  musicState.switchToken = (musicState.switchToken || 0) + 1;
+  const tok = musicState.switchToken;
+  // 1.37.2: antes el fundido solo se hacía cuando la canción acababa sola; al cambiar a
+  // mano (siguiente, anterior, deslizar, la cola, el widget…) cortaba en seco.
+  const xf = Number(musicEngineOpts().crossfade) || 0;
+  const cur = musicState.current;
+  if (xf > 0 && !pos && !musicState.switching && !a.paused && a.currentTime > 1 && cur && cur.id !== t.id) {
+    stopOtherDeck();
+    musicUserPaused = false;
+    finMusicInterrupt();
+    if (await switchToOtherDeck(t, Math.min(xf, MUS_MANUAL_XF_MAX), { manual: true })) {
+      const sig = musicState.queue[0];
+      if (sig?.src) setTimeout(() => musFuenteBlob(sig).catch(() => {}), 1200);
+      return;
+    }
+    if (tok !== musicState.switchToken) return; // ya se pidió otra canción
+  }
   stopOtherDeck();
   window.musicFx?.resume?.();
   pauseOtherAudio();

@@ -1,6 +1,15 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.37.2 — Fundido también al cambiar de canción a mano
+
+- Hasta ahora el fundido de 🎚️ Sonido solo se hacía cuando la canción acababa sola. Al
+  cambiar a mano (siguiente, anterior, deslizar la carátula, tocar una de la cola, el
+  widget o la notificación) cortaba en seco. Ahora también funde: con la duración elegida,
+  pero como mucho 4 s, para que «siguiente» no parezca que no responde.
+- Si se pide otra canción mientras se prepara el cambio, ese cambio se abandona.
+- Pruebas: `tests/test_fx.py` (42).
+
 ## 1.37.1 — Música sin cortes con el ecualizador y fundido entre canciones arreglado
 
 - **Microcortes en Mi música** (silencios de 15-50 ms varias veces por segundo, sobre todo
