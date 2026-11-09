@@ -1,6 +1,22 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.37.1 — Música sin cortes con el ecualizador y fundido entre canciones arreglado
+
+- **Microcortes en Mi música** (silencios de 15-50 ms varias veces por segundo, sobre todo
+  con la app en segundo plano): desde 1.36.0 la música y la radio comparten la cadena de
+  sonido, y la de la radio se quedaba conectada aunque no sonara. Además cada cadena tenía
+  siempre conectados los 20 filtros de auriculares, las 10 bandas y el nivelador, aunque no
+  se usaran. El móvil no llegaba a tiempo. Ahora solo se conecta lo que hace algo y la
+  cadena de la radio se desconecta mientras no suena.
+- **«Aplicar también a la radio»** (y activar/quitar el ecualizador) se nota al momento con
+  la emisora sonando: ya no hace falta volver a ponerla ni cerrar la app.
+- **Fundido entre canciones**: mientras se preparaba la copia de la siguiente canción, el
+  cambio se lanzaba en cada `timeupdate` (4 veces por segundo): la siguiente se cargaba
+  varias veces, se reiniciaba y el fundido no se oía. Ahora hay un solo cambio en marcha,
+  espera a la precarga y esta empieza con margen (15 s + la duración del fundido).
+- Pruebas: `tests/test_radio_fx.py` (17) y `tests/test_fx.py` (39).
+
 ## 1.37.0 — 💎 Alta calidad: house, techno y pop (31 emisoras)
 
 - House/dance: **Fréquence 3 Dance**, **Radio Radar House**. Techno/electrónica: **MaXXima**.
@@ -20,7 +36,7 @@ Radios y podcast
   suena siempre se llama `id="audioPlayer"`.
 - En la radio no se aplica el nivelador (las emisiones ya vienen comprimidas).
 - Ajustes → «🎚️ Sonido: auriculares y ecualizador» abre el panel; en él, interruptor
-  «📻 Aplicar también a la radio» (activado). Los cambios se notan al poner o volver a poner la emisora.
+  «📻 Aplicar también a la radio» (activado).
 - Al reanudar la radio al abrir la app (sin tocar nada aún) suena sin ecualizar: el
   navegador no deja arrancar el audio procesado sin un toque.
 - Pruebas: `tests/test_radio_fx.py` (11).

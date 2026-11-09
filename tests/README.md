@@ -17,12 +17,12 @@ python -m playwright install chromium
 python tests\test_music.py     # Mi música: biblioteca, cola, listas, reproductor (53)
 python tests\test_lyrics.py    # Letras: LRCLIB, sincronizar, traducción, significado (43)
 python tests\test_favs.py      # Favoritos y carpetas incluidas/excluidas (24)
-python tests\test_fx.py        # Ecualizador, auriculares, salida de audio (36)
+python tests\test_fx.py        # Ecualizador, auriculares, salida de audio, fundidos (39)
 python tests\test_radio.py     # Radio de canción, ajustar letra, cortas, eliminar, duplicadas,
                                # editar ID3, abrir desde otras apps, gestos (84) — tarda ~2 min
 python tests\test_fix.py       # Bucle de feeds, registro de errores, reanudar (11)
 python tests\test_swipe.py     # Deslizar entre Radios/Podcasts/Música (10)
-python tests\test_radio_fx.py  # Ecualizador y auriculares en la radio (11)
+python tests\test_radio_fx.py  # Ecualizador y auriculares en la radio (17)
 python tests\test_hifi.py      # 💎 Alta calidad: FLAC, respaldo AAC, solo con Wi-Fi, ahora suena, comprobador (17)
 python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar al abrir»,
                                # microcortes y fallos de lectura (20)

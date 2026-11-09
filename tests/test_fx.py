@@ -188,6 +188,20 @@ with sync_playwright() as p:
     check('al acabar el fundido la anterior se para', page.evaluate("musDecks[%d].paused" % d0) and page.evaluate("musicState.xf") is None)
     check('historial y cola al día', page.evaluate("musicState.history.at(-1).id") == cur0 and page.evaluate("musicState.queue[0] && musicState.queue[0].id") != nx)
     check('ganancias de las platinas restauradas', page.evaluate("musicFx.nodes.decks.map(g=>+g.gain.value.toFixed(2))") == [1, 1])
+    # 1.37.1: si la copia de la siguiente tarda (archivo grande), el fundido no se lanza
+    # varias veces: se espera a la precarga y la canción entra con fundido una sola vez.
+    page.evaluate('''(() => { window.__ts = 0; const orig = trackSrc;
+      trackSrc = async (...a) => { window.__ts++; await new Promise(r => setTimeout(r, 2500)); return orig(...a); }; window.__tsOrig = orig; })()''')
+    d2 = page.evaluate('musicState.deck'); nx3 = page.evaluate('musicState.queue[0].id')
+    page.evaluate("musicAudio().currentTime = musicAudio().duration - 5"); page.wait_for_timeout(4200)
+    both = page.evaluate("musDecks.map(d=>!d.paused)")
+    check('fundido con precarga lenta: cambia de canción y suenan las dos', page.evaluate('musicState.current.id') == nx3 and page.evaluate('musicState.deck') != d2 and both == [True, True], [both, page.evaluate('musicState.current.id'), nx3])
+    page.wait_for_timeout(3000)
+    n_ts = page.evaluate('window.__ts')
+    check('la siguiente se prepara una sola vez (%d)' % n_ts, n_ts == 1)
+    check('y no se reinicia (va por %.1f s)' % page.evaluate('musicAudio().currentTime'), page.evaluate('musicAudio().currentTime') > 3)
+    page.evaluate('(() => { trackSrc = window.__tsOrig; })()')
+    page.wait_for_timeout(1500)
     # Sin pausas (sin fundido)
     page.evaluate("saveFx({crossfade:0, gapless:true})")
     d1 = page.evaluate('musicState.deck'); nx2 = page.evaluate('musicState.queue[0].id')

@@ -302,6 +302,19 @@ async function prepararAudioRadio(url) {
     cambiarAudioRadio(audioNormal);
   }
 }
+// Al cambiar en 🎚️ Sonido si se procesa la radio (o activar/quitar el ecualizador), la
+// emisora que suena se vuelve a poner por el reproductor que toca, sin cerrar la app.
+let radioFxCambioTimer = null;
+window.rvRadioFxCambio = () => {
+  clearTimeout(radioFxCambioTimer);
+  radioFxCambioTimer = setTimeout(() => {
+    if (!currentStation || radioConnecting || audio.paused || audioFx === audioNormal) return;
+    const quiere = !!window.radioFx?.wanted?.();
+    const porFx = audio === audioFx;
+    // 'no' = la emisora no lo permite: no se reintenta en cada cambio.
+    if ((porFx && !quiere) || (!porFx && quiere && radioFxEstado === '')) reproducirRadio(currentStation);
+  }, 700);
+};
 function textoFxRadio() {
   if (radioFxEstado === 'on' && audio === audioFx) return ' · ' + (window.radioFx?.label?.() || '🎚️');
   if (radioFxEstado === 'no') return ' · sin ecualizar';

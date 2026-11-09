@@ -1,4 +1,4 @@
-# 📻 Ecualizador y corrección de auriculares en la radio (1.36.0).
+# 📻 Ecualizador y corrección de auriculares en la radio (1.36.0; 1.37.1: cadena ligera y cambio en directo).
 import os, sys, json, threading, functools, http.server, socketserver
 from playwright.sync_api import sync_playwright
 
@@ -78,6 +78,25 @@ with sync_playwright() as p:
     ok('pausa', cur()['paused'] and 'pausa' in st().lower())
     pg.click('#btnRadioPlay'); pg.wait_for_timeout(2000)
     ok('reanuda', not cur()['paused'])
+    # 1.37.1: solo se conecta lo que hace algo (1 filtro de auriculares, sin ecualizador ni nivelador)
+    w = pg.evaluate('radioFx.nodes.wired.length')
+    ok('cadena de la radio con solo lo activo (%d nodos)' % w, w == 5)
+    pg.click('#btnRadioPlay'); pg.wait_for_timeout(500)
+    ok('en pausa la cadena de la radio se desconecta de la salida', pg.evaluate('radioFx.nodes.out === false'))
+    pg.click('#btnRadioPlay'); pg.wait_for_timeout(2000)
+    ok('al reanudar se vuelve a conectar', pg.evaluate('radioFx.nodes.out === true') and not cur()['paused'])
+    # Quitar «aplicar a la radio» desde el panel con la emisora sonando: cambia sin volver a ponerla
+    pg.evaluate("document.getElementById('btnRadioSonido').click(); 0"); pg.wait_for_timeout(500)
+    pg.evaluate("(() => { const c = document.querySelector('#fxPanel input[data-k=radio]'); c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); })()")
+    pg.wait_for_timeout(3000)
+    c = cur()
+    ok('al quitar «aplicar a la radio» sigue sonando por el <audio> normal (%s · %s)' % (c, st()), not c['fx'] and not c['paused'])
+    ok('y la cadena de la radio queda desconectada', pg.evaluate('radioFx.nodes.out === false'))
+    pg.evaluate("(() => { const c = document.querySelector('#fxPanel input[data-k=radio]'); c.checked = true; c.dispatchEvent(new Event('change', {bubbles: true})); })()")
+    pg.wait_for_timeout(3000)
+    c = cur()
+    ok('al volver a activarlo pasa otra vez por el ecualizador (%s)' % st(), c['fx'] and not c['paused'])
+    pg.evaluate('window.closeFxPanel(); 0'); pg.wait_for_timeout(300)
     # Desactivar «aplicar a la radio»
     pg.evaluate("(() => { const s = JSON.parse(localStorage.getItem('radios_viferor_music_audio_v1')); s.radio = false; localStorage.setItem('radios_viferor_music_audio_v1', JSON.stringify(s)); })()")
     pg.locator('#stationsGrid .station-card', has_text='Mellow Mix').first.click(); pg.wait_for_timeout(2000)

@@ -297,9 +297,12 @@ function buildFxChain(ctx) {
     limiter: ctx.createDynamicsCompressor(),
     volume: mk()
   };
-  const chain = [n.input, n.pre, ...n.hp, ...n.eq, n.level, n.pan, n.limiter, n.volume];
-  for (let k = 0; k < chain.length - 1; k++) chain[k].connect(chain[k + 1]);
-  n.volume.connect(ctx.destination);
+  // Las conexiones las hace wireFxChain con solo lo que está activo (applyFxChain).
+  n.dest = ctx.destination;
+  n.wired = [];
+  n.out = false;
+  wireFxChain(n, [n.input, n.pre, n.pan, n.limiter, n.volume]);
+  plugFxOut(n, true);
   // Limitador: deja pasar todo salvo los picos que saturarían.
   n.limiter.threshold.value = -1;
   n.limiter.knee.value = 0;
@@ -307,6 +310,31 @@ function buildFxChain(ctx) {
   n.limiter.attack.value = 0.002;
   n.limiter.release.value = 0.12;
   return n;
+}
+// 1.37.1: antes estaban siempre conectados los 20 filtros de auriculares, las 10 bandas
+// y el nivelador, aunque no se usaran (un filtro «sin efecto» calcula igual). Con la
+// cadena de la radio también activa, el móvil no llegaba a tiempo y la música se
+// entrecortaba. Ahora solo se conecta lo que hace algo.
+function wireFxChain(n, chain) {
+  const same = n.wired.length === chain.length && n.wired.every((x, i) => x === chain[i]);
+  if (same) return;
+  // Todo menos el último (el volumen, que va a la salida y se gestiona aparte).
+  n.wired.slice(0, -1).forEach(x => {
+    try {
+      x.disconnect();
+    } catch {}
+  });
+  for (let k = 0; k < chain.length - 1; k++) chain[k].connect(chain[k + 1]);
+  n.wired = chain;
+}
+// Conecta o desconecta la cadena de la salida (desconectada no gasta nada).
+function plugFxOut(n, on) {
+  if (!n || n.out === on) return;
+  try {
+    if (on) n.volume.connect(n.dest);
+    else n.volume.disconnect();
+    n.out = on;
+  } catch {}
 }
 
 /* ---------------------------------------------------------------------------
@@ -335,6 +363,12 @@ const radioFx = {
       this.nodes = n;
       this.el = el;
       applyFxChain(n, radioSettings());
+      // Si la radio no está sonando por aquí, la cadena no gasta nada (ver sleep/wake).
+      if (el.paused) plugFxOut(n, false);
+      // 1.37.1: antes se quedaba conectada para siempre, sonara o no la radio; con la
+      // música por la misma cadena de audio el móvil no daba abasto y se entrecortaba.
+      ['playing', 'play'].forEach(t => el.addEventListener(t, () => this.wake()));
+      ['pause', 'ended', 'emptied'].forEach(t => el.addEventListener(t, () => this.sleep()));
       this.resume();
       return true;
     } catch (e) {
@@ -346,6 +380,12 @@ const radioFx = {
   },
   resume() {
     if (fxCtxShared && fxCtxShared.state !== 'running') fxCtxShared.resume().catch(() => {});
+  },
+  wake() {
+    plugFxOut(this.nodes, true);
+  },
+  sleep() {
+    plugFxOut(this.nodes, false);
   },
   // Qué se le está aplicando ahora (para el reproductor).
   label() {
@@ -372,6 +412,11 @@ function setBiquad(f, type, fc, gain, q) {
 function applyFx() {
   const s = fxSettings();
   if (radioFx.nodes) applyFxChain(radioFx.nodes, radioSettings());
+  // Si cambia si hay que procesar la radio o no, la emisora que suena se pasa al otro
+  // reproductor ya (antes había que volver a ponerla o cerrar la app).
+  try {
+    window.rvRadioFxCambio?.();
+  } catch {}
   if (!musicFx.active) {
     if (!fxNeedsGraph(s)) return drawFxCurve();
     if (!musicDecksReady()) return drawFxCurve(); // aún no se ha abierto Mi música
@@ -407,6 +452,17 @@ function applyFxChain(n, s) {
   if (s.level) Object.entries({ threshold: -24, knee: 18, ratio: 3, attack: 0.01, release: 0.3 }).forEach(([k, v]) => (n.level[k].value = v));
   else Object.entries({ threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.25 }).forEach(([k, v]) => (n.level[k].value = v));
   if (n.pan.pan) n.pan.pan.value = Math.max(-1, Math.min(1, Number(s.balance) || 0));
+  const bal = Math.abs(Number(s.balance) || 0) > 0.001;
+  wireFxChain(n, [
+    n.input,
+    n.pre,
+    ...n.hp.slice(0, Math.min(HP_MAX, hp.length)),
+    ...(s.eq ? n.eq : []),
+    ...(s.level ? [n.level] : []),
+    ...(bal ? [n.pan] : []),
+    n.limiter,
+    n.volume
+  ]);
 }
 
 /* ---------------------------------------------------------------------------
@@ -540,7 +596,7 @@ function renderFxPanel() {
     <p class="fx-curve-note">${s.eq || (s.hpOn && s.hp) ? `Preamplificación total ${fmtDb(totalPreamp(s))} · limitador activo para que no sature.` : 'Activa el ecualizador o la corrección de tus auriculares para cambiar el sonido.'}</p>
 
     <section class="fx-card fx-radio">
-      <label class="fx-switch"><input type="checkbox" data-k="radio" ${s.radio !== false ? 'checked' : ''}><span><b>📻 Aplicar también a la radio</b><small>Corrección y ecualizador también en las emisoras cuyo servidor lo permite (muchas de 💎 Alta calidad). En las demás suena sin cambios. Se nota al poner o volver a poner la emisora.</small></span></label>
+      <label class="fx-switch"><input type="checkbox" data-k="radio" ${s.radio !== false ? 'checked' : ''}><span><b>📻 Aplicar también a la radio</b><small>Corrección y ecualizador también en las emisoras cuyo servidor lo permite (muchas de 💎 Alta calidad). En las demás suena sin cambios.</small></span></label>
     </section>
     ${fxOutput.supported ? outputCardHtml(s) : ''}
     <section class="fx-card">

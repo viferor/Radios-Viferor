@@ -604,8 +604,12 @@ function peekNextTrack() {
 async function preloadNext(nx) {
   const i = otherDeckIndex();
   const el = musDecks[i];
-  if (!el || musicState.preload?.id === nx.id) return;
+  if (!el || musicState.preload?.id === nx.id) return musicState.preload?.p;
   musicState.preload = { id: nx.id, deck: i, ready: false };
+  musicState.preload.p = preloadNextRun(nx, i, el);
+  return musicState.preload.p;
+}
+async function preloadNextRun(nx, i, el) {
   try {
     const src = await trackSrc(nx, i);
     if (musicState.preload?.id !== nx.id) return;
@@ -618,12 +622,34 @@ async function preloadNext(nx) {
   }
 }
 // La siguiente canción pasa a sonar en la otra platina (fundido o sin pausa).
+// 1.37.1: timeupdate llega 4 veces por segundo y, mientras se preparaba la copia de la
+// siguiente canción, cada uno volvía a lanzar el cambio: varias cargas a la vez, la nueva
+// canción se reiniciaba y el fundido no se oía. Ahora solo hay un cambio en marcha y, si
+// la precarga aún no ha terminado, se espera a ella en vez de cargar otra vez.
 async function switchToOtherDeck(nx, secs) {
+  if (musicState.switching) return false;
+  musicState.switching = true;
+  try {
+    return await switchToOtherDeckRun(nx, secs);
+  } finally {
+    musicState.switching = false;
+  }
+}
+async function switchToOtherDeckRun(nx, secs) {
   const from = musicState.deck,
     to = otherDeckIndex();
   const b = musDecks[to];
   if (!b) return false;
   try {
+    if (musicState.preload?.id === nx.id && !musicState.preload.ready && musicState.preload.p) {
+      await musicState.preload.p.catch(() => {});
+      // Mientras tanto se cambió de canción a mano: este fundido ya no toca.
+      if (musicState.deck !== from) return false;
+      // El tiempo que quedaba se ha acortado mientras se cargaba.
+      const a = musDecks[from];
+      const rem = a ? a.duration - a.currentTime : 0;
+      if (secs && Number.isFinite(rem)) secs = Math.max(1, Math.min(secs, rem));
+    }
     if (!(musicState.preload?.id === nx.id && musicState.preload.ready)) {
       b.src = await trackSrc(nx, to);
       b.load();
@@ -4058,8 +4084,10 @@ function initMusic() {
       const nx = peekNextTrack();
       if (nx) {
         const xf = Number(eng.crossfade) || 0;
+        // La copia de la siguiente se prepara con margen: antes, con fundidos largos, no
+        // estaba lista cuando tocaba empezar.
         if (xf > 0 && a.duration > xf * 2 + 5 && rem <= xf) switchToOtherDeck(nx, Math.max(1, Math.min(xf, rem)));
-        else if ((eng.gapless || xf > 0) && rem <= 15) preloadNext(nx);
+        else if ((eng.gapless || xf > 0) && rem <= 15 + xf) preloadNext(nx);
       }
     }
     const now = Date.now();
