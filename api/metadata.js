@@ -1,22 +1,396 @@
-const TIMEOUT_MS = 7000;
-const RB_MIRRORS=['https://de1.api.radio-browser.info','https://nl1.api.radio-browser.info','https://at1.api.radio-browser.info'];
-function clean(v){return String(v||'').replace(/\0/g,'').replace(/\s+/g,' ').trim();}
-function decodeLatin1(u8){let s='';for(let i=0;i<u8.length;i++)s+=String.fromCharCode(u8[i]);try{return decodeURIComponent(escape(s));}catch{return s;}}
-function parseIcy(buf){const text=decodeLatin1(buf);const m=text.match(/StreamTitle='([^']*)';/i)||text.match(/StreamTitle="([^"]*)";/i);return clean(m?.[1]||'');}
-async function radioBrowserSong(name,state,stationuuid,url){for(const base of RB_MIRRORS){try{if(stationuuid){const r=await fetch(`${base}/json/stations/byuuid/${encodeURIComponent(stationuuid)}`,{headers:{'Accept':'application/json'},signal:AbortSignal.timeout(3500)});if(r.ok){const a=await r.json();const x=a?.[0];if(x?.songtitle)return {song:clean(x.songtitle),stationuuid:x.stationuuid||stationuuid};}}}catch{}try{const q=new URLSearchParams({countrycode:'ES',countrycodeexact:'true',hidebroken:'true',limit:'20'});if(name)q.set('name',name);if(state)q.set('state',state);if(url)q.set('url',url);const r=await fetch(`${base}/json/stations/search?${q}`,{headers:{'Accept':'application/json'},signal:AbortSignal.timeout(4500)});if(!r.ok)continue;const a=await r.json();const nl=String(name||'').toLowerCase().trim();const exact=a.find(x=>nl&&String(x.name||'').toLowerCase().trim()===nl)||a.find(x=>stationuuid&&x.stationuuid===stationuuid)||a[0];if(exact?.songtitle)return {song:clean(exact.songtitle),stationuuid:exact.stationuuid||stationuuid||''};}catch{}}return null;}
-export default async function handler(req,res){
-  const url=String(req.query?.url||'');
-  const name=String(req.query?.name||'').trim();
-  const state=String(req.query?.state||'').trim();
-  if(!/^https?:\/\//i.test(url))return res.status(400).json({error:'URL no válida'});
-  const ctl=new AbortController();const timer=setTimeout(()=>ctl.abort(),TIMEOUT_MS);
-  try{
-    const r=await fetch(url,{headers:{'Icy-MetaData':'1','User-Agent':'RadioEspana/1.2'},redirect:'follow',signal:ctl.signal});
-    const headers={};for(const [k,v] of r.headers)headers[k.toLowerCase()]=v;
-    const metaInt=Number(headers['icy-metaint']||0);
-    const out={song:'',title:clean(headers['icy-name']||''),bitrate:clean(headers['icy-br']||'')};
-    if(metaInt>0&&r.body){const reader=r.body.getReader();let data=new Uint8Array(0),target=metaInt+1;while(data.length<target){const {value,done}=await reader.read();if(done)break;const merged=new Uint8Array(data.length+value.length);merged.set(data);merged.set(value,data.length);data=merged;if(data.length>262144)break;}if(data.length>metaInt){const len=data[metaInt]*16;const end=Math.min(data.length,metaInt+1+len);out.song=parseIcy(data.slice(metaInt+1,end));}try{reader.cancel();}catch{}}
-    clearTimeout(timer);res.setHeader('Cache-Control','no-store');if(!out.song){const rb=await radioBrowserSong(name,state,req.query?.stationuuid||'',url);if(rb){out.song=rb.song;out.stationuuid=rb.stationuuid;out.source='radio-browser';}}
+import { safeFetch, rateLimited, HttpError, readLimited } from './_lib/net.js';
+const TIMEOUT_MS = 6000;
+const RB_MIRRORS = [
+  'https://de1.api.radio-browser.info',
+  'https://nl1.api.radio-browser.info',
+  'https://at1.api.radio-browser.info'
+];
+function clean(v) {
+  return String(v || '')
+    .replace(/\0/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function decodeLatin1(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+  try {
+    return decodeURIComponent(escape(s));
+  } catch {
+    return s;
+  }
+}
+function parseIcy(buf) {
+  const text = decodeLatin1(buf);
+  // Admite apóstrofos dentro del título (p. ej. «Guns N' Roses - Sweet Child O' Mine»).
+  const m =
+    text.match(/StreamTitle='([\s\S]*?)';(?=\s*(?:Stream\w+=|$|\0))/i) ||
+    text.match(/StreamTitle='([^']*)';/i) ||
+    text.match(/StreamTitle="([^"]*)";/i);
+  return clean(m?.[1] || '');
+}
+
+function normText(v) {
+  return String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+// Textos que las emisoras envían en lugar de una canción.
+const JUNK = /\b(publicidad|anuncio|anuncios|advert|commercial|cuña|cunas|jingle|promo|separador|indicativo|en directo|live|unknown|desconocido)\b/i;
+// Separa «Artista - Título». Devuelve null si el texto no parece una canción
+// (vacío, el nombre de la emisora, publicidad…).
+export function parseSong(raw, ...stationNames) {
+  // Sin comillas ni guiones sueltos al principio o al final («Taktovka - »).
+  let s = clean(raw)
+    .replace(/^["'«]+|["'»]+$/g, '')
+    .replace(/^(?:\s*[-–—]\s*)+|(?:\s*[-–—]\s*)+$/g, '')
+    .trim();
+  if (!s || s.length < 3 || /^[-\s.]+$/.test(s) || JUNK.test(s)) return null;
+  const n = normText(s);
+  for (const st of stationNames) {
+    const sn = normText(st);
+    if (sn && (n === sn || n.replace(/\s/g, '') === sn.replace(/\s/g, ''))) return null;
+  }
+  const parts = s.split(/\s+[-–—]\s+/);
+  if (parts.length >= 2) {
+    const artist = clean(parts[0]),
+      title = clean(parts.slice(1).join(' - '));
+    if (artist && title && !stationNames.some(st => normText(st) && normText(artist) === normText(st)))
+      return { artist, title, text: `${artist} - ${title}` };
+    if (title) return { artist: '', title, text: title };
+  }
+  return { artist: '', title: s, text: s };
+}
+
+// Carátula de la canción (iTunes). Caché en memoria para no repetir búsquedas.
+const covers = globalThis.__rvCovers || (globalThis.__rvCovers = new Map());
+async function coverFor(artist, title) {
+  if (!artist || !title) return '';
+  const k = normText(artist + ' ' + title);
+  const hit = covers.get(k);
+  if (hit && Date.now() - hit.t < 86400000) return hit.url;
+  let url = '';
+  try {
+    const q = new URLSearchParams({ term: `${artist} ${title}`, media: 'music', entity: 'song', limit: '5', country: 'ES' });
+    const r = await fetch('https://itunes.apple.com/search?' + q, { signal: AbortSignal.timeout(2500) });
+    if (r.ok) {
+      const d = await r.json();
+      const na = normText(artist);
+      const best =
+        (d.results || []).find(x => normText(x.artistName).includes(na.split(' ')[0] || na)) || (d.results || [])[0];
+      if (best?.artworkUrl100) url = best.artworkUrl100.replace(/\/\d+x\d+bb\./, '/600x600bb.');
+    }
+  } catch {}
+  covers.set(k, { t: Date.now(), url });
+  if (covers.size > 800) covers.delete(covers.keys().next().value);
+  return url;
+}
+async function radioBrowserSong(name, state, stationuuid, url) {
+  for (const base of RB_MIRRORS) {
+    try {
+      if (stationuuid) {
+        const r = await fetch(`${base}/json/stations/byuuid/${encodeURIComponent(stationuuid)}`, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (r.ok) {
+          const a = await r.json();
+          const x = a?.[0];
+          if (x?.songtitle) return { song: clean(x.songtitle), stationuuid: x.stationuuid || stationuuid };
+        }
+      }
+    } catch {}
+    try {
+      const q = new URLSearchParams({
+        countrycode: 'ES',
+        countrycodeexact: 'true',
+        hidebroken: 'true',
+        limit: '20'
+      });
+      if (name) q.set('name', name);
+      if (state) q.set('state', state);
+      if (url) q.set('url', url);
+      const r = await fetch(`${base}/json/stations/search?${q}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500)
+      });
+      if (!r.ok) continue;
+      const a = await r.json();
+      const nl = String(name || '')
+        .toLowerCase()
+        .trim();
+      const exact =
+        a.find(
+          x =>
+            nl &&
+            String(x.name || '')
+              .toLowerCase()
+              .trim() === nl
+        ) ||
+        a.find(x => stationuuid && x.stationuuid === stationuuid) ||
+        a[0];
+      if (exact?.songtitle)
+        return { song: clean(exact.songtitle), stationuuid: exact.stationuuid || stationuuid || '' };
+    } catch {}
+  }
+  return null;
+}
+// «Ahora suena» de emisoras cuyo stream FLAC no lleva el título dentro: se pide a la
+// API pública de cada emisora. Solo estas direcciones fijas (no es un proxy abierto).
+async function getJson(url) {
+  const r = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'RadiosViferor/metadata' },
+    signal: AbortSignal.timeout(4500)
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+export async function providerSong(meta) {
+  const m = String(meta || '').match(/^(rp|soma|sr|cro):([\w-]{1,40})$/);
+  if (!m) return null;
+  const [, kind, id] = m;
+  let artist = '',
+    title = '',
+    cover = '';
+  if (kind === 'rp') {
+    const d = await getJson('https://api.radioparadise.com/api/now_playing?chan=' + encodeURIComponent(id));
+    artist = d?.artist;
+    title = d?.title;
+    cover = d?.cover || '';
+  } else if (kind === 'soma') {
+    const d = await getJson('https://somafm.com/songs/' + encodeURIComponent(id) + '.json');
+    const x = d?.songs?.[0];
+    artist = x?.artist;
+    title = x?.title;
+  } else if (kind === 'sr') {
+    const d = await getJson('https://api.sr.se/api/v2/playlists/rightnow?format=json&channelid=' + encodeURIComponent(id));
+    const x = d?.playlist?.song;
+    artist = x?.artist;
+    title = x?.title;
+  } else if (kind === 'cro') {
+    const d = await getJson('https://api.rozhlas.cz/data/v2/playlist/now/' + encodeURIComponent(id) + '.json');
+    const x = d?.data || {};
+    artist = x.interpret || x.artist;
+    title = x.track || x.title;
+  }
+  artist = clean(artist);
+  title = clean(title);
+  if (!title) return null;
+  return { artist, title, cover: /^https:\/\//i.test(cover) ? cover : '', source: kind };
+}
+// ---------------------------------------------------------------------------
+// «Ahora suena» leído del propio servidor de streaming, para emisoras cuyo stream no
+// lleva ICY (los FLAC en Ogg, HLS…). Icecast publica /status-json.xsl con el título de
+// cada punto de montaje (también de los Ogg FLAC); AzuraCast publica /api/nowplaying y
+// Shoutcast v2 /stats. Cada intento con su propio tiempo máximo y en paralelo.
+async function jsonFrom(url, ms = 3000) {
+  const r = await safeFetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'RadiosViferor/metadata' } }, { timeoutMs: ms });
+  if (!r.ok) {
+    try {
+      await r.body?.cancel();
+    } catch {}
+    throw new Error('HTTP ' + r.status);
+  }
+  const buf = await readLimited(r, 1_500_000);
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+const pathOf = u => {
+  try {
+    return new URL(u).pathname.replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+};
+async function icecastSong(streamUrl) {
+  const u = new URL(streamUrl);
+  const d = await jsonFrom(u.origin + '/status-json.xsl');
+  let src = d?.icestats?.source;
+  if (!src) throw new Error('sin fuentes');
+  if (!Array.isArray(src)) src = [src];
+  const want = pathOf(streamUrl);
+  const x = src.find(s => pathOf(s.listenurl) === want) || (src.length === 1 ? src[0] : null);
+  const title = clean(x?.title),
+    artist = clean(x?.artist);
+  if (!title) throw new Error('sin título');
+  return { song: artist && !title.includes(artist) ? `${artist} - ${title}` : title, source: 'icecast' };
+}
+async function azuracastSong(streamUrl) {
+  const u = new URL(streamUrl);
+  if (!/\/(radio\/\d+|listen\/[\w.-]+)\//.test(u.pathname)) throw new Error('no es AzuraCast');
+  const d = await jsonFrom(u.origin + '/api/nowplaying');
+  const list = Array.isArray(d) ? d : [d];
+  const want = pathOf(streamUrl);
+  const x =
+    list.find(n => [n?.station?.listen_url, ...(n?.station?.mounts || []).map(m => m.url)].some(l => l && pathOf(l) === want)) ||
+    (list.length === 1 ? list[0] : null);
+  const song = x?.now_playing?.song;
+  if (!song?.title && !song?.text) throw new Error('sin título');
+  const artist = clean(song.artist),
+    title = clean(song.title);
+  return { song: artist && title ? `${artist} - ${title}` : clean(song.text), source: 'azuracast', cover: /^https:/.test(song.art || '') ? song.art : '' };
+}
+async function textFrom(url, ms = 3000) {
+  const r = await safeFetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 RadiosViferor/metadata' } }, { timeoutMs: ms });
+  if (!r.ok) {
+    try {
+      await r.body?.cancel();
+    } catch {}
+    throw new Error('HTTP ' + r.status);
+  }
+  return decodeLatin1(await readLimited(r, 200_000));
+}
+async function shoutcastSong(streamUrl) {
+  const u = new URL(streamUrl);
+  const d = await jsonFrom(u.origin + '/stats?sid=1&json=1');
+  const t = clean(d?.songtitle);
+  if (!t) throw new Error('sin título');
+  return { song: t, source: 'shoutcast' };
+}
+// Shoutcast antiguo (v1) y servidores que imitan su /7.html o /currentsong.
+async function shoutcastV1Song(streamUrl) {
+  const u = new URL(streamUrl);
+  const html = await textFrom(u.origin + '/7.html');
+  const body = clean(html.replace(/<[^>]*>/g, ' '));
+  const parts = body.split(',');
+  const t = clean(parts.length >= 7 ? parts.slice(6).join(',') : '');
+  if (!t) throw new Error('sin título');
+  return { song: t, source: 'shoutcast' };
+}
+async function currentSong(streamUrl) {
+  const u = new URL(streamUrl);
+  const t = clean((await textFrom(u.origin + '/currentsong?sid=1')).replace(/<[^>]*>/g, ' '));
+  if (!t || t.length > 300 || /<|html|not found|error/i.test(t)) throw new Error('sin título');
+  return { song: t, source: 'shoutcast' };
+}
+export async function serverSong(urls) {
+  const tries = [];
+  for (const u of [...new Set(urls.filter(x => /^https?:\/\//i.test(x || '') && !/\.m3u8(?:$|\?)/i.test(x)))])
+    tries.push(icecastSong(u), azuracastSong(u), shoutcastSong(u), shoutcastV1Song(u), currentSong(u));
+  if (!tries.length) return null;
+  try {
+    return await Promise.any(tries);
+  } catch {
+    return null;
+  }
+}
+
+export default async function handler(req, res) {
+  if (rateLimited(req, res, 'metadata', 90)) return;
+  const url = String(req.query?.url || '');
+  const name = String(req.query?.name || '').trim();
+  const state = String(req.query?.state || '').trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'URL no válida' });
+  // El CDN guarda la respuesta 15 s por URL: todos los oyentes de una emisora
+  // comparten una sola conexión al stream en lugar de abrir una cada uno.
+  res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
+  const meta = String(req.query?.meta || '');
+  if (meta && meta !== 'icy') {
+    try {
+      const p = await providerSong(meta);
+      if (p) {
+        const text = p.artist ? `${p.artist} - ${p.title}` : p.title;
+        return res.status(200).json({
+          song: text,
+          artist: p.artist,
+          track: p.title,
+          cover: p.cover || (await coverFor(p.artist, p.title)),
+          source: p.source
+        });
+      }
+    } catch {}
+    // Si la API de la emisora falla, se sigue con el título del stream (si lo hay).
+  }
+  const alt = String(req.query?.alt || '');
+  const out = { song: '', title: '', bitrate: '' };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  let reader = null;
+  try {
+    // 1) Título dentro del stream (ICY). safeFetch valida la URL y cada redirección.
+    try {
+      const r = await safeFetch(url, {
+        headers: { 'Icy-MetaData': '1', 'User-Agent': 'RadiosViferor/metadata' },
+        signal: ctl.signal
+      });
+      const headers = {};
+      for (const [k, v] of r.headers) headers[k.toLowerCase()] = v;
+      const metaInt = Number(headers['icy-metaint'] || 0);
+      out.title = clean(headers['icy-name'] || '');
+      out.bitrate = clean(headers['icy-br'] || '');
+      if (r.body) reader = r.body.getReader();
+      if (metaInt > 0 && metaInt < 262144 && reader) {
+        // Se lee hasta el byte de longitud y después el bloque de metadatos completo.
+        let data = new Uint8Array(0);
+        let target = metaInt + 1;
+        while (data.length < target) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const merged = new Uint8Array(data.length + value.length);
+          merged.set(data);
+          merged.set(value, data.length);
+          data = merged;
+          if (data.length > metaInt && target === metaInt + 1) target = metaInt + 1 + data[metaInt] * 16;
+        }
+        if (data.length > metaInt) {
+          const end = Math.min(data.length, metaInt + 1 + data[metaInt] * 16);
+          out.song = parseIcy(data.slice(metaInt + 1, end));
+          if (out.song) out.source = 'icy';
+        }
+      }
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 400) throw e;
+    } finally {
+      clearTimeout(timer);
+      try {
+        await reader?.cancel();
+      } catch {}
+      reader = null;
+    }
+    // 2) Sin ICY (FLAC en Ogg, HLS…): se pregunta al servidor de streaming.
+    let serverCover = '';
+    if (!out.song) {
+      const sv = await serverSong([url, alt]);
+      if (sv) {
+        out.song = sv.song;
+        out.source = sv.source;
+        serverCover = sv.cover || '';
+      }
+    }
+    // 3) Último recurso: radio-browser (solo emisoras españolas; las de Alta calidad,
+    //    que llegan con «alt», no: allí no están y solo hacía esperar).
+    if (!out.song && !alt) {
+      const rb = await radioBrowserSong(name, state, req.query?.stationuuid || '', url);
+      if (rb) {
+        out.song = rb.song;
+        out.stationuuid = rb.stationuuid;
+        out.source = 'radio-browser';
+      }
+    }
+    // Artista, título y carátula por separado (la web y la notificación los muestran aparte).
+    const song = parseSong(out.song, name, out.title);
+    if (song) {
+      out.song = song.text;
+      out.artist = song.artist;
+      out.track = song.title;
+      out.cover = serverCover || (await coverFor(song.artist, song.title));
+    } else {
+      out.song = '';
+    }
     return res.status(200).json(out);
-  }catch(e){clearTimeout(timer);return res.status(200).json({song:'',error:e.name==='AbortError'?'timeout':'metadata_unavailable'});}
+  } catch (e) {
+    clearTimeout(timer);
+    if (e instanceof HttpError && e.status === 400) return res.status(400).json({ error: e.message });
+    return res.status(200).json({ song: '', error: e.name === 'AbortError' ? 'timeout' : 'metadata_unavailable' });
+  } finally {
+    // Cerrar siempre la conexión al stream (antes quedaba abierta si no había ICY).
+    try {
+      await reader?.cancel();
+    } catch {}
+    try {
+      ctl.abort();
+    } catch {}
+  }
 }

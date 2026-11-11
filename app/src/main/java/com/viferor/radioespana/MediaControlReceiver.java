@@ -23,8 +23,25 @@ public class MediaControlReceiver extends BroadcastReceiver {
             WidgetProvider.updateAll(context);
             return;
         }
-        // Playback is already owned by the live WebView while audio is playing.
-        // Do not bring the application to the foreground just to execute a control.
-        MainActivity.dispatchMediaActionToActive(action);
+        // La reproducción la lleva la web (dentro de MainActivity). Si la app ya no está
+        // abierta, se abre con la orden: al cargar, empieza a sonar sin tocar nada más.
+        if (!MainActivity.dispatchMediaActionToActive(action)) {
+            if (arrancarReproduccion(action) && MainActivity.startWithMediaAction(context, action)) return;
+            // La app ya no está abierta (el reproductor web no existe): se retira la
+            // notificación en lugar de dejar un botón que no hace nada.
+            MediaPlaybackService.stop(context);
+            android.app.NotificationManager nm = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(PodcastMediaController.NOTIFICATION_ID);
+            context.getSharedPreferences("radio_viferor_prefs", Context.MODE_PRIVATE).edit()
+                    .putBoolean("widget_playing", false).putString("widget_subtitle", "Sin reproducción").apply();
+            WidgetProvider.updateAll(context);
+        }
+    }
+
+    /** ¿Esta orden tiene sentido si no hay nada sonando? (Pausar o buscar, no). */
+    private static boolean arrancarReproduccion(String action) {
+        return PodcastMediaController.ACTION_WIDGET_PLAY.equals(action)
+                || PodcastMediaController.ACTION_WIDGET_NEXT.equals(action)
+                || PodcastMediaController.ACTION_WIDGET_PREV.equals(action);
     }
 }

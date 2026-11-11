@@ -29,10 +29,12 @@ public class WidgetProvider extends AppWidgetProvider {
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_podcast);
         String section = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PLAYBACK_SECTION, "radio");
-        boolean podcast = "podcast".equalsIgnoreCase(PodcastMediaController.getWidgetType(context));
+        String type = PodcastMediaController.getWidgetType(context);
+        boolean music = "music".equalsIgnoreCase(type);
+        boolean podcast = "podcast".equalsIgnoreCase(type) || music;
         String rawTitle = PodcastMediaController.getWidgetTitle(context);
         String rawSubtitle = PodcastMediaController.getWidgetSubtitle(context);
-        v.setTextViewText(R.id.widget_title, podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
+        v.setTextViewText(R.id.widget_title, music ? "🎵 Música · " + rawTitle : podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
         v.setTextViewText(R.id.widget_subtitle, rawSubtitle);
         v.setTextViewText(R.id.widget_play, PodcastMediaController.getWidgetPlaying(context) ? "⏸" : "▶");
         v.setTextViewText(R.id.widget_back, podcast ? "−15" : "•");
@@ -90,10 +92,12 @@ public class WidgetProvider extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_forward, android.view.View.GONE);
             v.setViewVisibility(R.id.widget_next, android.view.View.GONE);
         }
-        set(v, context, R.id.widget_play,
-                PodcastMediaController.getWidgetPlaying(context)
-                        ? PodcastMediaController.ACTION_WIDGET_PAUSE
-                        : PodcastMediaController.ACTION_WIDGET_PLAY, 103);
+        boolean sonando = PodcastMediaController.getWidgetPlaying(context);
+        if (sonando) set(v, context, R.id.widget_play, PodcastMediaController.ACTION_WIDGET_PAUSE, 103);
+        // Si no está sonando, «play» ABRE la app con la orden de reproducir: la música la
+        // reproduce la web, que vive dentro de la aplicación. Antes mandaba solo un aviso y,
+        // con la app cerrada, no sonaba nada (había que abrirla a mano).
+        else setOpenAndPlay(v, context, R.id.widget_play, PodcastMediaController.ACTION_WIDGET_PLAY, 113);
         set(v, context, R.id.widget_volume_down, PodcastMediaController.ACTION_WIDGET_VOLUME_DOWN, 106);
         set(v, context, R.id.widget_volume_up, PodcastMediaController.ACTION_WIDGET_VOLUME_UP, 107);
         return v;
@@ -102,6 +106,14 @@ public class WidgetProvider extends AppWidgetProvider {
     private static void set(RemoteViews v, Context c, int viewId, String action, int req) {
         Intent i = new Intent(c, MediaControlReceiver.class).setAction(action);
         v.setOnClickPendingIntent(viewId, PendingIntent.getBroadcast(c, req, i, PendingIntent.FLAG_UPDATE_CURRENT | immutable()));
+    }
+
+    /** Botón que abre la app pidiendo que empiece a sonar (no es un mando a distancia). */
+    private static void setOpenAndPlay(RemoteViews v, Context c, int viewId, String action, int req) {
+        Intent i = new Intent(c, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(MainActivity.EXTRA_MEDIA_ACTION, action);
+        v.setOnClickPendingIntent(viewId, PendingIntent.getActivity(c, req, i, PendingIntent.FLAG_UPDATE_CURRENT | immutable()));
     }
     private static int immutable() { return android.os.Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0; }
 }
