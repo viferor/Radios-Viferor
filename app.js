@@ -1525,6 +1525,40 @@ window.viferorNativeRadioPlay = () => {
     reanudarRadio();
   } catch {}
 };
+// Botón 📻 del widget (APK 1.17): que suene la radio aunque lo último fuera otra cosa.
+// Reanuda la emisora de antes; si no hay, la última guardada; si tampoco, la primera favorita.
+function rvRadioDesdeFuera() {
+  if (currentStation) {
+    radioUserPaused = false;
+    if (audio && !audio.paused && !radioConnecting) return true; // ya suena
+    reanudarRadio();
+    return true;
+  }
+  let st = null;
+  try {
+    st = JSON.parse(localStorage.getItem('radio_resume_state') || 'null')?.station || null;
+  } catch {}
+  st = st || favorites[0] || null;
+  if (!st) {
+    window.podToast?.('No hay ninguna emisora guardada: elige una en Radios');
+    return false;
+  }
+  reproducirRadio(st);
+  return true;
+}
+// Botones 📻 🎙️ 🎵 del widget: Android llama aquí con la sección elegida.
+window.viferorReproducirSeccion = function (seccion) {
+  const s = String(seccion || '').toLowerCase();
+  window.rvAnotar?.(`Widget: ▶ ${s === 'music' ? 'música' : s === 'podcast' ? 'podcast' : 'radio'}`, 'botones de sección del widget');
+  try {
+    if (s === 'music') return !!window.rvMusicaDesdeFuera?.();
+    if (s === 'podcast') return !!window.rvPodcastDesdeFuera?.();
+    return rvRadioDesdeFuera();
+  } catch (e) {
+    window.logError?.('AUTO', 'Widget: no se pudo poner ' + s, '', String(e?.message || e));
+    return false;
+  }
+};
 window.viferorNativeRadioPause = () => {
   try {
     finInterrupcionRadio();

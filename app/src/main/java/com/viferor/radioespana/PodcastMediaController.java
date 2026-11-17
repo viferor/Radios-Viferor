@@ -35,6 +35,18 @@ public final class PodcastMediaController {
     public static final String ACTION_WIDGET_NEXT = "com.viferor.radioespana.WIDGET_NEXT";
     public static final String ACTION_WIDGET_VOLUME_DOWN = "com.viferor.radioespana.WIDGET_VOLUME_DOWN";
     public static final String ACTION_WIDGET_VOLUME_UP = "com.viferor.radioespana.WIDGET_VOLUME_UP";
+    // Botones 📻 🎙️ 🎵 del widget (APK 1.17): que suene esa sección, sea cual sea la última.
+    public static final String ACTION_WIDGET_PLAY_RADIO = "com.viferor.radioespana.WIDGET_PLAY_RADIO";
+    public static final String ACTION_WIDGET_PLAY_PODCAST = "com.viferor.radioespana.WIDGET_PLAY_PODCAST";
+    public static final String ACTION_WIDGET_PLAY_MUSIC = "com.viferor.radioespana.WIDGET_PLAY_MUSIC";
+
+    /** "radio", "podcast" o "music" si la orden es uno de los botones de sección; si no, null. */
+    static String sectionOfAction(String action) {
+        if (ACTION_WIDGET_PLAY_RADIO.equals(action)) return "radio";
+        if (ACTION_WIDGET_PLAY_PODCAST.equals(action)) return "podcast";
+        if (ACTION_WIDGET_PLAY_MUSIC.equals(action)) return "music";
+        return null;
+    }
 
     private static final String CHANNEL_ID = "podcast_media_controls";
     private static final String PREFS_NAME = "radio_viferor_prefs";

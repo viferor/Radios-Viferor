@@ -417,6 +417,12 @@ function applyFx() {
   try {
     window.rvRadioFxCambio?.();
   } catch {}
+  // App 1.17+: la música suena por el reproductor nativo y el sonido lo procesa Android
+  // (FxDsp.java, mismas fórmulas). No hace falta Web Audio ni esperar a un toque.
+  if (window.rvMotorNativo?.activo()) {
+    window.rvMotorNativo.fx(fxPlanNativo(s));
+    return drawFxCurve();
+  }
   if (!musicFx.active) {
     if (!fxNeedsGraph(s)) return drawFxCurve();
     if (!musicDecksReady()) return drawFxCurve(); // aún no se ha abierto Mi música
@@ -424,6 +430,31 @@ function applyFx() {
   }
   applyFxChain(musicFx.nodes, s);
   drawFxCurve();
+}
+// Lo mismo que hace applyFxChain con Web Audio, en el formato que entiende FxDsp.java.
+function fxPlanNativo(s) {
+  if (!fxNeedsGraph(s)) return { on: false };
+  const fc = f => Math.max(10, Math.min(22000, Number(f) || 1000));
+  const hp = s.hpOn && s.hp ? (s.hp.filters || []).slice(0, HP_MAX) : [];
+  const filters = hp.map(x => ({ type: x.type || 'peaking', fc: fc(x.fc), gain: Number(x.gain) || 0, q: x.q || 0.707 }));
+  if (s.eq)
+    EQ_FREQS.forEach((f, i) =>
+      filters.push({ type: i === 0 ? 'lowshelf' : i === 9 ? 'highshelf' : 'peaking', fc: f, gain: Number(s.bands[i]) || 0, q: 1.41 })
+    );
+  return { on: true, pre: totalPreamp(s), filters, level: !!s.level, balance: Math.max(-1, Math.min(1, Number(s.balance) || 0)), mono: !!s.mono };
+}
+// Elegir con qué suena la música en la app (solo si la app tiene reproductor nativo).
+function motorCardHtml() {
+  const M = window.rvMotorNativo;
+  if (!M?.disponible()) return '';
+  const elegido = M.usar();
+  const ahora = M.activo() ? 'Ahora suena con el reproductor de Android.' : 'Ahora suena con el reproductor del navegador.';
+  return `<section class="fx-card fx-motor">
+      <label class="fx-switch"><input type="checkbox" id="fxMotorNativo" ${elegido ? 'checked' : ''}><span><b>📱 Reproductor nativo (recomendado)</b><small>Sin microcortes con la pantalla apagada (también con ecualizador o FLAC) y sin huecos entre canciones. ${ahora} El cambio se aplica al volver a abrir la app.</small></span></label>
+    </section>`;
+}
+function fxProcesando() {
+  return musicFx.active || (!!window.rvMotorNativo?.activo() && fxNeedsGraph());
 }
 function musicDecksReady() {
   try {
@@ -590,7 +621,7 @@ function renderFxPanel() {
     .join('');
   const hpName = s.hp ? s.hp.label || s.hp.name : '';
   p.innerHTML = `
-  <div class="fx-head"><button type="button" class="fx-close" aria-label="Cerrar">←</button><strong>🎚️ Sonido</strong><span class="fx-state">${musicFx.active ? 'Procesado activo' : 'Sin procesar'}</span></div>
+  <div class="fx-head"><button type="button" class="fx-close" aria-label="Cerrar">←</button><strong>🎚️ Sonido</strong><span class="fx-state">${fxProcesando() ? 'Procesado activo' : 'Sin procesar'}</span></div>
   <div class="fx-body">
     <canvas id="fxCurve" class="fx-curve" aria-label="Curva de ecualización"></canvas>
     <p class="fx-curve-note">${s.eq || (s.hpOn && s.hp) ? `Preamplificación total ${fmtDb(totalPreamp(s))} · limitador activo para que no sature.` : 'Activa el ecualizador o la corrección de tus auriculares para cambiar el sonido.'}</p>
@@ -628,7 +659,8 @@ function renderFxPanel() {
       <label class="fx-check"><input type="checkbox" data-k="mono" ${s.mono ? 'checked' : ''}> Mono (para escuchar con un solo auricular)</label>
       <label class="fx-band fx-bal"><span>Balance</span><input type="range" min="-1" max="1" step="0.05" value="${s.balance}" data-k="balance" aria-label="Balance"><output>${balText(s.balance)}</output></label>
     </section>
-    <p class="fx-foot">Correcciones de auriculares: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT). Con la app Android, comprueba que sigue sonando con la pantalla apagada; si no, desactiva el ecualizador y avísame.</p>
+    ${motorCardHtml()}
+    <p class="fx-foot">Correcciones de auriculares: <a href="https://github.com/jaakkopasanen/AutoEq" target="_blank" rel="noopener">AutoEq</a> (MIT).${window.rvMotorNativo?.activo() ? '' : ' Con la app Android, comprueba que sigue sonando con la pantalla apagada; si no, desactiva el ecualizador y avísame.'}</p>
   </div>`;
   p.querySelector('.fx-close').onclick = closeFxPanel;
   p.querySelectorAll('input[type=checkbox][data-k]').forEach(
@@ -644,6 +676,16 @@ function renderFxPanel() {
       })
   );
   p.querySelectorAll('[data-forget]').forEach(b => (b.onclick = () => forgetOutputProfile(b.dataset.forget)));
+  const motor = p.querySelector('#fxMotorNativo');
+  if (motor)
+    motor.onchange = () => {
+      window.rvMotorNativo.elegirWeb(!motor.checked);
+      podToast(motor.checked ? '📱 Reproductor nativo: se usará al volver a abrir la app' : 'Reproductor del navegador: se usará al volver a abrir la app', {
+        action: 'Reiniciar ahora',
+        onAction: () => location.reload(),
+        ms: 8000
+      });
+    };
   p.querySelector('select[data-k=crossfade]').onchange = e => saveFx({ crossfade: Number(e.target.value) });
   p.querySelectorAll('[data-band]').forEach(r => {
     r.oninput = () => {
@@ -779,8 +821,10 @@ function initFx() {
     const o = window.Android?.audioOutput?.();
     if (o) onAudioOutput(o, { initial: true });
   } catch {}
+  // Reproductor nativo: se aplica ya (no necesita un toque como Web Audio).
+  if (window.rvMotorNativo?.activo()) applyFx();
   // Si había algo activado, la cadena se crea al primer toque (los navegadores lo exigen).
-  if (fxNeedsGraph()) {
+  else if (fxNeedsGraph()) {
     const arm = () => {
       applyFx();
       musicFx.resume();

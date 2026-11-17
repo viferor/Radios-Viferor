@@ -42,6 +42,7 @@ public class MediaControlReceiver extends BroadcastReceiver {
     private static boolean arrancarReproduccion(String action) {
         return PodcastMediaController.ACTION_WIDGET_PLAY.equals(action)
                 || PodcastMediaController.ACTION_WIDGET_NEXT.equals(action)
-                || PodcastMediaController.ACTION_WIDGET_PREV.equals(action);
+                || PodcastMediaController.ACTION_WIDGET_PREV.equals(action)
+                || PodcastMediaController.sectionOfAction(action) != null;
     }
 }

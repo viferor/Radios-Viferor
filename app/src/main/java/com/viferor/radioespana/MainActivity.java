@@ -59,6 +59,8 @@ public class MainActivity extends Activity {
     private MusicDeleter musicDeleter;
     private AudioOutputWatcher audioOutput;
     private MusicEditor musicEditor;
+    // Motor nativo de «Mi música» (1.17): ExoPlayer en vez de los <audio> del WebView.
+    private NativeMusic nativeMusic;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -72,6 +74,7 @@ public class MainActivity extends Activity {
         audioOutput = new AudioOutputWatcher(this, js -> { if (webView != null && bridgeTrusted) webView.post(() -> webView.evaluateJavascript(js, null)); });
         audioOutput.start();
         musicEditor = new MusicEditor(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
+        nativeMusic = new NativeMusic(this, js -> { if (webView != null && bridgeTrusted) webView.evaluateJavascript(js, null); });
         setupWebView(START_URL);
         // Los fallos al leer los archivos de música se apuntan en el registro de errores de la
         // web (Ajustes → Registro de errores), que es donde se ve el porqué de un corte.
@@ -88,6 +91,14 @@ public class MainActivity extends Activity {
         setPendingMediaAction(getIntent());
         handleNotificationIntent(getIntent());
         if (!handleOpenAudioIntent(getIntent())) handleWidgetOpenIntent(getIntent());
+        // El widget cambia sus botones según la app esté abierta o no (ver WidgetProvider).
+        WidgetProvider.updateAll(this);
+    }
+
+    /** ¿Está la app abierta (con su reproductor)? El widget lo usa para no abrirla sin necesidad. */
+    static boolean isAlive() {
+        MainActivity a = activeInstance;
+        return a != null && a.webView != null && !a.isFinishing();
     }
 
     /**
@@ -100,6 +111,8 @@ public class MainActivity extends Activity {
             Intent i = new Intent(context, MainActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     .putExtra(EXTRA_MEDIA_ACTION, action);
+            String sec = PodcastMediaController.sectionOfAction(action);
+            if (sec != null) i.putExtra("openSection", sec);
             context.startActivity(i);
             return true;
         } catch (Exception e) {
@@ -132,8 +145,12 @@ public class MainActivity extends Activity {
             if (attempt < 25) webView.postDelayed(() -> deliverPendingMediaAction(attempt + 1), 400);
             return;
         }
+        // Los botones de sección (📻 🎙️ 🎵) necesitan viferorReproducirSeccion; los demás, los
+        // controles de siempre.
+        String ready = PodcastMediaController.sectionOfAction(pendingMediaAction) != null
+                ? "window.viferorReproducirSeccion" : "window.viferorNativeMusicPlay";
         webView.evaluateJavascript(
-                "(function(){try{return !!(window.viferorNativeMusicPlay);}catch(e){return false;}})()",
+                "(function(){try{return !!(" + ready + ");}catch(e){return false;}})()",
                 r -> {
                     if ("true".equals(r)) {
                         String action = pendingMediaAction;
@@ -176,6 +193,10 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (activeInstance == this) activeInstance = null;
         if (audioOutput != null) audioOutput.stop();
+        if (nativeMusic != null) {
+            try { nativeMusic.release(); } catch (Exception ignored) {}
+            nativeMusic = null;
+        }
         // La reproducción vive en la web, dentro de esta pantalla: al cerrarse la app ya no
         // suena nada, así que se para el servicio, se quita la notificación y el widget
         // vuelve a mostrar «reproducir».
@@ -287,6 +308,9 @@ public class MainActivity extends Activity {
 
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            // La página empieza de cero (recarga, actualización, WebView recreado): la música
+            // nativa que sonaba ya no tiene quien la lleve. La web la retomará si toca.
+            if (nativeMusic != null) nativeMusic.stopAll();
             bridgeTrusted = isAppUrl(url);
             super.onPageStarted(view, url, favicon);
         }
@@ -529,6 +553,12 @@ public class MainActivity extends Activity {
             case PodcastMediaController.ACTION_WIDGET_FORWARD: if (p != null) evalPodcastJavascript(fn(p, "Seek", "30")); break;
             case PodcastMediaController.ACTION_WIDGET_PREV: if (p != null) evalPodcastJavascript(fn(p, "Previous", "")); break;
             case PodcastMediaController.ACTION_WIDGET_NEXT: if (p != null) evalPodcastJavascript(fn(p, "Next", "")); break;
+            default: {
+                // Botones 📻 🎙️ 🎵 del widget: que suene esa sección (lo último que sonó en ella).
+                String sec = PodcastMediaController.sectionOfAction(action);
+                if (sec != null) evalPodcastJavascript("window.viferorReproducirSeccion&&window.viferorReproducirSeccion(" + JSONObject.quote(sec) + ");");
+                break;
+            }
         }
     }
 
@@ -681,6 +711,60 @@ public class MainActivity extends Activity {
         public void openAppSettings() {
             if (!bridgeTrusted) return;
             runOnUiThread(() -> openAppSettingsNative());
+        }
+
+        // ---- Motor nativo de «Mi música» (APK 1.17+, ver NativeMusic y motor-nativo.js) ----
+        @JavascriptInterface
+        public int nativeMusicVersion() {
+            return bridgeTrusted ? NativeMusic.API_VERSION : 0;
+        }
+
+        @JavascriptInterface
+        public void nmLoad(int deck, String url, int gen) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.load(deck, url, gen); });
+        }
+
+        @JavascriptInterface
+        public void nmPlay(int deck) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.play(deck); });
+        }
+
+        @JavascriptInterface
+        public void nmPause(int deck) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.pause(deck); });
+        }
+
+        @JavascriptInterface
+        public void nmSeek(int deck, double sec) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.seek(deck, sec); });
+        }
+
+        @JavascriptInterface
+        public void nmStop(int deck) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.stop(deck); });
+        }
+
+        @JavascriptInterface
+        public void nmVolume(int deck, double volume, double rampSecs) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.volume(deck, volume, rampSecs); });
+        }
+
+        @JavascriptInterface
+        public void nmArm(int from, int to) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.arm(from, to); });
+        }
+
+        @JavascriptInterface
+        public void nmFx(String json) {
+            if (!bridgeTrusted) return;
+            runOnUiThread(() -> { if (nativeMusic != null) nativeMusic.setFx(json); });
         }
 
         @JavascriptInterface

@@ -1937,8 +1937,8 @@ function watchPodcastResume(reason) {
     // Si llegó a sonar y luego se pausó (otra app, la radio, la música…), no se toca.
     if (a.paused && sawPlaying) return;
     const radio = document.getElementById('audioPlayer'),
-      mus = window.musicState?.current ? document.querySelectorAll('#musicAudio, #musicAudio2') : [];
-    if ((radio && !radio.paused) || [...mus].some(m => !m.paused)) return;
+      musSuena = !!window.musicState?.current && !!window.rvMusicaSonando?.();
+    if ((radio && !radio.paused) || musSuena) return;
     if (!a.paused && a.currentTime - pos > 0.3) return;
     window.logError?.(
       'media',
@@ -1979,6 +1979,32 @@ window.viferorNativePodcastPlay = () => {
     a.play().catch(e => podcastPlayFailed(e, 'notificación'));
     watchPodcastResume('notificación');
   }
+};
+// Botón 🎙️ del widget (APK 1.17): reanuda el episodio de antes (o el último guardado, o el
+// primero de la cola) aunque lo último que sonara fuera la radio o la música.
+window.rvPodcastDesdeFuera = function () {
+  const a = $p('podcastAudio');
+  if (podcastState.current && a && (a.currentSrc || a.src)) {
+    if (!a.paused) return true;
+    window.viferorNativePodcastPlay();
+    return true;
+  }
+  let ep = podcastState.current;
+  if (!ep) {
+    try {
+      ep = JSON.parse(localStorage.getItem(PODCAST_RESUME_KEY) || 'null')?.episode || null;
+    } catch {}
+  }
+  if (ep) {
+    startPodcastPlayback(ep);
+    return true;
+  }
+  if (podcastState.queue.length) {
+    playEpisodeNow(podcastState.queue[0]);
+    return true;
+  }
+  window.podToast?.('No hay ningún episodio para reanudar: elige uno en Podcasts');
+  return false;
 };
 window.viferorNativePodcastPause = () => {
   finInterrupcionPodcast();

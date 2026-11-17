@@ -376,7 +376,8 @@ const MUS_BLOB_MAX = 60 * 1024 * 1024;
 const MUS_BLOB_KEEP = 3;
 const musBlobs = new Map(); // id → { promesa }
 async function musFuenteBlob(t) {
-  if (!t?.id || !t.src || !isAndroidApp()) return '';
+  // El reproductor nativo lee el archivo directamente: no hace falta copiarlo.
+  if (!t?.id || !t.src || !isAndroidApp() || musNativo()) return '';
   const tam = Number(t.size) || 0;
   if (tam > MUS_BLOB_MAX) return '';
   const ya = musBlobs.get(t.id);
@@ -415,6 +416,8 @@ async function musFuenteBlob(t) {
   return url;
 }
 async function trackSrc(t, deck = musicState.deck) {
+  // Reproductor nativo: la dirección /__music/… le dice qué archivo del móvil abrir.
+  if (musNativo()) return t.src || '';
   if (t.src) {
     // Primero la copia entera (ver arriba); si no se puede, los trozos de siempre.
     const copia = await musFuenteBlob(t).catch(() => '');
@@ -539,12 +542,48 @@ function otherDeckIndex() {
 function initMusicDecks() {
   const a = $m('musicAudio');
   if (!a || musDecks.length) return;
+  // App Android 1.17+: las dos platinas son reproductores nativos que se manejan como si
+  // fueran <audio> (motor-nativo.js). Sin cortes en segundo plano, con o sin ecualizador.
+  if (window.rvMotorNativo?.usar()) {
+    musDecks.push(...window.rvMotorNativo.crearPlatinas());
+    return;
+  }
   const b = document.createElement('audio');
   b.id = 'musicAudio2';
   b.preload = 'none';
   a.after(b);
   musDecks.push(a, b);
 }
+// ¿Suena por el reproductor nativo de la app? (ver motor-nativo.js)
+function musNativo() {
+  return !!musDecks[0]?.rvNative;
+}
+// ¿Suena la música ahora? (lo usan los podcasts para no pisarla)
+window.rvMusicaSonando = () => musDecks.some(d => d && !d.paused);
+// Reproductor nativo: la canción siguiente se «engancha» a la que suena para pasar de una a
+// otra sin hueco (como Poweramp). Solo cuando el cambio sería sin fundido y la siguiente ya
+// está preparada en la otra platina; si cambia la cola, la repetición o el temporizador de
+// «fin de la canción», se desengancha.
+function musNativoEnganche() {
+  const a = musicAudio();
+  if (!a?.rvNative) return;
+  let from = -1,
+    to = -1;
+  const pre = musicState.preload;
+  const nx = peekNextTrack();
+  if (pre?.ready && nx && pre.id === nx.id && pre.deck === otherDeckIndex() && !musicState.xf && !musicState.switching) {
+    const eng = musicEngineOpts();
+    const xf = Number(eng.crossfade) || 0;
+    // Con fundido (y canción larga) el cambio lo hace switchToOtherDeck antes del final.
+    const conFundido = xf > 0 && a.duration > xf * 2 + 5;
+    if (!conFundido && (eng.gapless || xf > 0)) {
+      from = musicState.deck;
+      to = pre.deck;
+    }
+  }
+  a.rvArm(from, to);
+}
+document.addEventListener('music:queue', () => musNativoEnganche());
 // Opciones del motor (las guarda ecualizador.js; aquí solo se leen).
 function musicEngineOpts() {
   return { crossfade: 0, gapless: true, fadePause: true, ...(window.musicFx?.engineOpts?.() || {}) };
@@ -562,6 +601,12 @@ function applyDeckVolume(i) {
 function deckLevel(i, level, secs = 0) {
   clearInterval(musDeckAnim[i]);
   musDeckAnim[i] = 0;
+  // Reproductor nativo: el fundido lo hace Android, sin pasos desde aquí.
+  if (musDecks[i]?.rvNative) {
+    musDeckLevel[i] = level;
+    musDecks[i].rvRampa(Math.max(0, Math.min(1, musUserVolume * level)), secs);
+    return;
+  }
   if (window.musicFx?.active) {
     musDeckLevel[i] = level;
     window.musicFx.setDeckGain(i, level, secs);
@@ -594,6 +639,7 @@ function stopOtherDeck() {
   }
   if (el && !el.paused) el.pause();
   musicState.preload = null;
+  musNativoEnganche();
   deckLevel(i, 1, 0);
   deckLevel(musicState.deck, 1, 0);
 }
@@ -617,6 +663,7 @@ async function preloadNextRun(nx, i, el) {
     el.src = src;
     el.load();
     musicState.preload.ready = true;
+    musNativoEnganche();
   } catch {
     musicState.preload = null;
   }
@@ -1220,7 +1267,7 @@ function musicPlayFailed(e, where) {
 function musCambiarACopiaEntera() {
   const a = musicAudio();
   const t = musicState.current;
-  if (!a || !t || !isAndroidApp()) return false;
+  if (!a || !t || !isAndroidApp() || musNativo()) return false;
   const src = String(a.src || '');
   if (!src || src.startsWith('blob:') || !src.includes('/__music/')) return false;
   startTrack(t, { pos: Number(a.currentTime) || 0 });
@@ -1641,6 +1688,24 @@ window.viferorNativeMusicPlay = () => {
     a.play().catch(e => musicPlayFailed(e, 'notificación'));
     watchMusicResume('notificación');
   }
+};
+// Botón 🎵 del widget (APK 1.17): que suene la música aunque lo último fuera la radio o un
+// podcast. Sigue con la canción de antes; si no hay, con la cola; y si no, todo en aleatorio.
+window.rvMusicaDesdeFuera = function () {
+  const sigue = () => {
+    if (musicState.current) {
+      if (!musicAudio()?.paused) return;
+      window.viferorNativeMusicPlay();
+    } else toggleMusicPlay();
+  };
+  if (musicState.loaded) {
+    sigue();
+    return true;
+  }
+  // Recién abierta la app (desde el widget) la biblioteca aún se está leyendo: se espera.
+  document.addEventListener('music:library', () => setTimeout(sigue, 0), { once: true });
+  ensureMusicLibrary();
+  return true;
 };
 window.viferorNativeMusicPause = () => {
   finMusicInterrupt();
@@ -4134,6 +4199,7 @@ function initMusic() {
       musicLastSync = now;
       syncMusicAndroid(false);
     }
+    musNativoEnganche();
     updateMusicPlayerUI();
   });
   // Microcortes: hasta ahora no quedaba ni rastro de ellos en el registro, así que no se
