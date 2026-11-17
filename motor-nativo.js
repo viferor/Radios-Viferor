@@ -210,6 +210,8 @@
       this._queueLoad();
     }
     _queueLoad() {
+      // Como en un <audio>: al poner otra dirección deja de estar «lista» en el acto.
+      this._rs = 0;
       if (this._loadQueued) return;
       this._loadQueued = true;
       queueMicrotask(() => {

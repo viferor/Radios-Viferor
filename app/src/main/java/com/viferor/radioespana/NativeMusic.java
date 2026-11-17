@@ -425,7 +425,11 @@ final class NativeMusic {
         pb.stop();
         pb.clearMediaItems();
         Deck kf = decks[from], kt = decks[to];
+        // Esa platina se queda vacía hasta que la web cargue en ella la siguiente.
         kf.ended = true;
+        kf.uri = null;
+        kf.url = null;
+        kf.ready = false;
         kt.ended = false;
         kt.ready = true;
         kt.rampMs = 0;
@@ -479,7 +483,8 @@ final class NativeMusic {
         switch (change) {
             case AudioManager.AUDIOFOCUS_LOSS:
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-                if (change == AudioManager.AUDIOFOCUS_LOSS) hasFocus = false;
+                // Al volver a sonar se pedirá otra vez (si no, se sonaría sin tener el foco).
+                hasFocus = false;
                 StringBuilder sb = new StringBuilder();
                 for (int d = 0; d < 2; d++) {
                     ExoPlayer p = player(d);

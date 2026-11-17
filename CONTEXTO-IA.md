@@ -5,7 +5,7 @@
 > cómo se trabaja, qué no hay que romper y cómo volver atrás si algo sale mal.
 >
 > **Estado de referencia (todo funcionando):** web **1.37.2** (compilación 13702) · APK
-> **1.16.2** (versionCode 11602) · rama de respaldo
+> **1.16.2** (versionCode 11602). En pruebas: web 1.38.0 + APK 1.17.0 (motor nativo de música) · rama de respaldo
 > **`respaldo/estable-2026-10-15`** en GitHub · fecha 2026-11-03.
 
 ---
@@ -110,7 +110,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 ### Web (raíz)
 | Archivo | Para qué |
 |---|---|
-| `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
+| `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `motor-nativo.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
 | `version.js` | Única fuente de versión (`window.RV_VERSION`). No editar a mano: usar `scripts/version.mjs`. |
 | `diagnostics.js` | Registro de errores (localStorage, agrupa repetidos ×N, errores de `<audio>`, envuelve `fetch`), `window.logError`, menú de ajustes (actualizar, «Reanudar al abrir», «Volver a sonar tras llamada o aviso»). |
 | Radio + ecualizador | Dos `<audio>`: `audioNormal` y `audioFx` (`crossorigin`, conectado a Web Audio por `radioFx` de `ecualizador.js`). `prepararAudioRadio(url)` en `intentarFuente` comprueba CORS (`radioPermiteFx`) y cambia `audio` (`let`); el activo siempre tiene `id="audioPlayer"`. Los listeners van con `enRadio()` (en los dos, solo atiende al activo). Ajuste `radio` en `radios_viferor_music_audio_v1`. **1.37.1:** la cadena solo conecta lo activo (`wireFxChain`) y la de la radio se desconecta de la salida cuando no suena (`radioFx.sleep/wake`, `plugFxOut`); cambiar el ajuste con la emisora sonando la vuelve a poner por el `<audio>` que toca (`window.rvRadioFxCambio`). Si la música vuelve a entrecortarse con procesado activo, mirar primero cuántos nodos hay conectados. |
@@ -119,9 +119,10 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 | `app.js` | **Radios**: catálogo, favoritas (`mis_radios_favoritas_v1`), reproducción (`reproducirRadio`, `intentarFuente`, HLS, reconexión, vigilancia de cortes), «Ahora suena», EPG, interrupciones del sistema (`rvPausaDelUsuario`, `rvInterrupcionPaso`, `rvAnotar`), gesto de deslizar entre pestañas, backup completo, tema. |
 | `podcasts.js` | **Podcasts**: estado `podcastState`, suscripciones, búsqueda, feeds, episodios, reproductor (`podcastAudio`), progreso/reanudar, cola v2, `restoreLastPlayback` («Reanudar al abrir»), puentes `viferorNativePodcast*`, atrás de Android `handleAndroidBack`. |
 | `podcast-listas.js` | Utilidades de interfaz **compartidas por todo** (`podToast`, `podSheet`, `podSheetClose`, `podPromptText`, `actionBar`, `makeSortable`) + listas/cola/velocidad/temporizador de podcasts. |
+| `motor-nativo.js` | **APK 1.17+**: presenta los dos reproductores nativos de música (ExoPlayer, `NativeMusic.java`) como si fueran `<audio>` (`NativeDeck`: `src`, `currentTime`, `paused`, `play()`, eventos…). `window.rvMotorNativo` (`usar`, `activo`, `crearPlatinas`, `fx`, `elegirWeb`). Avisos de Android: `window.rvNativeMusicEvent(platina, gen, tipo, estado)`. |
 | `musica.js` | **Mi música** (el más grande): biblioteca (Android / carpeta / archivos), índices, motor de dos platinas (`musDecks`, `musicAudio()`, fundido, sin pausas), cola, historial, listas (manuales/inteligentes/M3U), favoritos, carpetas incluidas/excluidas, pantallas, reproductor mini y ampliado, gesto de carátula, radio de canción, cortas/rotas, duplicadas, eliminar, editar ID3, abrir desde otras apps, autorrecuperación al reanudar. |
 | `letras.js` | Letras: fuentes (tuya, incrustada ID3/USLT, `.lrc`, LRCLIB con respaldo directo), panel, sincronizar con MARCAR, ajustar arrastrando, desfase, traducción, significado (IA), compartir en LRCLIB (prueba de trabajo). |
-| `ecualizador.js` | Cadena Web Audio (`musicFx`): preamp, hasta 20 filtros de auriculares (AutoEq), EQ 10 bandas, nivelador, balance, mono, limitador; presets; búsqueda de auriculares; **ajustes por salida de audio** (altavoz/cable/USB/cada Bluetooth). |
+| `ecualizador.js` | Con el motor nativo, `applyFx` manda los ajustes a Android (`fxPlanNativo` → `Android.nmFx`); sin él, cadena Web Audio (`musicFx`): preamp, hasta 20 filtros de auriculares (AutoEq), EQ 10 bandas, nivelador, balance, mono, limitador; presets; búsqueda de auriculares; **ajustes por salida de audio** (altavoz/cable/USB/cada Bluetooth). |
 | `styles.css` | Todos los estilos (claro y `html.dark-mode`). |
 | `vendor/` | `hls.min.js`, `jsmediatags.min.js` (con sus licencias). |
 | `scripts/version.mjs` | Cambia versión de la web y las marcas `?v=` de `index.html`. |
@@ -158,6 +159,8 @@ timeout), `readLimited`, `rateLimited`, `HttpError`. `api/_lib/body.js`: `readJs
 | `MainActivity.java` | WebView (`AudioWebView`: no se da por oculto mientras suena, evita cortes al pasar a segundo plano), puente `AndroidBridge` (§7), intercepta `/__music/`, permisos, archivos, recrea el WebView si muere el renderer (`?autoresume=1`), intents de abrir audio, onActivityResult/permisos delegados. |
 | `LocalMusic.java` | MediaStore → `/__music/library.json`, `/__music/track/{id}` (con Range), `/__music/art/{albumId}?t=`, `/__music/ext/{ficha}`, `/__music/extart/{ficha}`. |
 | `MediaPlaybackService.java` | Servicio en primer plano (WakeLock/WifiLock), auriculares desconectados → pausa. |
+| `NativeMusic.java` | **APK 1.17**: motor nativo de «Mi música»: dos ExoPlayer («platinas»), foco de audio propio, fundidos (`volume` con rampa), enganche sin hueco (`arm`: la siguiente se añade a la lista del que suena y al pasar se intercambian los reproductores), avisos a la web. Lo llama el puente `nm*`. |
+| `FxDsp.java` + `FxAudioProcessor.java` | Ecualizador, auriculares, nivelador, balance, mono y limitador en Java, con las fórmulas de Chromium (Biquad, DynamicsCompressor, StereoPanner). `FxDsp` es Java puro: `tests/fx-nativo/comparar.py` lo compara con Chromium. |
 | `PodcastMediaController.java` | MediaSession + notificación (secciones radio/podcast/music). |
 | `MusicDeleter.java` | Borrar archivos (Android 11+ `createDeleteRequest`; 10 `RecoverableSecurityException`; ≤9 permiso de escritura). |
 | `MusicEditor.java` + `Id3Editor.java` | Renombrar y escribir ID3 (MP3) sin tocar el audio ni carátula/letra. `Id3Editor` es Java puro (probado en `tests/id3`). |
@@ -250,12 +253,17 @@ El usuario también puede poner su clave de IA en el propio móvil (se guarda en
 (`call`/`busy`/`free`), `canResumeAudio()`, `reloadApp`, `sharePodcast`,
 `syncPodcastSubscriptions`, `areNotificationsEnabled`, `requestNotificationPermission`,
 `openNotificationSettings`, `saveTextFile`, `lastPlaybackSection()` (APK 1.16+, §9).
+Motor nativo de música (APK 1.17+): `nativeMusicVersion()`, `nmLoad(platina, url, gen)`, `nmPlay`,
+`nmPause`, `nmSeek(platina, seg)`, `nmStop`, `nmVolume(platina, vol, segRampa)`, `nmArm(desde, hasta)`
+(-1 = desenganchar), `nmFx(json)`.
 
 **Android → web** (funciones globales que la web debe mantener con el mismo nombre):
 `viferorNativeRadio{Play,Pause}`, `viferorNativePodcast{Play,Pause,Next,Previous,Seek,SetPosition}`,
 `viferorNativeMusic{Play,Pause,Next,Previous,Seek,SetPosition}`, `onAndroidMusicPermission`,
 `onAndroidMusicDeleted`, `onAndroidMusicEdited`, `onAndroidAudioOutput`, `viferorOpenAudio`,
 `viferorIrAPestana(seccion)` (APK 1.16+: cambia de pestaña, lo usa el widget),
+`viferorReproducirSeccion('radio'|'podcast'|'music')` (APK 1.17: botones 📻 🎙️ 🎵 del widget),
+`rvNativeMusicEvent` (APK 1.17: avisos del motor nativo),
 `handleAndroidBack`, `switchToRadios/Podcasts/Music` (compatibilidad; solo se usan sin
 argumentos desde APK ≤ 1.15 y en ese caso se ignoran), `onAndroidNotificationPermissionResult`,
 `openPodcastFromNotification`.
@@ -365,6 +373,22 @@ elegida en navegador; se puede perder sin daño.
   y la canción «sonaba» en silencio.
 - **Microcortes con datos cargados** (`waiting` con `buf` de 50-180 s): `vigilanciaParada`
   vuelve a llamar a `play()` a los 2,5 s y solo recarga en la otra platina a los 9 s.
+- **Motor nativo de música (APK 1.17)**: los microcortes en segundo plano con ecualizador o FLAC
+  eran del WebView (búferes de milisegundos), no de los archivos. Ahora suena ExoPlayer y el
+  sonido lo procesa `FxDsp.java`. Reglas: (a) **si cambias la cadena de `applyFxChain`, cambia
+  igual `fxPlanNativo` y `FxDsp`, y pasa `tests/fx-nativo/comparar.py`**; (b) el compresor de
+  Chromium **siempre saca 2 canales** (por eso mono + nivelador + balance usa la fórmula estéreo
+  del balance); (c) `NativeDeck` debe portarse como un `<audio>`: al poner `src`, `readyState`
+  pasa a 0 en el acto; `ended` va antes de `pause` y de `ended`; los fallos de `play()` se
+  rechazan como `AbortError` (el fallo lo gestiona el evento `error`, si no se saltarían dos
+  canciones); (d) tras un `autostart` (enganche sin hueco), `currentTime = 0` antes del `play()`
+  se ignora; (e) el enganche solo se pide con la siguiente **ya cargada** (`readyState >= 2`) y
+  se deshace si cambia la cola, la repetición o el temporizador. Ajuste para volver al
+  reproductor del navegador: `radios_viferor_music_engine = 'web'` (🎚️ Sonido).
+- **Widget (APK 1.17)**: botones 📻 🎙️ 🎵 (`WIDGET_PLAY_RADIO/PODCAST/MUSIC`). Con la app viva
+  (`MainActivity.isAlive()`) mandan un broadcast y suena sin abrirla; con la app cerrada usan
+  `PendingIntent.getActivity` (abrir pantallas desde un broadcast en segundo plano lo bloquea
+  Android 12+). El widget se repinta al abrir y cerrar la app para cambiar de un modo a otro.
 - **Dos platinas** en música (`musicAudio` y `musicAudio2`): los eventos solo cuentan para la
   activa (`on(ev, fn)` en `initMusic`). No escuches eventos de `#musicAudio` directamente.
 - **Web Audio** (ecualizador) solo se crea tras un toque del usuario; con él activo el volumen
@@ -438,7 +462,11 @@ capturas de la cola, una lista, el reproductor y la cola de podcasts.
 Ideas que se ofrecieron y el usuario no ha pedido aún: editar etiquetas de varias canciones a
 la vez; presets de ecualización para el altavoz del móvil.
 
-**Pendiente de decidir (importante)**: el usuario quiere que el **widget reproduzca sin abrir
+**Hecho en parte (APK 1.17)**: con la app abierta (aunque esté en segundo plano) el widget ya
+reproduce sin abrirla, y la música suena con un motor nativo (ExoPlayer) con el ecualizador en
+Java. Con la app **cerrada** sigue haciendo falta abrirla, porque la cola y las decisiones las
+lleva la web. Lo de abajo es la nota antigua.
+**Pendiente de decidir (antiguo)**: el usuario quiere que el **widget reproduzca sin abrir
 la app**. Con el reproductor actual (dentro del WebView) es imposible: sin pantalla no hay
 WebView. Lo único que hace hoy es abrir la app y empezar a sonar. La alternativa real es un
 **motor nativo** (MediaPlayer/ExoPlayer) en `MediaPlaybackService` para radio y podcasts

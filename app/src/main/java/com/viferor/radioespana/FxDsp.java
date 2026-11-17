@@ -75,6 +75,8 @@ public final class FxDsp {
         plan = p;
         boolean mismaForma = old.filters.length == p.filters.length && old.on == p.on && old.mono == p.mono;
         rebuild(!mismaForma);
+        // El nivelador recién encendido empieza de cero (no con lo que recordaba de hace rato).
+        if (mismaForma && p.level && !old.level && leveler != null) leveler.reset();
     }
 
     public boolean active() {

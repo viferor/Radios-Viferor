@@ -1,6 +1,35 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.38.0 · APK 1.17.0 — Música sin microcortes (reproductor nativo) y widget con 📻 🎙️ 🎵
+
+- **Microcortes en segundo plano** (sobre todo con el ecualizador o con FLAC): el WebView de
+  Android saca el sonido con búferes de milisegundos y, con la pantalla apagada, cualquier
+  retraso del móvil se oía. En el registro: «microcorte (sin datos para seguir)» con 160-240 s
+  ya cargados. Con todos los efectos quitados iba bien, así que el problema era el procesado
+  de Web Audio dentro del WebView.
+- **Reproductor nativo** (APK 1.17): «Mi música» suena con ExoPlayer (`NativeMusic.java`), que
+  lee el archivo directamente, decodifica con el sistema y procesa el sonido por adelantado.
+  La cola, los fundidos, la recuperación de fallos y la interfaz siguen en la web:
+  `motor-nativo.js` presenta los reproductores nativos como si fueran `<audio>`, así que
+  `musica.js` casi no cambia.
+- **El ecualizador, la corrección de auriculares, el nivelador, el balance, el mono y el
+  limitador** se aplican en Android (`FxDsp.java`) con las mismas fórmulas que Chromium:
+  `tests/fx-nativo/comparar.py` compara los dos y la diferencia queda por debajo de −95 dB
+  (inaudible). Ya no hace falta tocar la pantalla para que se active.
+- **Sin huecos entre canciones**: con «Sin pausas» y sin fundido, la siguiente se engancha al
+  reproductor que suena y ExoPlayer pasa de una a otra sin silencio (respeta el relleno de
+  MP3/AAC, como Poweramp).
+- **Fundidos** (al pausar, entre canciones) los hace Android, sin pasos desde la web.
+- 🎚️ Sonido → **📱 Reproductor nativo (recomendado)**: se puede volver al del navegador si algo
+  fallara (se aplica al volver a abrir la app). Con la APK antigua todo sigue como antes.
+- **Widget**: botones **📻 🎙️ 🎵** para poner a sonar la radio, el podcast o la música, aunque lo
+  último fuera otra cosa (antes solo se podía reanudar lo último). El de lo que suena va
+  resaltado y hace de pausa. Con la app abierta (aunque esté en segundo plano) suena sin
+  abrirla; con la app cerrada la abre en esa pestaña y empieza a sonar.
+- Pruebas: `tests/test_motor_nativo.py` (41, con un reproductor nativo simulado) y
+  `tests/fx-nativo/comparar.py` (18, Java frente a Chromium).
+
 ## 1.37.2 — Fundido también al cambiar de canción a mano
 
 - Hasta ahora el fundido de 🎚️ Sonido solo se hacía cuando la canción acababa sola. Al

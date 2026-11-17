@@ -571,7 +571,9 @@ function musNativoEnganche() {
     to = -1;
   const pre = musicState.preload;
   const nx = peekNextTrack();
-  if (pre?.ready && nx && pre.id === nx.id && pre.deck === otherDeckIndex() && !musicState.xf && !musicState.switching) {
+  const b = musDecks[pre?.deck];
+  // La siguiente tiene que estar ya cargada en la otra platina (si no, se engancharía la de antes).
+  if (pre?.ready && nx && pre.id === nx.id && pre.deck === otherDeckIndex() && b?.readyState >= 2 && !musicState.xf && !musicState.switching) {
     const eng = musicEngineOpts();
     const xf = Number(eng.crossfade) || 0;
     // Con fundido (y canción larga) el cambio lo hace switchToOtherDeck antes del final.

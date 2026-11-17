@@ -26,6 +26,11 @@ python tests\test_radio_fx.py  # Ecualizador y auriculares en la radio (17)
 python tests\test_hifi.py      # 💎 Alta calidad: FLAC, respaldo AAC, solo con Wi-Fi, ahora suena, comprobador (17)
 python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar al abrir»,
                                # microcortes y fallos de lectura (20)
+python tests\test_motor_nativo.py  # Motor nativo de música (APK 1.17) con un Android simulado:
+                                   # reproducir, fundidos, sin huecos, interrupciones, fallos,
+                                   # ecualizador, widget 📻 🎙️ 🎵 (41)
+python tests\fx-nativo\comparar.py # El sonido de FxDsp.java (Java) frente al de Chromium (18;
+                                   # necesita Java 17+)
 ```
 
 Cada una termina con `N/N OK` y `Errores JS: 0`. Si alguna dice `FAIL`, el cambio ha roto algo.
