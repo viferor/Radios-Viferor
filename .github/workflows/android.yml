@@ -27,6 +27,20 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      # Firma: si existe el secreto DEBUG_KEYSTORE_B64 (el debug.keystore del PC en base64),
+      # se usa esa clave para que el APK se instale encima del compilado con Android Studio.
+      # Sin él, cada compilación saldría con una clave distinta y Android diría «conflicto».
+      - name: Clave de firma
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            mkdir -p ~/.android
+            echo "$KS" | tr -d ' \r\n' | base64 -d > ~/.android/debug.keystore
+            echo "Usando la clave del secreto DEBUG_KEYSTORE_B64"
+          else
+            echo "::warning::Falta el secreto DEBUG_KEYSTORE_B64: el APK no se podrá instalar encima del de Android Studio"
+          fi
       - name: Compilar APK
         run: |
           chmod +x gradlew
