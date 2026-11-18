@@ -1,6 +1,16 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.39.1 — Las canciones de la cola empezaban por la mitad
+
+- Al abrir la app se deja preparada la última canción en su punto (p. ej. el segundo 117). Ese
+  «ir al segundo 117 cuando cargue» se quedaba pegado a la platina toda la sesión: cualquier
+  canción que se cargara después en ella (tocada en la cola con fundido, la siguiente
+  precargada…) empezaba también en el 117. En el registro se veía como microcortes con el
+  mismo `t=117.2` en canciones distintas y a horas distintas. Ahora el salto vale solo para
+  la canción a la que iba dirigido (`musAlCargar`) y se borra al usarse.
+- Prueba: `tests/test_cola_posicion.py` (8).
+
 ## 1.39.0 · APK 1.18.0 — Buscar canciones nuevas (escanear carpetas) y biblioteca al día sola
 
 - **Las canciones copiadas al móvil no salían** al darle a buscar: la app lee la música que

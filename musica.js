@@ -663,6 +663,7 @@ async function preloadNextRun(nx, i, el) {
     const src = await trackSrc(nx, i);
     if (musicState.preload?.id !== nx.id) return;
     el.preload = 'auto';
+    musLimpiarCarga(el);
     el.src = src;
     el.load();
     musicState.preload.ready = true;
@@ -709,6 +710,7 @@ async function switchToOtherDeckRun(nx, secs, manual) {
       const src = await trackSrc(nx, to);
       if (!vale()) return false;
       if (!src) throw new Error('sin fuente');
+      musLimpiarCarga(b);
       b.src = src;
       b.load();
     }
@@ -842,6 +844,29 @@ function pauseOtherAudio() {
     if (ra && !ra.paused) window.viferorNativeRadioPause ? window.viferorNativeRadioPause() : ra.pause();
   } catch {}
 }
+// Al cargar una canción: ir a «pos» cuando se conozca la duración. Solo para ESA carga.
+// Antes el aviso se quedaba pegado a la platina: al abrir la app se dejaba preparada la
+// última canción en su punto (p. ej. el segundo 117) y, horas después, cualquier otra
+// canción que se cargara en esa platina (desde la cola, la siguiente, un fundido…)
+// empezaba también en el segundo 117.
+function musAlCargar(a, pos, t) {
+  const want = a.src;
+  a.onloadedmetadata = () => {
+    if (a.src !== want) return; // ya es otra canción
+    a.onloadedmetadata = null;
+    if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
+    // En el navegador la duración no viene en las etiquetas: se guarda al conocerla.
+    if (t && !t.dur && Number.isFinite(a.duration)) {
+      t.dur = a.duration;
+      if (t.cacheKey) idbGet('meta', t.cacheKey).then(m => m && idbPut('meta', t.cacheKey, { ...m, dur: a.duration }));
+    }
+    updateMusicPlayerUI();
+  };
+}
+// Platina que se va a cargar con otra cosa: fuera cualquier aviso pendiente de antes.
+function musLimpiarCarga(el) {
+  if (el) el.onloadedmetadata = null;
+}
 async function prepareTrack(t, pos = 0) {
   const a = musicAudio();
   if (!a || !t) return;
@@ -855,10 +880,7 @@ async function prepareTrack(t, pos = 0) {
   // Volver a leer el archivo de verdad: si la dirección es la misma que ya tenía, el
   // navegador no recargaría nada y ni la recuperación ni la vigilancia de reanudar servirían.
   a.load();
-  a.onloadedmetadata = () => {
-    if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
-    updateMusicPlayerUI();
-  };
+  musAlCargar(a, pos, null);
   updateMusicNowUI();
 }
 // Fundido al cambiar de canción a mano: el de Sonido, pero como mucho 4 s (más largo,
@@ -899,15 +921,7 @@ async function startTrack(t, { pos = 0 } = {}) {
   if (!src) return musicTrackFailed(t);
   if (musicState.current !== t) return; // otra canción pedida mientras tanto
   a.src = src;
-  a.onloadedmetadata = () => {
-    if (pos > 0 && pos < (a.duration || 0) - 2) a.currentTime = pos;
-    // En el navegador la duración no viene en las etiquetas: se guarda al conocerla.
-    if (!t.dur && Number.isFinite(a.duration)) {
-      t.dur = a.duration;
-      if (t.cacheKey) idbGet('meta', t.cacheKey).then(m => m && idbPut('meta', t.cacheKey, { ...m, dur: a.duration }));
-    }
-    updateMusicPlayerUI();
-  };
+  musAlCargar(a, pos, t);
   try {
     await a.play();
     musicErrors = 0;
@@ -989,6 +1003,7 @@ async function musicCargarEnOtra(t, pos, why) {
   if (!b) return false;
   try {
     musicState.preload = null; // esa platina se va a usar para recuperar
+    musLimpiarCarga(b);
     b.src = await trackSrc(t, to);
     b.load();
     if (!(await musWaitCanPlay(b))) throw Error('sin datos');

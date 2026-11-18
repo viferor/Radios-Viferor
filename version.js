@@ -3,4 +3,4 @@
 // comprobación de actualizaciones). Para publicar una versión nueva basta
 // con cambiar este archivo (y versionName/versionCode en app/build.gradle
 // si cambia la parte Android).
-window.RV_VERSION = Object.freeze({ version: '1.39.0', build: '13900', releasedAt: '2026-11-18' });
+window.RV_VERSION = Object.freeze({ version: '1.39.1', build: '13901', releasedAt: '2026-11-18' });
