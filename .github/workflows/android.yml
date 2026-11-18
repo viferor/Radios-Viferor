@@ -2,6 +2,8 @@ name: APK Android
 
 # Compila la app Android en cada cambio de la carpeta app/ (o a mano desde la
 # pestaña Actions) y deja el APK de depuración como artefacto descargable.
+# En main además lo publica como «Release» (pestaña Releases del repo), para poder
+# descargarlo directamente desde el móvil: Radios-Viferor-<versión>.apk
 on:
   push:
     paths:
@@ -11,6 +13,9 @@ on:
       - 'gradle/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -37,3 +42,21 @@ jobs:
             app/build/outputs/apk/debug/*.apk
             app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
+      - name: Publicar en Releases (solo main)
+        if: github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(grep -oP "versionName '\\K[^']+" app/build.gradle)
+          WEB=$(grep -oP "version: '\\K[^']+" version.js)
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          cp "$APK" "Radios-Viferor-$VER.apk"
+          TAG="apk-v$VER"
+          NOTES="APK $VER (web $WEB). Descarga el .apk desde el móvil e instálalo encima del que tienes.
+          Commit: ${GITHUB_SHA::7} — $(git log -1 --format=%s)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "Radios-Viferor-$VER.apk" --clobber
+            gh release edit "$TAG" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" "Radios-Viferor-$VER.apk" --title "Radios Viferor $VER" --notes "$NOTES" --latest
+          fi
