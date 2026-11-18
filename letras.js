@@ -994,10 +994,20 @@ async function openMeaning(force = false) {
     }
     const file = String(t.file || '').replace(/\.[a-z0-9]{2,5}$/i, '');
     const body = { title: t.title, artist: t.artist || t.albumArtist || '', album: t.album, year: t.year || '', lyrics, albumArtist: t.albumArtist || '', genre: t.genre || '', file: file && file !== t.title ? file : '' };
-    const r = await fetch('/api/song-meaning', { method: 'POST', headers, body: JSON.stringify(body) });
+    // Tope en la app por si el servidor se queda colgado (allí el límite es 60 s).
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 70000);
+    let r;
+    try {
+      r = await fetch('/api/song-meaning', { method: 'POST', headers, body: JSON.stringify(body), signal: ctl.signal });
+    } catch (e) {
+      throw Error(ctl.signal.aborted ? 'La IA está tardando demasiado. Prueba otra vez en un rato.' : 'Sin conexión con el servidor. Comprueba Internet y reintenta.');
+    } finally {
+      clearTimeout(tm);
+    }
     const res = await r.json().catch(() => ({}));
     if (r.status === 501 && res.error === 'no-key') throw Object.assign(Error('no-key'), { noKey: true });
-    if (!r.ok) throw Error(res.error || 'No se pudo obtener el significado');
+    if (!r.ok) throw Error(res.error || (r.status === 504 ? 'La IA ha tardado demasiado en responder. Prueba otra vez en un rato.' : `No se pudo obtener el significado (error ${r.status})`));
     const m = { text: res.text, provider: res.provider, model: res.model, at: Date.now(), noLyrics: !lyrics };
     idbPut('lyrics', ck, m);
     if (tok === lyr.token) lyr.meaning = m;

@@ -49,26 +49,55 @@ export function buildUserPrompt({ title, artist, album, year, lyrics, albumArtis
   return `${meta}\n\nLetra (para tu análisis, no la reproduzcas):\n"""\n${text}\n"""`;
 }
 
-async function callGemini(key, prompt, model = GEMINI_MODEL) {
+// Los Gemini recientes «piensan» antes de responder: más lento y, con poco margen de
+// salida, a veces se gastan todo en pensar y devuelven vacío. Para esto basta poco.
+export function thinkingFor(model) {
+  const m = String(model);
+  if (/gemini-2\.5/.test(m)) return /pro/.test(m) ? { thinkingBudget: 128 } : { thinkingBudget: 0 };
+  if (/gemini-([3-9]|\d{2})/.test(m)) return { thinkingLevel: 'low' };
+  return null;
+}
+
+async function callGemini(key, prompt, model = GEMINI_MODEL, timeoutMs = 40000, thinking = true) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const r = await safeFetch(
-    url,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.6, maxOutputTokens: 2048 }
-      })
-    },
-    { allowFirstHost: h => h === 'generativelanguage.googleapis.com', timeoutMs: 45000, maxRedirects: 0 }
-  );
-  const d = JSON.parse(new TextDecoder().decode(await readLimited(r, 2_000_000)) || '{}');
-  if (!r.ok) throw Object.assign(new Error(apiError('Gemini', r.status, d?.error?.message)), { status: r.status === 429 ? 429 : 502, upstream: r.status });
+  const generationConfig = { temperature: 0.6, maxOutputTokens: 4096 };
+  const th = thinking && thinkingFor(model);
+  if (th) generationConfig.thinkingConfig = th;
+  // El temporizador cubre también la lectura del cuerpo (no solo las cabeceras).
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let r, d;
+  try {
+    r = await safeFetch(
+      url,
+      {
+        method: 'POST',
+        signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig })
+      },
+      { allowFirstHost: h => h === 'generativelanguage.googleapis.com', maxRedirects: 0 }
+    );
+    d = JSON.parse(new TextDecoder().decode(await readLimited(r, 2_000_000)) || '{}');
+  } catch (e) {
+    if (e?.name === 'AbortError' || ctl.signal.aborted) throw Object.assign(new Error(`Gemini (${model}) ha tardado demasiado`), { status: 504, upstream: 'timeout' });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!r.ok) {
+    const msg = d?.error?.message || '';
+    // Modelo que no acepta esa configuración de «pensar»: se repite sin ella.
+    if (r.status === 400 && th && /think/i.test(msg)) return callGemini(key, prompt, model, timeoutMs, false);
+    throw Object.assign(new Error(apiError('Gemini', r.status, msg)), { status: r.status === 429 ? 429 : 502, upstream: r.status });
+  }
   const c = d.candidates?.[0];
-  const text = (c?.content?.parts || []).map(p => p.text || '').join('').trim();
-  if (!text) throw Object.assign(new Error(c?.finishReason === 'RECITATION' ? 'Gemini no ha querido responder (contenido protegido). Prueba a regenerar.' : 'Gemini no ha devuelto respuesta'), { status: 502 });
+  const text = (c?.content?.parts || [])
+    .filter(p => !p.thought)
+    .map(p => p.text || '')
+    .join('')
+    .trim();
+  if (!text) throw Object.assign(new Error(c?.finishReason === 'RECITATION' ? 'Gemini no ha querido responder (contenido protegido). Prueba a regenerar.' : 'Gemini no ha devuelto respuesta'), { status: 502, upstream: 'empty' });
   return { text, provider: 'gemini', model };
 }
 
@@ -110,7 +139,10 @@ export async function geminiWithFallback(key, prompt, { call = callGemini, list 
   let last = null;
   const queue = [GEMINI_MODEL, ...extra.map(x => x.trim()).filter(Boolean)];
   let listed = false;
-  while (Date.now() < deadline) {
+  // Cada intento tiene como tope el tiempo que queda: así nunca se pasa del límite
+  // de Vercel (60 s), que cortaba la petición y en la app solo salía «Reintentar».
+  const left = () => deadline - Date.now();
+  while (left() > 6000) {
     if (!queue.length && !listed) {
       listed = true;
       queue.push(...(await list(key)));
@@ -119,26 +151,27 @@ export async function geminiWithFallback(key, prompt, { call = callGemini, list 
     if (!model) break;
     if (tried.has(model)) continue;
     tried.add(model);
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 2 && left() > 6000; attempt++) {
       try {
-        return await call(key, prompt, model);
+        return await call(key, prompt, model, Math.min(40000, left() - 1000));
       } catch (e) {
         last = e;
         const up = e.upstream || 0;
         if (up === 401 || up === 403 || up === 400) throw e;
-        if ((up === 503 || up === 500 || up === 504) && attempt === 0) {
+        if ((up === 503 || up === 500 || up === 504) && attempt === 0 && left() > 12000) {
           await sleep(1500);
           continue;
         }
-        break; // 404, 429 o sigue saturado → siguiente modelo
+        break; // 404, 429, vacío, tarda demasiado o sigue saturado → siguiente modelo
       }
     }
   }
   if (last?.upstream === 503 || last?.upstream === 500) last.message = 'Gemini está saturado ahora mismo. Prueba otra vez en un par de minutos.';
-  throw last || new Error('Gemini no ha respondido');
+  if (last?.upstream === 'timeout') last.message = 'Gemini está tardando demasiado ahora mismo. Prueba otra vez en un rato.';
+  throw last || Object.assign(new Error('Gemini no ha respondido a tiempo'), { status: 504 });
 }
 
-async function callAnthropic(key, prompt) {
+async function callAnthropic(key, prompt, timeoutMs = 45000) {
   const r = await safeFetch(
     'https://api.anthropic.com/v1/messages',
     {
@@ -146,7 +179,7 @@ async function callAnthropic(key, prompt) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1500, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }] })
     },
-    { allowFirstHost: h => h === 'api.anthropic.com', timeoutMs: 45000, maxRedirects: 0 }
+    { allowFirstHost: h => h === 'api.anthropic.com', timeoutMs, maxRedirects: 0 }
   );
   const d = JSON.parse(new TextDecoder().decode(await readLimited(r, 2_000_000)) || '{}');
   if (!r.ok) throw Object.assign(new Error(apiError('Claude', r.status, d?.error?.message)), { status: r.status === 429 ? 429 : 502 });
@@ -191,12 +224,15 @@ export default async function handler(req, res) {
     const s200 = v => String(v || '').slice(0, 200).trim();
     const prompt = buildUserPrompt({ title, artist: s200(b.artist), album: s200(b.album), year: Number(b.year) || '', lyrics: String(b.lyrics || ''), albumArtist: s200(b.albumArtist), genre: s200(b.genre), file: s200(b.file) });
     let out;
+    const t0 = Date.now();
+    const backup = ch.provider === 'gemini' && !!process.env.ANTHROPIC_API_KEY;
     if (ch.provider === 'gemini') {
       try {
-        out = await geminiWithFallback(ch.key, prompt);
+        // Con Claude de reserva se deja tiempo para él dentro de los 60 s de Vercel.
+        out = await geminiWithFallback(ch.key, prompt, { deadline: t0 + (backup ? 36000 : 52000) });
       } catch (e) {
         // Si también hay clave de Claude en Vercel, se usa como último recurso.
-        if (process.env.ANTHROPIC_API_KEY && ![400, 401, 403].includes(e.upstream)) out = await callAnthropic(process.env.ANTHROPIC_API_KEY, prompt);
+        if (backup && ![400, 401, 403].includes(e.upstream)) out = await callAnthropic(process.env.ANTHROPIC_API_KEY, prompt, Math.max(8000, t0 + 56000 - Date.now()));
         else throw e;
       }
     } else out = await callAnthropic(ch.key, prompt);
