@@ -1,6 +1,22 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.39.0 · APK 1.18.0 — Buscar canciones nuevas (escanear carpetas) y biblioteca al día sola
+
+- **Las canciones copiadas al móvil no salían** al darle a buscar: la app lee la música que
+  Android tiene registrada (MediaStore) y Android no siempre registra al momento lo que se
+  copia. Ahora «🔄 Buscar canciones nuevas» pide al escáner de Android que revise la carpeta
+  (registra lo nuevo, actualiza lo cambiado y quita lo borrado) y avisa de cuántas hay.
+- ☰ Mi música → **📁 Carpeta de música**: todo el móvil (memoria interna y SD) o una carpeta
+  concreta (con sus subcarpetas). **📂 Escanear una carpeta…**: solo esa vez, la que elijas.
+- **Al momento**: Android avisa de cualquier cambio en la música (`MusicScanner.java`, con
+  un `ContentObserver`) y la biblioteca se refresca sola, sin pantalla de carga y sin moverte
+  de donde estabas. Al abrir la app y al volver a ella (por ejemplo, después de copiar
+  música) se revisa la carpeta en segundo plano.
+- Con la APK antigua, «Buscar canciones nuevas» solo vuelve a leer lo registrado.
+- 1.38.1: el significado de las canciones ya no se queda colgado (límite de 60 s de Vercel)
+  y Gemini no «piensa» de más.
+
 ## 1.38.0 · APK 1.17.0 — Música sin microcortes (reproductor nativo) y widget con 📻 🎙️ 🎵
 
 - **Microcortes en segundo plano** (sobre todo con el ecualizador o con FLAC): el WebView de

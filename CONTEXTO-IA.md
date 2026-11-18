@@ -158,6 +158,7 @@ timeout), `readLimited`, `rateLimited`, `HttpError`. `api/_lib/body.js`: `readJs
 |---|---|
 | `MainActivity.java` | WebView (`AudioWebView`: no se da por oculto mientras suena, evita cortes al pasar a segundo plano), puente `AndroidBridge` (§7), intercepta `/__music/`, permisos, archivos, recrea el WebView si muere el renderer (`?autoresume=1`), intents de abrir audio, onActivityResult/permisos delegados. |
 | `LocalMusic.java` | MediaStore → `/__music/library.json`, `/__music/track/{id}` (con Range), `/__music/art/{albumId}?t=`, `/__music/ext/{ficha}`, `/__music/extart/{ficha}`. |
+| `MusicScanner.java` | **APK 1.18**: escanea carpetas con `MediaScannerConnection` (en Android 10+ se le pasa la carpeta y la recorre entera), selector de carpeta (`ACTION_OPEN_DOCUMENT_TREE` → ruta) y `ContentObserver` sobre MediaStore → `window.onAndroidMusicChanged()`. Responde en `onAndroidMusicScan` / `onAndroidMusicFolder`. |
 | `MediaPlaybackService.java` | Servicio en primer plano (WakeLock/WifiLock), auriculares desconectados → pausa. |
 | `NativeMusic.java` | **APK 1.17**: motor nativo de «Mi música»: dos ExoPlayer («platinas»), foco de audio propio, fundidos (`volume` con rampa), enganche sin hueco (`arm`: la siguiente se añade a la lista del que suena y al pasar se intercambian los reproductores), avisos a la web. Lo llama el puente `nm*`. |
 | `FxDsp.java` + `FxAudioProcessor.java` | Ecualizador, auriculares, nivelador, balance, mono y limitador en Java, con las fórmulas de Chromium (Biquad, DynamicsCompressor, StereoPanner). `FxDsp` es Java puro: `tests/fx-nativo/comparar.py` lo compara con Chromium. |
@@ -253,6 +254,7 @@ El usuario también puede poner su clave de IA en el propio móvil (se guarda en
 (`call`/`busy`/`free`), `canResumeAudio()`, `reloadApp`, `sharePodcast`,
 `syncPodcastSubscriptions`, `areNotificationsEnabled`, `requestNotificationPermission`,
 `openNotificationSettings`, `saveTextFile`, `lastPlaybackSection()` (APK 1.16+, §9).
+Escaneo de música (APK 1.18+): `musicScanApiVersion()`, `scanMusicFolders(reqId, jsonRutas)` (`[]` = todo), `pickMusicScanFolder()`, `musicStorageRoots()`.
 Motor nativo de música (APK 1.17+): `nativeMusicVersion()`, `nmLoad(platina, url, gen)`, `nmPlay`,
 `nmPause`, `nmSeek(platina, seg)`, `nmStop`, `nmVolume(platina, vol, segRampa)`, `nmArm(desde, hasta)`
 (-1 = desenganchar), `nmFx(json)`.

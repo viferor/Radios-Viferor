@@ -28,7 +28,8 @@ const MUS_KEYS = {
   hidden: 'radios_viferor_music_hidden_v1',
   shortOk: 'radios_viferor_music_short_ok_v1',
   dupIgnore: 'radios_viferor_music_dup_ignore_v1',
-  playingList: 'radios_viferor_music_playing_list_v1'
+  playingList: 'radios_viferor_music_playing_list_v1',
+  scanFolder: 'radios_viferor_music_scan_folder_v1'
 };
 const MUS_UNKNOWN_ARTIST = 'Artista desconocido';
 const MUS_AUDIO_EXT = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba|webm|mp4|alac|aiff?)$/i;
@@ -2158,7 +2159,7 @@ function renderMusicSetup(state, detail = '') {
     'old-apk': ['⬆️', 'Actualiza la app', 'Para leer la música del móvil hace falta la versión 1.10.0 o posterior de la app Android (la parte web ya está al día). Instala el APK nuevo encima del actual: tus radios, podcasts y listas se conservan.', []],
     pick: ['📁', 'Elige tu carpeta de música', window.showDirectoryPicker ? 'Elige la carpeta donde guardas tu música. Se recordará para la próxima vez (solo en este navegador). Los archivos no salen de tu ordenador.' : 'Elige la carpeta donde guardas tu música. En este navegador hay que elegirla en cada visita (en Chrome o Edge se recuerda). Los archivos no salen de tu ordenador.', [['📁 Elegir carpeta', pickMusicFolder, 'primary']]],
     regrant: ['📁', `Tu carpeta «${musicState.folderName}»`, 'El navegador pide confirmar otra vez el acceso a la carpeta de música.', [[`🔓 Permitir acceso a «${musicState.folderName}»`, regrantMusicFolder, 'primary'], ['📁 Elegir otra carpeta', pickMusicFolder]]],
-    empty: ['🔍', 'No se ha encontrado música', isAndroidApp() ? 'Android no tiene canciones registradas en el móvil. Copia tu música (mp3, m4a, flac, ogg…) a la carpeta «Music» y vuelve a buscar.' : 'Esa carpeta no tiene archivos de música (mp3, m4a, flac, ogg, opus, wav…).', [[isAndroidApp() ? '🔄 Volver a buscar' : '📁 Elegir otra carpeta', () => (isAndroidApp() ? ensureMusicLibrary(true) : pickMusicFolder()), 'primary']]],
+    empty: ['🔍', 'No se ha encontrado música', isAndroidApp() ? 'Android no tiene canciones registradas en el móvil. Copia tu música (mp3, m4a, flac, ogg…) a la carpeta «Music» y vuelve a buscar.' : 'Esa carpeta no tiene archivos de música (mp3, m4a, flac, ogg, opus, wav…).', [[isAndroidApp() ? '🔄 Buscar canciones nuevas' : '📁 Elegir otra carpeta', () => (isAndroidApp() ? scanMusicNow() : pickMusicFolder()), 'primary']]],
     error: ['⚠️', 'No se pudo leer la música', detail || 'Error desconocido', [['🔄 Reintentar', () => ensureMusicLibrary(true), 'primary']]]
   }[state] || ['🎵', 'Mi música', '', []];
   const box = musEl('div', 'pod-empty mus-setup', `<div>${T[0]}</div><h3>${pEsc(T[1])}</h3><p>${pEsc(T[2])}</p>`);
@@ -2194,6 +2195,8 @@ async function ensureMusicLibrary(force = false) {
     try {
       const tracks = await loadAndroidLibrary();
       musicState.loading = false;
+      // Al abrir, se revisa en segundo plano si hay canciones nuevas sin registrar.
+      setTimeout(() => scanMusicNow({ silent: true }), 1500);
       if (!tracks.length) return renderMusicSetup('empty');
       finishLibrary(tracks, 'android');
     } catch (e) {
@@ -2215,6 +2218,159 @@ async function ensureMusicLibrary(force = false) {
   }
   renderMusicSetup('pick');
 }
+/* ---------------------------------------------------------------------------
+   Canciones nuevas en el móvil (APK 1.18+): Android no siempre registra al momento
+   la música copiada. Se le pide que escanee la carpeta configurada (o todo el
+   almacenamiento) y la biblioteca se refresca sola con cada cambio que detecte.
+--------------------------------------------------------------------------- */
+function musicScanApi() {
+  try {
+    return window.Android && typeof window.Android.musicScanApiVersion === 'function' ? Number(window.Android.musicScanApiVersion()) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+// Carpeta que se escanea: '' = todo el almacenamiento (memoria interna y tarjeta SD).
+function musicScanFolder() {
+  return String(lsGet(MUS_KEYS.scanFolder, '') || '');
+}
+function musicScanFolderLabel(path = musicScanFolder()) {
+  if (!path) return 'todo el móvil';
+  const m = path.match(/^\/storage\/emulated\/\d+\/?(.*)$/);
+  if (m) return m[1] || 'memoria interna';
+  const sd = path.match(/^\/storage\/([^/]+)\/?(.*)$/);
+  if (sd) return `tarjeta SD${sd[2] ? ' › ' + sd[2] : ''}`;
+  return path;
+}
+const musScan = { busy: false, silent: true, folder: '', pending: null, lastAuto: 0, refreshing: null, again: false };
+// Recarga la biblioteca desde Android sin pantalla de carga; si no cambia nada, no se toca.
+async function refreshAndroidLibrary() {
+  if (!isAndroidApp() || musicState.loading || (musicState.loaded && musicState.source !== 'android')) return null;
+  if (musScan.refreshing) {
+    musScan.again = true;
+    return musScan.refreshing;
+  }
+  musScan.refreshing = (async () => {
+    let res = null;
+    try {
+      const tracks = await loadAndroidLibrary();
+      const old = musicState.allTracks || [];
+      const oldIds = new Set(old.map(t => t.id));
+      const newIds = new Set(tracks.map(t => t.id));
+      const added = tracks.filter(t => !oldIds.has(t.id)).length;
+      const removed = old.filter(t => !newIds.has(t.id)).length;
+      const sig = ts => ts.map(t => `${t.id}:${t.size}:${t.dur}:${t.title}:${t.artist}:${t.album}:${t.folder}:${t.file}`).join('|');
+      const changed = !musicState.loaded || added || removed || sig(old) !== sig(tracks);
+      if (changed) {
+        const c = $m('musicContent'),
+          sc = c?.scrollTop || 0;
+        if (!tracks.length) {
+          Object.assign(musicState, { allTracks: [], tracks: [], loaded: false });
+          if (musicViewActive()) renderMusicSetup('empty');
+        } else {
+          finishLibrary(tracks, 'android');
+          if (c) c.scrollTop = sc;
+        }
+      }
+      res = { added, removed, changed };
+    } catch {}
+    musScan.refreshing = null;
+    if (musScan.again) {
+      musScan.again = false;
+      return refreshAndroidLibrary();
+    }
+    return res;
+  })();
+  return musScan.refreshing;
+}
+// Escanea la carpeta configurada (o la indicada). silent: sin avisos (al abrir / volver a la app).
+function scanMusicNow({ folder = musicScanFolder(), silent = false } = {}) {
+  if (!isAndroidApp()) return ensureMusicLibrary(true);
+  if (!musicScanApi()) {
+    // APK antiguo: solo se puede volver a leer lo que Android ya tiene registrado.
+    if (!silent) podToast('Para escanear carpetas actualiza la app (APK 1.18 o más nueva)');
+    return silent ? null : (musicState.loaded ? refreshAndroidLibrary() : ensureMusicLibrary(true));
+  }
+  let st = 'ask';
+  try {
+    st = window.Android.musicPermissionStatus();
+  } catch {}
+  if (st !== 'granted') return silent ? null : ensureMusicLibrary(true);
+  if (musScan.busy) {
+    if (!silent) {
+      musScan.silent = false;
+      podToast('Ya se están buscando canciones nuevas…');
+    }
+    return;
+  }
+  Object.assign(musScan, { busy: true, silent, folder, lastAuto: Date.now() });
+  if (!silent) {
+    podToast(`🔎 Buscando canciones nuevas en ${musicScanFolderLabel(folder)}…`, { ms: 60000 });
+    if (!musicState.loaded) setMusicLoading('Buscando canciones nuevas en el móvil…');
+  }
+  try {
+    window.Android.scanMusicFolders(String(Date.now()), JSON.stringify(folder ? [folder] : []));
+  } catch {
+    musScan.busy = false;
+    if (!silent) podToast('No se pudo escanear la carpeta');
+  }
+}
+window.onAndroidMusicScan = async r => {
+  const silent = musScan.silent;
+  const folder = musScan.folder;
+  musScan.busy = false;
+  const res = await refreshAndroidLibrary();
+  if (silent) return;
+  if (!r?.ok) return podToast('No se pudo escanear la carpeta');
+  if (!musicState.loaded && musicViewActive() && !musicState.tracks.length) renderMusicSetup('empty');
+  const parts = [];
+  if (res?.added) parts.push(plural(res.added, 'canción nueva', 'canciones nuevas'));
+  if (res?.removed) parts.push(plural(res.removed, 'quitada', 'quitadas'));
+  podToast(parts.length ? `✅ ${parts.join(' · ')}` : res?.changed ? '✅ Biblioteca actualizada' : `✅ Sin novedades en ${musicScanFolderLabel(folder)}`);
+};
+// Android avisa de cualquier cambio en la música del móvil: se refresca solo.
+window.onAndroidMusicChanged = () => {
+  if (musScan.busy) return; // al terminar el escaneo ya se refresca
+  if (musicState.loaded && musicState.source === 'android') refreshAndroidLibrary();
+};
+window.onAndroidMusicFolder = r => {
+  const action = musScan.pending;
+  musScan.pending = null;
+  if (r?.error) return podToast(r.error);
+  if (!r?.path) return;
+  if (action === 'default') {
+    lsSet(MUS_KEYS.scanFolder, r.path);
+    podToast(`Carpeta de música: ${musicScanFolderLabel(r.path)}`);
+  }
+  scanMusicNow({ folder: r.path });
+};
+function pickScanFolder(action) {
+  if (!musicScanApi()) return podToast('Para elegir carpeta actualiza la app (APK 1.18 o más nueva)');
+  musScan.pending = action;
+  try {
+    window.Android.pickMusicScanFolder();
+  } catch {
+    musScan.pending = null;
+  }
+}
+function chooseScanFolder() {
+  const cur = musicScanFolder();
+  podSheet({
+    title: '📁 Carpeta de música',
+    subtitle: `Al buscar canciones nuevas se revisa: ${musicScanFolderLabel(cur)}`,
+    items: [
+      { icon: cur ? '📱' : '✅', label: 'Todo el móvil', hint: 'Memoria interna y tarjeta SD', on: () => (lsSet(MUS_KEYS.scanFolder, ''), podToast('Se revisará todo el móvil'), scanMusicNow({ folder: '' })) },
+      cur && { icon: '✅', label: musicScanFolderLabel(cur), hint: 'La carpeta elegida ahora' },
+      { icon: '📂', label: 'Elegir una carpeta…', hint: 'Solo se revisará esa (con sus subcarpetas)', on: () => pickScanFolder('default') }
+    ]
+  });
+}
+// Al volver a la app (por ejemplo, después de copiar música) se revisa solo.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !isAndroidApp() || !musicState.loaded || musicState.source !== 'android') return;
+  if (Date.now() - musScan.lastAuto > 30000) scanMusicNow({ silent: true });
+});
+
 window.onAndroidMusicPermission = granted => {
   if (granted) ensureMusicLibrary(true);
   else renderMusicSetup(window.Android?.musicPermissionStatus?.() === 'blocked' ? 'blocked' : 'denied');
@@ -4138,7 +4294,11 @@ function initMusic() {
         { icon: '🔀', label: 'Toda mi música en aleatorio', disabled: !musicState.tracks.length, on: () => playCollection(musicState.tracks, 0, { shuffle: true, label: 'toda tu música' }) },
         { sep: true },
         Object.keys(musicHiddenMap()).length && { icon: '🙈', label: 'Canciones quitadas de la biblioteca', hint: plural(Object.keys(musicHiddenMap()).length, 'canción', 'canciones'), on: openHiddenTracks },
-        { icon: '🔄', label: isAndroidApp() ? 'Volver a buscar música en el móvil' : 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
+        isAndroidApp()
+          ? { icon: '🔄', label: 'Buscar canciones nuevas', hint: `Revisa ${musicScanFolderLabel()}`, on: () => scanMusicNow() }
+          : { icon: '🔄', label: 'Volver a leer la carpeta', on: () => ensureMusicLibrary(true) },
+        isAndroidApp() && { icon: '📂', label: 'Escanear una carpeta…', hint: 'Solo esta vez, la que elijas', on: () => pickScanFolder('once') },
+        isAndroidApp() && { icon: '📁', label: 'Carpeta de música', hint: musicScanFolderLabel(), on: chooseScanFolder },
         !isAndroidApp() && { icon: '📁', label: 'Elegir otra carpeta', on: pickMusicFolder }
       ]
     })

@@ -61,6 +61,8 @@ public class MainActivity extends Activity {
     private MusicEditor musicEditor;
     // Motor nativo de «Mi música» (1.17): ExoPlayer en vez de los <audio> del WebView.
     private NativeMusic nativeMusic;
+    // «Buscar canciones nuevas» y refresco automático de «Mi música» (1.18).
+    private MusicScanner musicScanner;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +77,8 @@ public class MainActivity extends Activity {
         audioOutput.start();
         musicEditor = new MusicEditor(this, js -> { if (webView != null) webView.post(() -> webView.evaluateJavascript(js, null)); });
         nativeMusic = new NativeMusic(this, js -> { if (webView != null && bridgeTrusted) webView.evaluateJavascript(js, null); });
+        musicScanner = new MusicScanner(this, js -> { if (webView != null && bridgeTrusted) webView.evaluateJavascript(js, null); });
+        musicScanner.startWatching();
         setupWebView(START_URL);
         // Los fallos al leer los archivos de música se apuntan en el registro de errores de la
         // web (Ajustes → Registro de errores), que es donde se ve el porqué de un corte.
@@ -193,6 +197,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (activeInstance == this) activeInstance = null;
         if (audioOutput != null) audioOutput.stop();
+        if (musicScanner != null) musicScanner.stopWatching();
         if (nativeMusic != null) {
             try { nativeMusic.release(); } catch (Exception ignored) {}
             nativeMusic = null;
@@ -644,6 +649,32 @@ public class MainActivity extends Activity {
             return bridgeTrusted ? LocalMusic.API_VERSION : 0;
         }
 
+        /** 1 si la app sabe escanear carpetas y avisar de cambios en la música (APK 1.18+). */
+        @JavascriptInterface
+        public int musicScanApiVersion() {
+            return bridgeTrusted ? MusicScanner.API_VERSION : 0;
+        }
+
+        /** Pide a Android que registre lo nuevo en esas carpetas (JSON de rutas; [] = todo). */
+        @JavascriptInterface
+        public void scanMusicFolders(String reqId, String foldersJson) {
+            if (!bridgeTrusted || musicScanner == null || !LocalMusic.hasPermission(MainActivity.this)) return;
+            musicScanner.scan(reqId, foldersJson);
+        }
+
+        /** Selector de carpetas del sistema; responde en window.onAndroidMusicFolder. */
+        @JavascriptInterface
+        public void pickMusicScanFolder() {
+            if (!bridgeTrusted || musicScanner == null) return;
+            runOnUiThread(() -> musicScanner.pickFolder());
+        }
+
+        /** Raíces del almacenamiento (interno y SD): JSON [{path, name}]. */
+        @JavascriptInterface
+        public String musicStorageRoots() {
+            return bridgeTrusted && musicScanner != null ? musicScanner.rootsJson() : "[]";
+        }
+
         /** "granted", "ask" o "blocked" (denegado con «no volver a preguntar»). */
         @JavascriptInterface
         public String musicPermissionStatus() {
@@ -930,6 +961,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (musicDeleter != null && musicDeleter.onActivityResult(requestCode, resultCode)) return;
         if (musicEditor != null && musicEditor.onActivityResult(requestCode, resultCode)) return;
+        if (musicScanner != null && musicScanner.onActivityResult(requestCode, resultCode, data)) return;
         if (requestCode == FILE_SAVE_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 try (OutputStream out = getContentResolver().openOutputStream(data.getData())) {
