@@ -45,6 +45,18 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug
+      # La firma tiene que ser siempre la misma: si cambia, Android dice «conflicto» al
+      # actualizar. Si no coincide con .github/firma-apk.txt, no se publica el APK.
+      - name: Comprobar la firma
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          FIRMA=$(keytool -printcert -jarfile "$APK" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ' \r\n')
+          echo "Firma del APK: $FIRMA"
+          ESPERADA=$(tr -d ' \r\n' < .github/firma-apk.txt 2>/dev/null || true)
+          if [ -n "$ESPERADA" ] && [ "$FIRMA" != "$ESPERADA" ]; then
+            echo "::error::El APK sale firmado con otra clave ($FIRMA) y en el móvil daría «conflicto» (la buena es $ESPERADA). Revisa el secreto DEBUG_KEYSTORE_B64."
+            exit 1
+          fi
       - name: Lint (informativo)
         continue-on-error: true
         run: ./gradlew --no-daemon lintDebug
