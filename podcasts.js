@@ -646,7 +646,7 @@ function flushPodcastProgress(force = false) {
 function minimalEpisode(e) {
   if (!e) return null;
   const out = {};
-  for (const k of ['id', 'title', 'audioUrl', 'podcastTitle', 'podcastArt', 'author', 'feedUrl', 'date', 'image', 'duration', 'link'])
+  for (const k of ['id', 'title', 'audioUrl', 'podcastTitle', 'podcastArt', 'author', 'feedUrl', 'date', 'image', 'duration', 'link', 'pageUrl', 'size'])
     if (e[k]) out[k] = e[k];
   return out;
 }
@@ -982,7 +982,7 @@ function podcastTile(p, { onOpen } = {}) {
   const hue = [...String(p.title || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
   b.innerHTML = `<span class="pod-tile-art" style="--ph:${hue}">${
     img ? `<img src="${pEsc(img)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''
-  }<span class="pod-tile-ph">${pEsc(podcastInitials(p.title))}</span>${n > 0 ? `<span class="pod-tile-badge" aria-label="${n} episodios nuevos">${n > 99 ? '99+' : n}</span>` : ''}${
+  }<span class="pod-tile-ph">${pEsc(podcastInitials(p.title))}</span>${n > 0 ? `<span class="pod-tile-badge" aria-label="${n} episodios nuevos">${n > 999 ? '999+' : n}</span>` : ''}${
     isPodcastFav(p) ? '<span class="pod-tile-fav" aria-label="Favorito">⭐</span>' : ''
   }</span><span class="pod-tile-title">${old ? `<i class="pod-activity-dot ${act.cls}" title="${pEsc(act.label + (act.date ? ' · ' + act.date : ''))}"></i>` : ''}${pEsc(p.title || 'Sin título')}</span>`;
   b.setAttribute('aria-label', `${podcastText(p.title || 'Podcast')}${n ? `, ${n} episodios nuevos` : ''}`);
@@ -2503,7 +2503,7 @@ function initPodcasts() {
     nextPodcast(true);
   });
   ['podBack15', 'podExpBack15'].forEach(id => {
-    if ($p(id)) $p(id).onclick = () => seekPodcast(-15);
+    if ($p(id)) $p(id).onclick = () => seekPodcast(-10);
   });
   ['podForward15', 'podExpForward15'].forEach(id => {
     if ($p(id)) $p(id).onclick = () => seekPodcast(30);

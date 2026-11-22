@@ -110,7 +110,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 ### Web (raíz)
 | Archivo | Para qué |
 |---|---|
-| `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `motor-nativo.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
+| `index.html` | Estructura de las 3 pestañas, reproductores, menú de ajustes. Carga los scripts **en este orden**: `version.js`, `diagnostics.js`, `stations-data.js`, `buscador-radios.js`, `app.js`, `podcasts.js`, `podcast-listas.js`, `podcast-inicio.js`, `motor-nativo.js`, `musica.js`, `letras.js`, `ecualizador.js` (todos con `?v=compilación`). |
 | `version.js` | Única fuente de versión (`window.RV_VERSION`). No editar a mano: usar `scripts/version.mjs`. |
 | `diagnostics.js` | Registro de errores (localStorage, agrupa repetidos ×N, errores de `<audio>`, envuelve `fetch`), `window.logError`, menú de ajustes (actualizar, «Reanudar al abrir», «Volver a sonar tras llamada o aviso»). |
 | Radio + ecualizador | Dos `<audio>`: `audioNormal` y `audioFx` (`crossorigin`, conectado a Web Audio por `radioFx` de `ecualizador.js`). `prepararAudioRadio(url)` en `intentarFuente` comprueba CORS (`radioPermiteFx`) y cambia `audio` (`let`); el activo siempre tiene `id="audioPlayer"`. Los listeners van con `enRadio()` (en los dos, solo atiende al activo). Ajuste `radio` en `radios_viferor_music_audio_v1`. **1.37.1:** la cadena solo conecta lo activo (`wireFxChain`) y la de la radio se desconecta de la salida cuando no suena (`radioFx.sleep/wake`, `plugFxOut`); cambiar el ajuste con la emisora sonando la vuelve a poner por el `<audio>` que toca (`window.rvRadioFxCambio`). Si la música vuelve a entrecortarse con procesado activo, mirar primero cuántos nodos hay conectados. |
@@ -119,6 +119,7 @@ cd "C:\Users\vifer\Downloads\radiosapp\v1\Radios Viferor"
 | `app.js` | **Radios**: catálogo, favoritas (`mis_radios_favoritas_v1`), reproducción (`reproducirRadio`, `intentarFuente`, HLS, reconexión, vigilancia de cortes), «Ahora suena», EPG, interrupciones del sistema (`rvPausaDelUsuario`, `rvInterrupcionPaso`, `rvAnotar`), gesto de deslizar entre pestañas, backup completo, tema. |
 | `podcasts.js` | **Podcasts**: estado `podcastState`, suscripciones, búsqueda, feeds, episodios, reproductor (`podcastAudio`), progreso/reanudar, cola v2, `restoreLastPlayback` («Reanudar al abrir»), puentes `viferorNativePodcast*`, atrás de Android `handleAndroidBack`. |
 | `podcast-listas.js` | Utilidades de interfaz **compartidas por todo** (`podToast`, `podSheet`, `podSheetClose`, `podPromptText`, `actionBar`, `makeSortable`) + listas/cola/velocidad/temporizador de podcasts. |
+| `podcast-inicio.js` | **1.40**: interfaz de Podcasts al estilo AntennaPod. Barra inferior (Inicio · Cola · Novedades · Suscripciones · Más), filas de episodio, Novedades, Episodios, Historial, Favoritos de episodios, Estadísticas y reproductor ampliado. **Sustituye** las funciones globales de pantalla (`renderPodcastLanding`, `renderPodcastHome`, `renderPodcastQueue`, `renderEpisodesView`, `restorePodcastHistory`, `refreshPodcastScreen`, `openEpisodeMenu`…) asignando `window.x = …`: si cambias una de esas en `podcasts.js`/`podcast-listas.js`, mira aquí. Pantallas en `window.pnScreens`. |
 | `motor-nativo.js` | **APK 1.17+**: presenta los dos reproductores nativos de música (ExoPlayer, `NativeMusic.java`) como si fueran `<audio>` (`NativeDeck`: `src`, `currentTime`, `paused`, `play()`, eventos…). `window.rvMotorNativo` (`usar`, `activo`, `crearPlatinas`, `fx`, `elegirWeb`). Avisos de Android: `window.rvNativeMusicEvent(platina, gen, tipo, estado)`. |
 | `musica.js` | **Mi música** (el más grande): biblioteca (Android / carpeta / archivos), índices, motor de dos platinas (`musDecks`, `musicAudio()`, fundido, sin pausas), cola, historial, listas (manuales/inteligentes/M3U), favoritos, carpetas incluidas/excluidas, pantallas, reproductor mini y ampliado, gesto de carátula, radio de canción, cortas/rotas, duplicadas, eliminar, editar ID3, abrir desde otras apps, autorrecuperación al reanudar. |
 | `letras.js` | Letras: fuentes (tuya, incrustada ID3/USLT, `.lrc`, LRCLIB con respaldo directo), panel, sincronizar con MARCAR, ajustar arrastrando, desfase, traducción, significado (IA), compartir en LRCLIB (prueba de trabajo). |
@@ -296,7 +297,8 @@ el servicio, quita la notificación y deja el widget en «reproducir».
   `…_podcast_queue_v2` (y `_v1` antiguo), `…_podcast_queue_opts_v1`, `…_podcast_history_v1`,
   `…_podcast_progress_v1`, `…_podcast_done_v1`, `…_podcast_resume_v3`, `…_podcast_playlists_v1`,
   `…_podcast_play_counts_v1`, `…_podcast_speed`, `…_podcast_filters_v1`, `…_podcast_language`,
-  `…_podcast_mine_sort`, `…_podcast_time_mode`.
+  `…_podcast_mine_sort`, `…_podcast_time_mode`, `…_podcast_ep_favs_v1`, `…_podcast_inbox_seen_v1`,
+  `…_podcast_inbox_hidden_v1`, `…_podcast_inbox_cache_v1` (caché), `…_podcast_listen_time_v1`.
 - Música: `radios_viferor_music_*`: `queue_v1`, `history_v1`, `context_v1`, `opts_v1`,
   `playlists_v1`, `playing_list_v1`, `stats_v1`, `resume_v1`, `ui_v1`, `volume`, `favs_v1`,
   `folders_v1`, `hidden_v1`, `short_secs`, `short_ok_v1`, `dup_ignore_v1`, `similar_v2`,

@@ -28,6 +28,8 @@ python tests\test_auto.py      # Que no suene sola: interrupciones, «Reanudar a
                                # microcortes y fallos de lectura (20)
 python tests\test_cola_posicion.py  # La cola empieza desde el principio (no en el punto de otra canción) (8)
 python tests\test_scan.py      # Buscar canciones nuevas: escanear carpetas, refresco automático (23)
+python tests\test_podcast_nav.py  # Podcasts estilo AntennaPod: barra inferior, Inicio, Cola,
+                                  # Novedades, Suscripciones, Más, reproductor (45)
 python tests\test_motor_nativo.py  # Motor nativo de música (APK 1.17) con un Android simulado:
                                    # reproducir, fundidos, sin huecos, interrupciones, fallos,
                                    # ecualizador, widget 📻 🎙️ 🎵 (41)

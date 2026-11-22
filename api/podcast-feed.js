@@ -177,6 +177,8 @@ function parse(xml, feedUrl) {
         tag(b, 'releaseDate'),
       audioUrl: firstUrl(b),
       duration: tag(b, 'itunes:duration'),
+      // Tamaño del audio (<enclosure length>) para mostrar «112 MB» en la lista.
+      size: Number((b.match(/<enclosure\b[^>]*\blength=["'](\d+)["']/i) || [])[1]) || 0,
       pageUrl: tag(b, 'link'),
       image: (b.match(/<itunes:image\b[^>]*href=["']([^"']+)["'][^>]*>/i) || [])[1] || image,
       episodeNumber: tag(b, 'itunes:episode'),

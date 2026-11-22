@@ -1,6 +1,37 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.40.0 — Podcasts al estilo AntennaPod
+
+- **Barra inferior** en Podcasts: 🏠 Inicio · ☰ Cola · 📥 Novedades (con el número de
+  episodios nuevos) · ▦ Suscripciones · ⋮ Más. Atrás desde una pestaña vuelve a Inicio.
+- **Inicio**: «Continúa escuchando» (lo que dejaste a medias, con su barra), «Echa un ojo a
+  las novedades», «Sorpréndete» (episodios al azar, 🔀 para otros), «Vuelve a tus clásicos»
+  (lo que más escuchas) y la cola y tus listas.
+- **Filas de episodio** nuevas en la cola, novedades, episodios y dentro de cada podcast:
+  portada, «17 jun · 112 MB», título, `00:58:14 ━━── -00:42:48` y botón ▶. En la cola se
+  ordena arrastrando ⠿; tocar el episodio abre su menú (ahora con notas, favorito y compartir).
+- **Cola**: «18 episodios • quedan 18 horas 29 minutos»; el ⋮ tiene mezclar, guardar como
+  lista, quitar escuchados, vaciar y las opciones de reproducción.
+- **Novedades**: episodios nuevos de tus suscripciones que aún no has escuchado, empezado ni
+  puesto en la cola. ⋮ → buscar nuevos, añadir todos a la cola, marcar todo como visto.
+  Cada episodio se puede quitar de Novedades desde su menú.
+- **Suscripciones**: cuadrícula de 3 con el número de nuevos y ＋ flotante; ⋮ → ordenar,
+  importar/exportar OPML.
+- **Más**: Episodios (con filtro: sin escuchar, empezados, escuchados, en la cola,
+  favoritos), Historial, Favoritos (episodios ⭐ y podcasts), Mis listas, Estadísticas
+  (tiempo escuchado por podcast, desde esta versión), Añadir podcast y Ajustes.
+- **Reproductor** a pantalla completa: ⌄ · ☆ (episodio favorito) · zᶻᶻ (temporizador) ·
+  compartir · ⋮ (cola, ir al podcast, añadir a lista, anterior, volumen); «podcast • fecha»,
+  **ⓘ Notas del programa**, y abajo velocidad · −10 s · ▶ · +30 s · siguiente.
+  Retroceder pasa de 15 a **10 s** (como en AntennaPod).
+- Mini reproductor más limpio (portada, título, podcast y ▶) encima de la barra.
+- `api/podcast-feed.js` devuelve el tamaño del audio (`size`) para mostrar los MB.
+- Todo está en `podcast-inicio.js`; no cambia cómo se reproduce nada. Claves nuevas:
+  `radios_viferor_podcast_ep_favs_v1`, `…_inbox_seen_v1`, `…_inbox_hidden_v1`,
+  `…_inbox_cache_v1` (caché, se puede perder) y `…_listen_time_v1`.
+- Prueba: `tests/test_podcast_nav.py` (45).
+
 ## 1.39.1 — Las canciones de la cola empezaban por la mitad
 
 - Al abrir la app se deja preparada la última canción en su punto (p. ej. el segundo 117). Ese
