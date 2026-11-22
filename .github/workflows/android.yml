@@ -1,0 +1,76 @@
+name: APK Android
+
+# Compila la app Android en cada cambio de la carpeta app/ (o a mano desde la
+# pestaña Actions) y deja el APK de depuración como artefacto descargable.
+# En main además lo publica como «Release» (pestaña Releases del repo), para poder
+# descargarlo directamente desde el móvil: Radios-Viferor-<versión>.apk
+on:
+  push:
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      # Firma: si existe el secreto DEBUG_KEYSTORE_B64 (el debug.keystore del PC en base64),
+      # se usa esa clave para que el APK se instale encima del compilado con Android Studio.
+      # Sin él, cada compilación saldría con una clave distinta y Android diría «conflicto».
+      - name: Clave de firma
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            mkdir -p ~/.android
+            echo "$KS" | tr -d ' \r\n' | base64 -d > ~/.android/debug.keystore
+            echo "Usando la clave del secreto DEBUG_KEYSTORE_B64"
+          else
+            echo "::warning::Falta el secreto DEBUG_KEYSTORE_B64: el APK no se podrá instalar encima del de Android Studio"
+          fi
+      - name: Compilar APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+      - name: Lint (informativo)
+        continue-on-error: true
+        run: ./gradlew --no-daemon lintDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radios-viferor-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+      - name: Publicar en Releases (solo main)
+        if: github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(grep -oP "versionName '\\K[^']+" app/build.gradle)
+          WEB=$(grep -oP "version: '\\K[^']+" version.js)
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          cp "$APK" "Radios-Viferor-$VER.apk"
+          TAG="apk-v$VER"
+          NOTES="APK $VER (web $WEB). Descarga el .apk desde el móvil e instálalo encima del que tienes.
+          Commit: ${GITHUB_SHA::7} — $(git log -1 --format=%s)"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "Radios-Viferor-$VER.apk" --clobber
+            gh release edit "$TAG" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" "Radios-Viferor-$VER.apk" --title "Radios Viferor $VER" --notes "$NOTES" --latest
+          fi

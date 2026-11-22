@@ -10,8 +10,8 @@ android {
         applicationId 'com.viferor.radioespana'
         minSdk 23
         targetSdk 34
-        versionCode 1465
-        versionName '1.4.65'
+        versionCode 11900
+        versionName '1.19.0'
     }
 }
 
@@ -19,4 +19,11 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+}
+
+dependencies {
+    // Motor nativo de «Mi música» (NativeMusic.java): ExoPlayer, solo la parte de audio.
+    // 1.4.x es la última que compila con compileSdk 34.
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.annotation:annotation:1.7.1'
 }

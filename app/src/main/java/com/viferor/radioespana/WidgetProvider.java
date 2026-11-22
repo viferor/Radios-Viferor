@@ -29,10 +29,12 @@ public class WidgetProvider extends AppWidgetProvider {
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_podcast);
         String section = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_PLAYBACK_SECTION, "radio");
-        boolean podcast = "podcast".equalsIgnoreCase(PodcastMediaController.getWidgetType(context));
+        String type = PodcastMediaController.getWidgetType(context);
+        boolean music = "music".equalsIgnoreCase(type);
+        boolean podcast = "podcast".equalsIgnoreCase(type) || music;
         String rawTitle = PodcastMediaController.getWidgetTitle(context);
         String rawSubtitle = PodcastMediaController.getWidgetSubtitle(context);
-        v.setTextViewText(R.id.widget_title, podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
+        v.setTextViewText(R.id.widget_title, music ? "🎵 Música · " + rawTitle : podcast ? "🎙️ Podcast · " + rawTitle : "📻 Radio · " + rawTitle);
         v.setTextViewText(R.id.widget_subtitle, rawSubtitle);
         v.setTextViewText(R.id.widget_play, PodcastMediaController.getWidgetPlaying(context) ? "⏸" : "▶");
         v.setTextViewText(R.id.widget_back, podcast ? "−15" : "•");
@@ -90,10 +92,19 @@ public class WidgetProvider extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_forward, android.view.View.GONE);
             v.setViewVisibility(R.id.widget_next, android.view.View.GONE);
         }
-        set(v, context, R.id.widget_play,
-                PodcastMediaController.getWidgetPlaying(context)
-                        ? PodcastMediaController.ACTION_WIDGET_PAUSE
-                        : PodcastMediaController.ACTION_WIDGET_PLAY, 103);
+        boolean sonando = PodcastMediaController.getWidgetPlaying(context);
+        // Con la app abierta (aunque esté en segundo plano) las órdenes se mandan sin abrirla.
+        // Con la app cerrada hay que abrirla: la radio, los podcasts y la cola de la música
+        // los lleva la web, que vive dentro de la aplicación. (Abrir una pantalla desde un
+        // aviso en segundo plano no siempre lo permite Android; desde el widget, sí.)
+        boolean viva = MainActivity.isAlive();
+        if (sonando || viva) set(v, context, R.id.widget_play, sonando ? PodcastMediaController.ACTION_WIDGET_PAUSE : PodcastMediaController.ACTION_WIDGET_PLAY, 103);
+        else setOpenAndPlay(v, context, R.id.widget_play, PodcastMediaController.ACTION_WIDGET_PLAY, 113);
+        // 📻 🎙️ 🎵: poner a sonar esa sección (antes solo se podía reanudar lo último que sonó).
+        String actual = music ? "music" : "podcast".equalsIgnoreCase(type) ? "podcast" : "radio";
+        seccion(v, context, R.id.widget_sec_radio, PodcastMediaController.ACTION_WIDGET_PLAY_RADIO, 121, "radio".equals(actual), sonando, viva);
+        seccion(v, context, R.id.widget_sec_podcast, PodcastMediaController.ACTION_WIDGET_PLAY_PODCAST, 122, "podcast".equals(actual), sonando, viva);
+        seccion(v, context, R.id.widget_sec_music, PodcastMediaController.ACTION_WIDGET_PLAY_MUSIC, 123, "music".equals(actual), sonando, viva);
         set(v, context, R.id.widget_volume_down, PodcastMediaController.ACTION_WIDGET_VOLUME_DOWN, 106);
         set(v, context, R.id.widget_volume_up, PodcastMediaController.ACTION_WIDGET_VOLUME_UP, 107);
         return v;
@@ -102,6 +113,29 @@ public class WidgetProvider extends AppWidgetProvider {
     private static void set(RemoteViews v, Context c, int viewId, String action, int req) {
         Intent i = new Intent(c, MediaControlReceiver.class).setAction(action);
         v.setOnClickPendingIntent(viewId, PendingIntent.getBroadcast(c, req, i, PendingIntent.FLAG_UPDATE_CURRENT | immutable()));
+    }
+
+    /** Botón que abre la app pidiendo que empiece a sonar (no es un mando a distancia). */
+    private static void setOpenAndPlay(RemoteViews v, Context c, int viewId, String action, int req) {
+        Intent i = new Intent(c, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(MainActivity.EXTRA_MEDIA_ACTION, action);
+        // Los botones de sección abren además su pestaña.
+        String sec = PodcastMediaController.sectionOfAction(action);
+        if (sec != null) i.putExtra("openSection", sec);
+        v.setOnClickPendingIntent(viewId, PendingIntent.getActivity(c, req, i, PendingIntent.FLAG_UPDATE_CURRENT | immutable()));
+    }
+
+    /**
+     * Botón 📻 / 🎙️ / 🎵. Resaltado el de lo que suena (o sonó lo último). Si ya está sonando
+     * esa sección, no hace falta mandar nada nuevo: hace de pausa/reanudar como el botón ▶.
+     */
+    private static void seccion(RemoteViews v, Context c, int viewId, String action, int req, boolean actual, boolean sonando, boolean viva) {
+        v.setInt(viewId, "setBackgroundResource", actual ? R.drawable.widget_button_active : R.drawable.widget_button_background);
+        v.setTextColor(viewId, 0xFFFFFFFF);
+        if (actual && sonando) set(v, c, viewId, PodcastMediaController.ACTION_WIDGET_PAUSE, req);
+        else if (viva) set(v, c, viewId, action, req);
+        else setOpenAndPlay(v, c, viewId, action, req + 10);
     }
     private static int immutable() { return android.os.Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0; }
 }
