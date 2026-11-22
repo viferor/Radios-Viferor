@@ -38,6 +38,8 @@ jobs:
             mkdir -p ~/.android
             echo "$KS" | tr -d ' \r\n' | base64 -d > ~/.android/debug.keystore
             echo "Usando la clave del secreto DEBUG_KEYSTORE_B64"
+            echo "RV_DEBUG_KEYSTORE=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+            keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep -m2 -E 'Alias|SHA256' || echo "::warning::El secreto no parece un debug.keystore (contraseña android)"
           else
             echo "::warning::Falta el secreto DEBUG_KEYSTORE_B64: el APK no se podrá instalar encima del de Android Studio"
           fi
