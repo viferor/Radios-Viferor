@@ -1,6 +1,27 @@
 # Radios Viferor
 Radios y podcast
 
+## 1.41.0 · APK 1.19.0 — Descargar episodios y buscar dentro de tus podcasts
+
+- **Descargar episodios** para escucharlos sin conexión: toca un episodio → «Descargar».
+  Lo descarga Android (sigue aunque cierres la app y enseña el progreso en las
+  notificaciones) a la carpeta propia de la app, sin pedir permisos. En la lista sale ✓ si
+  está descargado o el % mientras baja. Al reproducirlo suena el archivo del móvil.
+- **Más → Descargas** (y «Gestionar las descargas» en Inicio): lo descargado, cuánto ocupa,
+  el espacio libre y ⋮ → solo con Wi-Fi (activado), borrar al terminar de escucharlo,
+  borrar las escuchadas o todas. También en Ajustes de podcasts.
+- **Sin conexión**: la app se abre con lo último guardado (APK 1.19) y en Inicio avisa de que
+  puedes escuchar tus descargas. Al volver la red todo sigue como siempre.
+- **Buscar episodios en tus suscripciones** (la 🔍 de arriba): por título y por tema (la
+  descripción), sin importar mayúsculas ni tildes; varias palabras = tienen que estar todas.
+  Primero sale lo ya cargado y luego busca en el feed entero de cada podcast. Se puede
+  limitar a un podcast y marca la palabra encontrada. «🌐 Podcasts nuevos» busca en internet.
+- APK: `PodcastDownloads.java` (DownloadManager + `/__pod/file/…` con Range); puente
+  `podDownloadVersion`, `podDownload`, `podDownloads`, `podDeleteDownload`, `podStorage`;
+  permiso `ACCESS_NETWORK_STATE`. Claves web nuevas: `radios_viferor_podcast_downloads_v1`,
+  `radios_viferor_podcast_download_opts_v1`.
+- Prueba: `tests/test_podcast_nav.py` (57).
+
 ## 1.40.0 — Podcasts al estilo AntennaPod
 
 - **Barra inferior** en Podcasts: 🏠 Inicio · ☰ Cola · 📥 Novedades (con el número de

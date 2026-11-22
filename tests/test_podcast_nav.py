@@ -32,8 +32,8 @@ def feed_json(url, limit):
     for k in range(20):
         t = NOW - (k * 2 + i) * 86400 - i * 3600
         eps.append({
-            'id': f'{i}-{k}', 'title': f'{title}: episodio {20 - k} con un título bastante largo para ver cómo se corta',
-            'description': f'<p>Notas del episodio {20-k} de {title}.</p><p>Más en https://ejemplo.test/{i}/{k}</p>',
+            'id': f'{i}-{k}', 'title': ('Especial tenis: Nadal se despide' if (i, k) == (0, 19) else f'{title}: episodio {20 - k} con un título bastante largo para ver cómo se corta'),
+            'description': f'<p>Notas del episodio {20-k} de {title}.</p><p>Más en https://ejemplo.test/{i}/{k}</p>' + (' <p>Hoy hablamos de Alcaraz y del Tenis en la Copa Davis.</p>' if (i, k) == (2, 17) else ''),
             'date': time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime(t)),
             'audioUrl': f'{BASE}/audio/{i}-{k}.wav', 'duration': str(3600 + k * 120), 'size': 50_000_000 + k * 1_000_000,
             'image': f'{BASE}/img/{i}.png', 'pageUrl': f'https://ejemplo.test/{i}/{k}'})
@@ -56,6 +56,9 @@ def route(r):
     m = re.search(r'/img/(\d+)\.png', u)
     if m: return r.fulfill(body=ARTS[int(m.group(1)) % 5], headers={'content-type': 'image/png'})
     if '/audio/' in u: return r.fulfill(body=TONE, headers={'content-type': 'audio/wav'})
+    if '/__pod/file/' in u:
+        state['local'] = state.get('local', 0) + 1
+        return r.fulfill(body=TONE, headers={'content-type': 'audio/wav'})
     if '/__music/' in u: return r.fulfill(status=403, json={'ok': False})
     if '/api/' in u: return r.fulfill(json={})
     return r.continue_()
@@ -77,6 +80,16 @@ with sync_playwright() as p:
         page.on('pageerror', lambda e: errors.append('pageerror: ' + str(e)))
         page.on('console', lambda m: errors.append('console: ' + m.text) if m.type == 'error' and 'Failed to load resource' not in m.text else None)
         page.add_init_script("""
+          window.__dl = {};
+          window.Android = {
+            podDownloadVersion: () => 1,
+            podDownload: (k, url, t, p, wifi) => { window.__dl[k] = { key: k, file: 'abcdef0123.mp3', state: 'running', done: 0, total: 50000000, wifi }; return 'ok'; },
+            podDownloads: () => JSON.stringify(Object.values(window.__dl)),
+            podDeleteDownload: k => { delete window.__dl[k]; },
+            podStorage: () => JSON.stringify({ used: 50000000, free: 20e9 }),
+            setPlaybackSection: () => {}, startPodcastMedia: () => {}, updatePodcastMedia: () => {}, stopPodcastMedia: () => {},
+            syncPodcastSubscriptions: () => {}, canResumeAudio: () => true, musicPermissionStatus: () => 'denied'
+          };
           if (!sessionStorage.getItem('seeded')) {
             localStorage.clear(); sessionStorage.setItem('seeded','1');
             localStorage.setItem('radios_viferor_podcasts_v1', %s);
@@ -172,6 +185,39 @@ with sync_playwright() as p:
             page.evaluate("pnScreens.stats('push')"); page.wait_for_timeout(400)
             check('Estadísticas: se pinta', page.locator('#podcastContent .pn-stat').count() == 4)
             page.screenshot(path=os.path.join(SHOTS, f'pn_estadisticas_{sfx}.png'))
+            # Buscar episodios: «tenis» dentro de las suscripciones
+            page.click('#pnNav [data-tab=landing]'); page.wait_for_timeout(300)
+            page.click('#podcastContent .pn-head .pn-search'); page.wait_for_timeout(300)
+            check('Buscar: pantalla con campo', page.is_visible('#podcastContent .pn-search-input'))
+            page.fill('#podcastContent .pn-search-input', 'TENIS'); page.press('#podcastContent .pn-search-input', 'Enter'); page.wait_for_timeout(2500)
+            txt = page.inner_text('#podcastContent .pn-search-res')
+            check('Buscar: encuentra por título y por tema (descripción)', 'Especial tenis' in txt and 'Copa Davis' in txt, txt[:400])
+            check('Buscar: el del título va primero', page.locator('#podcastContent .pn-search-res .pn-row').first.inner_text().find('Especial tenis') >= 0)
+            check('Buscar: marca la palabra', page.locator('#podcastContent .pn-snip mark').count() >= 1)
+            page.screenshot(path=os.path.join(SHOTS, f'pn_buscar_{sfx}.png'))
+            page.fill('#podcastContent .pn-search-input', 'copa davis alcaraz'); page.press('#podcastContent .pn-search-input', 'Enter'); page.wait_for_timeout(1500)
+            check('Buscar: varias palabras', page.locator('#podcastContent .pn-search-res .pn-row').count() == 1, page.locator('#podcastContent .pn-search-res .pn-row').count())
+            page.click('#podcastContent .pn-scope'); page.wait_for_timeout(300)
+            page.click('.pod-sheet-item:has-text("Un Libro Una Hora")'); page.wait_for_timeout(1200)
+            check('Buscar: solo en un podcast', page.locator('#podcastContent .pn-search-res .pn-row').count() == 0)
+            page.evaluate("handleAndroidBack()"); page.wait_for_timeout(300)
+            # Descargas
+            ep = page.evaluate("(async () => { const eps = await fetchFeedEpisodes(podcastState.subs[1], 15); window.__ep = eps[3]; return eps[3].id; })()")
+            page.evaluate("openEpisodeMenu(window.__ep)"); page.wait_for_timeout(300)
+            page.click('.pod-sheet-item:has-text("Descargar")'); page.wait_for_timeout(400)
+            check('Descargar: se pide a Android (solo Wi-Fi)', page.evaluate("Object.keys(window.__dl).length === 1 && Object.values(window.__dl)[0].wifi === true"))
+            page.evaluate("pnScreens.downloads('push')"); page.wait_for_timeout(400)
+            page.evaluate("Object.values(window.__dl)[0].done = 25000000"); page.wait_for_timeout(1800)
+            check('Descargas: progreso 50 %', '50 %' in page.inner_text('#podcastContent .pn-list'), page.inner_text('#podcastContent')[:300])
+            page.evaluate("Object.values(window.__dl)[0].state = 'done'; Object.values(window.__dl)[0].done = 50000000"); page.wait_for_timeout(1800)
+            check('Descargas: terminada', page.locator('#podcastContent .pn-dl-on').count() == 1)
+            check('Descargas: resumen con GB libres', 'libres' in page.inner_text('#podcastContent .pn-head-sub'), page.inner_text('#podcastContent .pn-head-sub'))
+            page.screenshot(path=os.path.join(SHOTS, f'pn_descargas_{sfx}.png'))
+            page.evaluate("playEpisodeNow(window.__ep)"); page.wait_for_timeout(1200)
+            check('Reproduce el archivo descargado', '/__pod/file/abcdef0123.mp3' in page.evaluate("document.getElementById('podcastAudio').src") and state.get('local', 0) > 0, page.evaluate("document.getElementById('podcastAudio').src"))
+            page.evaluate("openEpisodeMenu(window.__ep)"); page.wait_for_timeout(300)
+            page.click('.pod-sheet-item:has-text("Borrar la descarga")'); page.wait_for_timeout(400)
+            check('Borrar la descarga', page.evaluate("Object.keys(window.__dl).length") == 0)
             # Marcar todo como visto
             page.evaluate("pnScreens.novedades('replace')"); page.wait_for_timeout(300)
             page.click('#podcastContent .pn-head .pn-more'); page.wait_for_timeout(300)

@@ -28,6 +28,8 @@
   const INBOX_HIDDEN_KEY = 'radios_viferor_podcast_inbox_hidden_v1';
   const INBOX_CACHE_KEY = 'radios_viferor_podcast_inbox_cache_v1';
   const LISTEN_KEY = 'radios_viferor_podcast_listen_time_v1';
+  const DL_META_KEY = 'radios_viferor_podcast_downloads_v1';
+  const DL_OPTS_KEY = 'radios_viferor_podcast_download_opts_v1';
   const POOL_MAX_AGE = 20 * 60000; // los últimos episodios de las suscripciones valen 20 min
   const POOL_PER_FEED = 15;
   const POOL_MAX = 600;
@@ -35,7 +37,7 @@
 
   // Pantallas de la barra inferior y de «Más».
   const TABS = ['landing', 'queue', 'novedades', 'subs'];
-  const MORE_SCREENS = ['allEpisodes', 'history', 'favorites', 'stats'];
+  const MORE_SCREENS = ['allEpisodes', 'history', 'favorites', 'stats', 'downloads'];
 
   /* -------------------------------------------------------------------------
      Iconos (Material, trazos propios en SVG)
@@ -68,7 +70,10 @@
     stats: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z',
     lists: 'M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z',
     gear: 'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
-    check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'
+    check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
+    download: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z',
+    downloadDone: 'M5 18h14v2H5v-2zm4.6-2.7L5 10.7l2-1.9 2.6 2.6L17 4l2 2-9.4 9.3z',
+    close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z'
   };
   const ico = (name, cls = '') => `<svg class="pn-svg ${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[name]}"/></svg>`;
   window.pnIcon = ico;
@@ -318,11 +323,11 @@
     const h = el('div', 'pn-head');
     h.innerHTML = `<div class="pn-head-row">${back ? `<button class="pn-ico pn-back" type="button" aria-label="Volver">${ico('back')}</button>` : ''}<h2>${pEsc(title)}</h2>${extra
       .map((x, i) => `<button class="pn-ico" data-x="${i}" type="button" aria-label="${pEsc(x.label)}">${ico(x.icon)}</button>`)
-      .join('')}<button class="pn-ico pn-search" type="button" aria-label="Buscar o añadir podcasts">${ico('search')}</button>${
+      .join('')}<button class="pn-ico pn-search" type="button" aria-label="Buscar episodios">${ico('search')}</button>${
       onMore ? `<button class="pn-ico pn-more" type="button" aria-label="Más opciones">${ico('more')}</button>` : ''
     }</div>${sub ? `<p class="pn-head-sub">${pEsc(sub)}</p>` : ''}`;
     h.querySelector('.pn-back')?.addEventListener('click', backFromPodcast);
-    h.querySelector('.pn-search').onclick = () => window.openPodcastSearchDrawer?.();
+    h.querySelector('.pn-search').onclick = () => SCREENS.epsearch('push');
     if (onMore) h.querySelector('.pn-more').onclick = onMore;
     extra.forEach((x, i) => (h.querySelector(`[data-x="${i}"]`).onclick = x.on));
     return h;
@@ -345,16 +350,16 @@
     else playEpisodeNow(e);
   }
   // Fila de episodio: (⠿) portada · «17 jun · 112 MB» · título · progreso · ▶
-  function row(e, { handle = false, onMenu = null, showPodcast = false } = {}) {
+  function row(e, { handle = false, onMenu = null, showPodcast = false, snippet = '' } = {}) {
     const r = el('div', 'pod-qrow pn-row' + (isCurrentEpisode(e) ? ' is-current' : '') + (isEpisodeDone(e.id) ? ' is-done' : ''));
     r.dataset.ep = epKey(e);
     const meta = [shortEpDate(e.date), mb(e.size), showPodcast ? e.podcastTitle : ''].filter(Boolean).join(' · ');
     r.innerHTML = `${handle ? '<button class="pod-qhandle pn-handle" type="button" aria-label="Arrastrar para cambiar el orden">⠿</button>' : ''}${artHtml(
       epArt(e),
       e.podcastTitle || e.title
-    )}<div class="pn-info"><small class="pn-meta">${pEsc(meta)}${isEpFav(e) ? ' <span class="pn-star">★</span>' : ''}</small><strong>${pEsc(
-      e.title || 'Episodio'
-    )}</strong><div class="pn-time">${timeLine(e)}</div></div>${playBtnHtml(e)}`;
+    )}<div class="pn-info"><small class="pn-meta"><span class="pn-dl" data-dl="${pEsc(epKey(e))}">${dlBadge(e)}</span>${pEsc(meta)}${
+      isEpFav(e) ? ' <span class="pn-star">★</span>' : ''
+    }</small><strong>${pEsc(e.title || 'Episodio')}</strong>${snippet ? `<small class="pn-snip">${snippet}</small>` : ''}<div class="pn-time">${timeLine(e)}</div></div>${playBtnHtml(e)}`;
     r.querySelector('.pn-play').onclick = ev => {
       ev.stopPropagation();
       playOrToggle(e);
@@ -506,6 +511,11 @@
         );
         return;
       }
+      if (navigator.onLine === false && dlApi()) {
+        const off = el('div', 'pn-offline', `${ico('download')}<span>Sin conexión. Tus episodios descargados se pueden escuchar.</span><button type="button">Descargas</button>`);
+        off.querySelector('button').onclick = () => SCREENS.downloads('push');
+        root.append(off);
+      }
       // Continúa escuchando: lo que suena y lo que dejaste a medias.
       const cont = dedupeEpisodes([podcastState.current, ...inProgressEpisodes()].filter(Boolean)).slice(0, 12);
       const s1 = section('Continúa escuchando', { link: 'Cola', onLink: () => tab('queue') });
@@ -549,7 +559,14 @@
         root.append(s4);
       }
 
-      // Cola y listas (en lugar de «Gestionar las descargas»: aquí no se descarga nada).
+      // Gestionar las descargas
+      const dls = downloadedEpisodes();
+      const s5 = section('Gestionar las descargas', { link: 'Descargas', onLink: () => SCREENS.downloads('push') });
+      if (dls.length) s5.append(rowsList(dls.slice(0, 3)));
+      else s5.append(el('p', 'pn-hint pn-center', dlApi() ? 'Puedes descargar cualquier episodio para escucharlo sin conexión.' : 'Las descargas para escuchar sin conexión funcionan en la app Android (1.19 o posterior).'));
+      root.append(s5);
+
+      // Cola y listas
       window.renderPodcastListsStrip?.(root);
 
       if (!poolFresh()) {
@@ -779,6 +796,7 @@
       title: 'Podcasts',
       items: [
         { icon: ico('rss'), label: 'Episodios', hint: 'Los últimos de todas tus suscripciones', on: () => SCREENS.allEpisodes('push') },
+        { icon: ico('download'), label: 'Descargas', hint: 'Episodios para escuchar sin conexión', on: () => SCREENS.downloads('push') },
         { icon: ico('history'), label: 'Historial de reproducción', on: () => SCREENS.history('push') },
         { icon: ico('star'), label: 'Favoritos', hint: 'Episodios y podcasts favoritos', on: () => SCREENS.favorites('push') },
         { icon: ico('lists'), label: 'Mis listas', on: () => renderPodcastLists() },
@@ -962,6 +980,9 @@
           }
         },
         { sep: true },
+        { icon: ico('download'), label: 'Descargar solo con Wi-Fi', checked: !!dlOpts().wifiOnly, on: () => setDlOpt('wifiOnly', !dlOpts().wifiOnly, settingsMenu) },
+        { icon: '🧹', label: 'Borrar la descarga al terminar de escucharla', checked: !!dlOpts().deleteWhenDone, on: () => setDlOpt('deleteWhenDone', !dlOpts().deleteWhenDone, settingsMenu) },
+        { sep: true },
         { icon: '📥', label: 'Importar lista (OPML)', on: () => $p('podcastFile')?.click() },
         { icon: '💾', label: 'Exportar lista (OPML)', disabled: !podcastState.subs.length, on: () => window.exportPodcastOPML?.() }
       ]
@@ -1122,6 +1143,406 @@
       document.querySelectorAll(`#podcastContent .pn-card[data-ep="${CSS.escape(k)}"] .pn-card-bar b`).forEach(b => (b.style.width = Math.min(100, (pos / dur) * 100).toFixed(1) + '%'));
   }
 
+
+  /* -------------------------------------------------------------------------
+     Descargas para escuchar sin conexión (APK 1.19+: PodcastDownloads.java)
+     Android descarga el audio (DownloadManager) y lo sirve en /__pod/file/…; aquí se
+     guarda de qué episodio es cada descarga y se cambia la dirección al reproducirlo.
+  ------------------------------------------------------------------------- */
+  const dlApi = () => {
+    try {
+      return typeof window.Android?.podDownloadVersion === 'function' && window.Android.podDownloadVersion() >= 1;
+    } catch {
+      return false;
+    }
+  };
+  function dlOpts() {
+    return { wifiOnly: true, deleteWhenDone: false, ...(lsJson(DL_OPTS_KEY, {}) || {}) };
+  }
+  function setDlOpt(k, v, reopen) {
+    lsPut(DL_OPTS_KEY, { ...dlOpts(), [k]: v });
+    reopen?.();
+  }
+  let dlMeta = null;
+  function dlMetaStore() {
+    if (!dlMeta) dlMeta = lsJson(DL_META_KEY, {}) || {};
+    return dlMeta;
+  }
+  let dlStatus = new Map();
+  let dlTimer = null;
+  const fixUrl = u => String(u || '').replace(/&amp;/gi, '&');
+  function dlRefresh() {
+    if (!dlApi()) return;
+    try {
+      const arr = JSON.parse(window.Android.podDownloads() || '[]');
+      dlStatus = new Map(arr.map(x => [x.key, x]));
+    } catch {
+      return;
+    }
+    // Lo que Android ya no tiene (borrado desde fuera) sale también de aquí.
+    const m = dlMetaStore();
+    let changed = false;
+    Object.keys(m).forEach(k => {
+      if (!dlStatus.has(k)) {
+        delete m[k];
+        changed = true;
+      }
+    });
+    if (changed) lsPut(DL_META_KEY, m);
+  }
+  const dlInfo = e => (e ? dlStatus.get(epKey(e)) || null : null);
+  const isDownloaded = e => dlInfo(e)?.state === 'done';
+  const dlBusy = x => x && ['running', 'queued', 'paused'].includes(x.state);
+  function dlPct(x) {
+    return x.total > 0 ? Math.min(99, Math.floor((x.done / x.total) * 100)) : 0;
+  }
+  function dlBadge(e) {
+    const x = dlInfo(e);
+    if (!x) return '';
+    if (x.state === 'done') return `<span class="pn-dl-on" title="Descargado">${ico('downloadDone')}</span>`;
+    if (x.state === 'failed') return '<span class="pn-dl-bad" title="La descarga falló">⚠️</span>';
+    if (x.state === 'running') return `<span class="pn-dl-run">${ico('download')}${dlPct(x)} %</span>`;
+    return `<span class="pn-dl-run">${ico('download')}en espera</span>`;
+  }
+  function downloadedEpisodes({ withBusy = true } = {}) {
+    const m = dlMetaStore();
+    return [...dlStatus.values()]
+      .filter(x => m[x.key]?.ep && (x.state === 'done' || (withBusy && dlBusy(x))))
+      .sort((a, b) => Number(dlBusy(b)) - Number(dlBusy(a)) || Number(m[b.key].at || 0) - Number(m[a.key].at || 0))
+      .map(x => m[x.key].ep);
+  }
+  function dlPoll() {
+    clearTimeout(dlTimer);
+    dlRefresh();
+    dlPaint();
+    if ([...dlStatus.values()].some(dlBusy)) dlTimer = setTimeout(dlPoll, 1500);
+  }
+  let dlLastStates = '';
+  function dlPaint() {
+    document.querySelectorAll('#podcastContent .pn-dl[data-dl]').forEach(sp => {
+      const x = dlStatus.get(sp.dataset.dl);
+      const html = x ? dlBadge({ id: sp.dataset.dl }) : '';
+      if (sp.innerHTML !== html) sp.innerHTML = html;
+    });
+    // Cuando una descarga termina o falla, la pantalla de Descargas se vuelve a pintar.
+    const states = [...dlStatus.values()].map(x => x.key + x.state).join('|');
+    if (states !== dlLastStates) {
+      const first = !dlLastStates;
+      dlLastStates = states;
+      if (!first && podcastState.screen === 'downloads') refreshMine();
+    } else if (podcastState.screen === 'downloads') {
+      const sub = content().querySelector('.pn-head-sub');
+      if (sub) sub.textContent = dlSummary();
+    }
+  }
+  function dlStart(e) {
+    if (!e?.audioUrl) return;
+    if (!dlApi())
+      return podToast(window.Android ? 'Para descargar, actualiza la app Android (1.19 o posterior)' : 'Las descargas solo funcionan en la app Android');
+    const k = epKey(e);
+    const o = dlOpts();
+    let r = 'Error';
+    try {
+      r = window.Android.podDownload(k, fixUrl(e.audioUrl), e.title || 'Episodio', e.podcastTitle || '', !!o.wifiOnly);
+    } catch (err) {
+      r = String(err?.message || err);
+    }
+    if (r !== 'ok') return podToast('⚠️ ' + r);
+    dlMetaStore()[k] = { ep: slimEp(e), at: Date.now() };
+    lsPut(DL_META_KEY, dlMetaStore());
+    podToast(o.wifiOnly ? '⬇ Descargando (solo con Wi-Fi)…' : '⬇ Descargando…');
+    dlPoll();
+  }
+  function dlDelete(e, { toast = true } = {}) {
+    const k = epKey(e);
+    try {
+      window.Android?.podDeleteDownload?.(k);
+    } catch {}
+    delete dlMetaStore()[k];
+    lsPut(DL_META_KEY, dlMetaStore());
+    dlStatus.delete(k);
+    if (toast) podToast('Descarga borrada');
+    dlPoll();
+    if (['downloads', 'landing'].includes(podcastState.screen)) refreshMine();
+  }
+  function dlMenuItem(e) {
+    const x = dlInfo(e);
+    if (x?.state === 'done') return { icon: ico('downloadDone'), label: 'Borrar la descarga', hint: mb(x.total) || 'Descargado', on: () => dlDelete(e) };
+    if (dlBusy(x)) return { icon: ico('close'), label: 'Cancelar la descarga', hint: x.state === 'running' ? `${dlPct(x)} %` : 'En espera', on: () => dlDelete(e, { toast: false }) };
+    return { icon: ico('download'), label: x?.state === 'failed' ? 'Volver a descargar' : 'Descargar', hint: 'Para escucharlo sin conexión', on: () => dlStart(e) };
+  }
+  // Dirección local del audio si el episodio está descargado.
+  function dlLocalFor(e, raw) {
+    const url = fixUrl(raw);
+    let x = e && fixUrl(e.audioUrl) === url ? dlInfo(e) : null;
+    if (!x || x.state !== 'done') {
+      const m = dlMetaStore();
+      x = [...dlStatus.values()].find(d => d.state === 'done' && fixUrl(m[d.key]?.ep?.audioUrl) === url) || null;
+    }
+    return x && x.state === 'done' && x.file ? location.origin + '/__pod/file/' + encodeURIComponent(x.file) : '';
+  }
+  function dlSummary() {
+    const done = [...dlStatus.values()].filter(x => x.state === 'done');
+    const busy = [...dlStatus.values()].filter(dlBusy).length;
+    const bytes = done.reduce((s, x) => s + (Number(x.total) || 0), 0);
+    let free = '';
+    try {
+      const st = JSON.parse(window.Android?.podStorage?.() || '{}');
+      if (st.free > 0) free = `${(st.free / 1073741824).toFixed(1).replace('.', ',')} GB libres`;
+    } catch {}
+    return [plural(done.length, 'episodio', 'episodios'), bytes ? (bytes > 1073741824 ? (bytes / 1073741824).toFixed(1).replace('.', ',') + ' GB' : mb(bytes)) : '', busy ? `${busy} descargando` : '', free]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  function renderDownloads(mode) {
+    dlRefresh();
+    go('downloads', mode, root => {
+      root.append(head('Descargas', { back: true, sub: dlApi() ? dlSummary() : '', onMore: downloadsMenu }));
+      if (!dlApi()) {
+        root.append(emptyBox('⬇', 'Solo en la app Android', 'Para descargar episodios y escucharlos sin conexión, abre Radios Viferor en la app Android (1.19 o posterior).'));
+        return;
+      }
+      const eps = downloadedEpisodes();
+      const failed = [...dlStatus.values()].filter(x => x.state === 'failed' && dlMetaStore()[x.key]?.ep).map(x => dlMetaStore()[x.key].ep);
+      if (!eps.length && !failed.length) {
+        root.append(emptyBox('⬇', 'No hay descargas', 'Toca un episodio y elige «Descargar» para tenerlo sin conexión.'));
+        return;
+      }
+      if (eps.length) root.append(rowsList(eps));
+      if (failed.length) {
+        const s = section('No se pudieron descargar');
+        s.append(rowsList(failed));
+        root.append(s);
+      }
+    });
+  }
+  function downloadsMenu() {
+    const o = dlOpts();
+    const all = downloadedEpisodes();
+    const doneEps = all.filter(e => isEpisodeDone(e.id));
+    podSheet({
+      title: 'Descargas',
+      items: [
+        { icon: ico('download'), label: 'Descargar solo con Wi-Fi', checked: !!o.wifiOnly, on: () => setDlOpt('wifiOnly', !o.wifiOnly, downloadsMenu) },
+        { icon: '🧹', label: 'Borrar la descarga al terminar de escucharla', checked: !!o.deleteWhenDone, on: () => setDlOpt('deleteWhenDone', !o.deleteWhenDone, downloadsMenu) },
+        { sep: true },
+        { icon: '✓', label: `Borrar las ya escuchadas (${doneEps.length})`, disabled: !doneEps.length, on: () => doneEps.forEach(e => dlDelete(e, { toast: false })) },
+        {
+          icon: '🗑',
+          label: 'Borrar todas las descargas',
+          danger: true,
+          disabled: !all.length,
+          on: () => {
+            if (!confirm('¿Borrar todas las descargas?')) return;
+            [...dlStatus.keys()].forEach(k => dlDelete({ id: k }, { toast: false }));
+            podToast('Descargas borradas');
+          }
+        }
+      ]
+    });
+  }
+
+  /* -------------------------------------------------------------------------
+     Buscar episodios dentro de tus suscripciones (título, tema, invitados…)
+     Primero en lo que ya está cargado y luego en el feed entero de cada podcast.
+  ------------------------------------------------------------------------- */
+  const srch = { q: '', scope: '', token: 0, found: new Map(), progress: '', pods: [] };
+  const foldQ = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Igual que foldQ pero sin cambiar la longitud (para marcar el trozo encontrado).
+  const foldSame = s => String(s || '').split('').map(c => (c.normalize('NFD')[0] || c).toLowerCase()[0] || c).join('');
+  const plainText = s => decodePodcastEntities(String(s || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+  const textCache = new WeakMap();
+  function epText(e) {
+    let t = textCache.get(e);
+    if (!t) {
+      t = { t: foldQ(e.title), d: foldQ(plainText(e.description)), p: foldQ(e.podcastTitle) };
+      textCache.set(e, t);
+    }
+    return t;
+  }
+  function scoreEp(e, terms) {
+    const t = epText(e);
+    let sc = 0;
+    for (const w of terms) {
+      if (t.t.includes(w)) sc += 3;
+      else if (t.d.includes(w)) sc += 1;
+      else if (t.p.includes(w)) sc += 0.5;
+      else return 0;
+    }
+    return sc;
+  }
+  function snippetHtml(e, terms) {
+    const t = epText(e);
+    if (terms.every(w => t.t.includes(w))) return '';
+    const plain = plainText(e.description);
+    if (!plain) return '';
+    const f = foldSame(plain);
+    let i = -1;
+    for (const w of terms) {
+      const j = f.indexOf(w);
+      if (j >= 0 && (i < 0 || j < i)) i = j;
+    }
+    if (i < 0) return '';
+    const a = Math.max(0, i - 45),
+      b = Math.min(plain.length, i + 120);
+    const piece = plain.slice(a, b),
+      fp = f.slice(a, b);
+    const marks = [];
+    terms.forEach(w => {
+      let k = fp.indexOf(w);
+      while (k >= 0 && w) {
+        marks.push([k, k + w.length]);
+        k = fp.indexOf(w, k + w.length);
+      }
+    });
+    marks.sort((x, y) => x[0] - y[0]);
+    let out = '',
+      pos = 0;
+    marks.forEach(([s0, e0]) => {
+      if (s0 < pos) return;
+      out += pEsc(piece.slice(pos, s0)) + '<mark>' + pEsc(piece.slice(s0, e0)) + '</mark>';
+      pos = e0;
+    });
+    out += pEsc(piece.slice(pos));
+    return (a > 0 ? '…' : '') + out + (b < plain.length ? '…' : '');
+  }
+  function scopeSubs() {
+    return podcastState.subs.filter(p => podcastFeedUrl(p) && (!srch.scope || podcastFeedUrl(p) === srch.scope));
+  }
+  function renderSearch(mode) {
+    go('epsearch', mode, root => {
+      const h = el('div', 'pn-head pn-search-head');
+      h.innerHTML = `<div class="pn-head-row"><button class="pn-ico pn-back" type="button" aria-label="Volver">${ico('back')}</button><input class="pn-search-input" type="search" enterkeyhint="search" autocomplete="off" placeholder="Buscar episodios: título, tema…" aria-label="Buscar episodios en tus suscripciones"><button class="pn-ico pn-clear" type="button" aria-label="Borrar">${ico('close')}</button></div><div class="pn-search-chips"><button type="button" class="pn-chip pn-scope"></button><button type="button" class="pn-chip pn-web">🌐 Podcasts nuevos</button></div>`;
+      const input = h.querySelector('input');
+      input.value = srch.q;
+      h.querySelector('.pn-back').onclick = backFromPodcast;
+      const scopeBtn = h.querySelector('.pn-scope');
+      const scopeName = () => (srch.scope ? podcastState.subs.find(p => podcastFeedUrl(p) === srch.scope)?.title || 'Un podcast' : 'Todas mis suscripciones');
+      scopeBtn.textContent = 'En: ' + scopeName() + ' ▾';
+      scopeBtn.onclick = () =>
+        podSheet({
+          title: 'Buscar en…',
+          items: [
+            { icon: ico('grid'), label: 'Todas mis suscripciones', checked: !srch.scope, on: () => setScope('') },
+            ...[...podcastState.subs]
+              .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'es'))
+              .map(p => ({ icon: '', label: p.title || 'Podcast', checked: srch.scope === podcastFeedUrl(p), on: () => setScope(podcastFeedUrl(p)) }))
+          ]
+        });
+      const setScope = v => {
+        srch.scope = v;
+        scopeBtn.textContent = 'En: ' + scopeName() + ' ▾';
+        runSearch();
+      };
+      h.querySelector('.pn-web').onclick = () => {
+        window.openPodcastSearchDrawer?.();
+        const t = $p('podSearchText');
+        if (t && srch.q) t.value = srch.q;
+      };
+      let deb = null;
+      input.oninput = () => {
+        srch.q = input.value;
+        clearTimeout(deb);
+        deb = setTimeout(runSearch, 450);
+      };
+      input.onkeydown = ev => {
+        if (ev.key === 'Enter') {
+          clearTimeout(deb);
+          srch.q = input.value;
+          input.blur();
+          runSearch();
+        }
+      };
+      h.querySelector('.pn-clear').onclick = () => {
+        input.value = srch.q = '';
+        runSearch();
+        input.focus();
+      };
+      root.append(h);
+      root.append(el('div', 'pn-search-res'));
+      paintSearch();
+      if (mode === 'push' && !srch.q) setTimeout(() => input.focus(), 80);
+    });
+  }
+  let paintTimer = null;
+  function schedulePaint() {
+    if (paintTimer) return;
+    paintTimer = setTimeout(() => {
+      paintTimer = null;
+      paintSearch();
+    }, 250);
+  }
+  function paintSearch() {
+    const box = content().querySelector('.pn-search-res');
+    if (!box || podcastState.screen !== 'epsearch') return;
+    box.replaceChildren();
+    const q = srch.q.trim();
+    if (q.length < 2) {
+      box.append(el('p', 'pn-hint', 'Escribe al menos dos letras. Se busca en el título y en la descripción de los episodios de tus suscripciones (por ejemplo «tenis», «Nadal» o «Segunda Guerra Mundial»).'));
+      return;
+    }
+    const terms = foldQ(q).split(/\s+/).filter(Boolean);
+    if (srch.pods.length) {
+      const s = section('Podcasts');
+      s.append(carousel(srch.pods.map(subTile)));
+      box.append(s);
+    }
+    const list = [...srch.found.values()].sort((a, b) => b.sc - a.sc || podcastDateValue(b.e.date) - podcastDateValue(a.e.date)).map(x => x.e);
+    const s2 = section('Episodios', { pill: list.length ? (list.length > 999 ? '999+' : String(list.length)) : '' });
+    if (srch.progress) s2.append(el('p', 'pn-hint pn-loading-line', srch.progress));
+    if (list.length) s2.append(rowsList(list.slice(0, 300), e => ({ showPodcast: true, snippet: snippetHtml(e, terms) })));
+    else if (!srch.progress) s2.append(el('p', 'pn-hint', `No hay episodios con «${q}» en ${srch.scope ? 'ese podcast' : 'tus suscripciones'}.`));
+    box.append(s2);
+  }
+  async function runSearch() {
+    const token = ++srch.token;
+    const q = srch.q.trim();
+    srch.found = new Map();
+    srch.pods = [];
+    srch.progress = '';
+    if (q.length < 2) return paintSearch();
+    const terms = foldQ(q).split(/\s+/).filter(Boolean);
+    const subs = scopeSubs();
+    const feeds = new Set(subs.map(p => podcastFeedUrl(p)));
+    if (!srch.scope)
+      srch.pods = podcastState.subs.filter(p => {
+        const t = foldQ([p.title, p.author, p.genre].join(' '));
+        return terms.every(w => t.includes(w));
+      });
+    const consider = eps => {
+      for (const e of eps || []) {
+        if (!e?.audioUrl || !feeds.has(e.feedUrl)) continue;
+        const sc = scoreEp(e, terms);
+        if (!sc) continue;
+        const k = epKey(e);
+        const prev = srch.found.get(k);
+        if (!prev || (!prev.e.description && e.description)) srch.found.set(k, { e, sc });
+      }
+    };
+    consider(readPoolCache()?.eps);
+    consider(downloadedEpisodes());
+    if (!subs.length) return paintSearch();
+    let done = 0;
+    srch.progress = `Buscando en ${plural(subs.length, 'podcast', 'podcasts')}…`;
+    paintSearch();
+    await mapLimit(subs, 4, async p => {
+      if (token !== srch.token) return [];
+      const eps = await fetchFeedEpisodes(p, 0);
+      if (token !== srch.token) return [];
+      consider(eps);
+      done++;
+      srch.progress = done < subs.length ? `Buscando… ${done} de ${subs.length} podcasts` : '';
+      schedulePaint();
+      return [];
+    });
+    if (token !== srch.token) return;
+    srch.progress = '';
+    paintSearch();
+  }
+
+  SCREENS.downloads = renderDownloads;
+  SCREENS.epsearch = renderSearch;
+
   /* -------------------------------------------------------------------------
      Sustituir las pantallas antiguas
   ------------------------------------------------------------------------- */
@@ -1174,6 +1595,7 @@
       { icon: ico('info'), label: 'Notas del episodio', on: () => showNotes(e) },
       { icon: ico(fav ? 'star' : 'starOff'), label: fav ? 'Quitar de favoritos' : 'Añadir a favoritos', on: () => toggleEpFav(e) },
       { icon: ico('share'), label: 'Compartir episodio', on: () => shareEpisode(e) },
+      dlMenuItem(e),
       ...(opts.extra || [])
     ];
     return origEpisodeMenu(e, { ...opts, extra });
@@ -1189,6 +1611,15 @@
   window.updatePlayerExtras = function () {
     origExtras();
     syncExpandedExtras();
+  };
+  // Si el episodio está descargado, suena el archivo del móvil (sin conexión).
+  const origAudioSource = podcastAudioSource;
+  window.podcastAudioSource = function (raw) {
+    try {
+      const local = dlLocalFor(podcastState.current, raw);
+      if (local) return local;
+    } catch {}
+    return origAudioSource(raw);
   };
   // El contador de Novedades se actualiza cuando cambian las suscripciones.
   const origSaveSubs = savePodcastSubs;
@@ -1244,6 +1675,17 @@
         if (['landing', 'novedades', 'allEpisodes'].includes(podcastState.screen)) setTimeout(refreshMine, 300);
       });
     }
+    // Descargas: estado al abrir y al volver a la app; «borrar al terminar».
+    let lastEp = null;
+    a?.addEventListener('timeupdate', () => (lastEp = podcastState.current));
+    a?.addEventListener('ended', () => {
+      const e = lastEp;
+      if (e && dlOpts().deleteWhenDone && isDownloaded(e)) setTimeout(() => !isCurrentEpisode(e) && dlDelete(e, { toast: false }), 2500);
+    });
+    dlPoll();
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && dlPoll());
+    window.addEventListener('online', () => podcastState.screen === 'landing' && refreshMine());
+    window.addEventListener('offline', () => podcastState.screen === 'landing' && refreshMine());
     setInterval(flushListen, 20000);
     document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flushListen());
     document.addEventListener('podcasts:queue-changed', () => {

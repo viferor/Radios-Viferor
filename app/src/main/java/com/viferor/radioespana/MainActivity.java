@@ -63,6 +63,9 @@ public class MainActivity extends Activity {
     private NativeMusic nativeMusic;
     // «Buscar canciones nuevas» y refresco automático de «Mi música» (1.18).
     private MusicScanner musicScanner;
+    // Descargas de podcasts para escuchar sin conexión (1.19).
+    private PodcastDownloads podcastDownloads;
+    private android.net.ConnectivityManager.NetworkCallback netCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,6 +82,8 @@ public class MainActivity extends Activity {
         nativeMusic = new NativeMusic(this, js -> { if (webView != null && bridgeTrusted) webView.evaluateJavascript(js, null); });
         musicScanner = new MusicScanner(this, js -> { if (webView != null && bridgeTrusted) webView.evaluateJavascript(js, null); });
         musicScanner.startWatching();
+        podcastDownloads = new PodcastDownloads(this);
+        watchNetwork();
         setupWebView(START_URL);
         // Los fallos al leer los archivos de música se apuntan en el registro de errores de la
         // web (Ajustes → Registro de errores), que es donde se ve el porqué de un corte.
@@ -190,6 +195,9 @@ public class MainActivity extends Activity {
         }
         webView.addJavascriptInterface(new AndroidBridge(), "Android");
         webView.setWebChromeClient(new RadioChromeClient());
+        // Sin conexión: se abre con lo último que se guardó (la web y sus scripts), para poder
+        // escuchar los episodios descargados. Al volver la red se deja como siempre.
+        if (!isOnline()) settings.setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
         webView.loadUrl(url);
     }
 
@@ -198,6 +206,12 @@ public class MainActivity extends Activity {
         if (activeInstance == this) activeInstance = null;
         if (audioOutput != null) audioOutput.stop();
         if (musicScanner != null) musicScanner.stopWatching();
+        if (netCallback != null) {
+            try {
+                ((android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE)).unregisterNetworkCallback(netCallback);
+            } catch (Exception ignored) {}
+            netCallback = null;
+        }
         if (nativeMusic != null) {
             try { nativeMusic.release(); } catch (Exception ignored) {}
             nativeMusic = null;
@@ -307,6 +321,10 @@ public class MainActivity extends Activity {
             if (u != null && "https".equalsIgnoreCase(u.getScheme()) && APP_HOST.equalsIgnoreCase(u.getHost())
                     && u.getPath() != null && u.getPath().startsWith(LocalMusic.PREFIX)) {
                 return LocalMusic.handle(MainActivity.this, u, request.getRequestHeaders());
+            }
+            if (u != null && "https".equalsIgnoreCase(u.getScheme()) && APP_HOST.equalsIgnoreCase(u.getHost())
+                    && u.getPath() != null && u.getPath().startsWith(PodcastDownloads.PREFIX) && podcastDownloads != null) {
+                return podcastDownloads.handle(u, request.getRequestHeaders());
             }
             return super.shouldInterceptRequest(view, request);
         }
@@ -586,7 +604,70 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
+    /** ¿Hay conexión a internet de verdad (no solo Wi-Fi sin salida)? */
+    private boolean isOnline() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            android.net.Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            android.net.NetworkCapabilities c = cm.getNetworkCapabilities(n);
+            return c != null && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** Al volver la conexión, el WebView deja de usar solo lo guardado. */
+    private void watchNetwork() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            netCallback = new android.net.ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(android.net.Network network) {
+                    runOnUiThread(() -> {
+                        if (webView != null) webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+                    });
+                }
+            };
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) cm.registerDefaultNetworkCallback(netCallback);
+            else cm.registerNetworkCallback(new android.net.NetworkRequest.Builder()
+                    .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), netCallback);
+        } catch (Exception ignored) {}
+    }
+
     private class AndroidBridge {
+        // ---- Descargas de podcasts (APK 1.19+) ----
+        @JavascriptInterface
+        public int podDownloadVersion() {
+            return bridgeTrusted ? PodcastDownloads.API_VERSION : 0;
+        }
+
+        @JavascriptInterface
+        public String podDownload(String key, String url, String title, String podcast, boolean wifiOnly) {
+            if (!bridgeTrusted || podcastDownloads == null) return "No disponible";
+            return podcastDownloads.start(key, url, title, podcast, wifiOnly);
+        }
+
+        @JavascriptInterface
+        public String podDownloads() {
+            if (!bridgeTrusted || podcastDownloads == null) return "[]";
+            return podcastDownloads.listJson();
+        }
+
+        @JavascriptInterface
+        public void podDeleteDownload(String key) {
+            if (!bridgeTrusted || podcastDownloads == null) return;
+            podcastDownloads.remove(key);
+        }
+
+        @JavascriptInterface
+        public String podStorage() {
+            if (!bridgeTrusted || podcastDownloads == null) return "{}";
+            return podcastDownloads.storageJson();
+        }
+
         @JavascriptInterface
         public void setPlaybackSection(String section) {
             if (!bridgeTrusted) return;

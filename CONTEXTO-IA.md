@@ -159,6 +159,7 @@ timeout), `readLimited`, `rateLimited`, `HttpError`. `api/_lib/body.js`: `readJs
 |---|---|
 | `MainActivity.java` | WebView (`AudioWebView`: no se da por oculto mientras suena, evita cortes al pasar a segundo plano), puente `AndroidBridge` (§7), intercepta `/__music/`, permisos, archivos, recrea el WebView si muere el renderer (`?autoresume=1`), intents de abrir audio, onActivityResult/permisos delegados. |
 | `LocalMusic.java` | MediaStore → `/__music/library.json`, `/__music/track/{id}` (con Range), `/__music/art/{albumId}?t=`, `/__music/ext/{ficha}`, `/__music/extart/{ficha}`. |
+| `PodcastDownloads.java` | **APK 1.19**: descargas de episodios con DownloadManager a `Android/data/…/files/podcasts` y servidor `/__pod/file/…` (con Range). Sin conexión, `MainActivity` abre el WebView con `LOAD_CACHE_ELSE_NETWORK` y vuelve a `LOAD_DEFAULT` al volver la red. |
 | `MusicScanner.java` | **APK 1.18**: escanea carpetas con `MediaScannerConnection` (en Android 10+ se le pasa la carpeta y la recorre entera), selector de carpeta (`ACTION_OPEN_DOCUMENT_TREE` → ruta) y `ContentObserver` sobre MediaStore → `window.onAndroidMusicChanged()`. Responde en `onAndroidMusicScan` / `onAndroidMusicFolder`. |
 | `MediaPlaybackService.java` | Servicio en primer plano (WakeLock/WifiLock), auriculares desconectados → pausa. |
 | `NativeMusic.java` | **APK 1.17**: motor nativo de «Mi música»: dos ExoPlayer («platinas»), foco de audio propio, fundidos (`volume` con rampa), enganche sin hueco (`arm`: la siguiente se añade a la lista del que suena y al pasar se intercambian los reproductores), avisos a la web. Lo llama el puente `nm*`. |
@@ -255,6 +256,7 @@ El usuario también puede poner su clave de IA en el propio móvil (se guarda en
 (`call`/`busy`/`free`), `canResumeAudio()`, `reloadApp`, `sharePodcast`,
 `syncPodcastSubscriptions`, `areNotificationsEnabled`, `requestNotificationPermission`,
 `openNotificationSettings`, `saveTextFile`, `lastPlaybackSection()` (APK 1.16+, §9).
+Descargas de podcasts (APK 1.19+): `podDownloadVersion()`, `podDownload(clave, url, título, podcast, soloWifi)` → `"ok"` o motivo, `podDownloads()` (JSON con `state` queued/running/paused/done/failed), `podDeleteDownload(clave)`, `podStorage()`. Los archivos se sirven en `/__pod/file/{nombre}` (`PodcastDownloads.java`).
 Escaneo de música (APK 1.18+): `musicScanApiVersion()`, `scanMusicFolders(reqId, jsonRutas)` (`[]` = todo), `pickMusicScanFolder()`, `musicStorageRoots()`.
 Motor nativo de música (APK 1.17+): `nativeMusicVersion()`, `nmLoad(platina, url, gen)`, `nmPlay`,
 `nmPause`, `nmSeek(platina, seg)`, `nmStop`, `nmVolume(platina, vol, segRampa)`, `nmArm(desde, hasta)`
@@ -298,7 +300,8 @@ el servicio, quita la notificación y deja el widget en «reproducir».
   `…_podcast_progress_v1`, `…_podcast_done_v1`, `…_podcast_resume_v3`, `…_podcast_playlists_v1`,
   `…_podcast_play_counts_v1`, `…_podcast_speed`, `…_podcast_filters_v1`, `…_podcast_language`,
   `…_podcast_mine_sort`, `…_podcast_time_mode`, `…_podcast_ep_favs_v1`, `…_podcast_inbox_seen_v1`,
-  `…_podcast_inbox_hidden_v1`, `…_podcast_inbox_cache_v1` (caché), `…_podcast_listen_time_v1`.
+  `…_podcast_inbox_hidden_v1`, `…_podcast_inbox_cache_v1` (caché), `…_podcast_listen_time_v1`,
+  `…_podcast_downloads_v1`, `…_podcast_download_opts_v1`.
 - Música: `radios_viferor_music_*`: `queue_v1`, `history_v1`, `context_v1`, `opts_v1`,
   `playlists_v1`, `playing_list_v1`, `stats_v1`, `resume_v1`, `ui_v1`, `volume`, `favs_v1`,
   `folders_v1`, `hidden_v1`, `short_secs`, `short_ok_v1`, `dup_ignore_v1`, `similar_v2`,

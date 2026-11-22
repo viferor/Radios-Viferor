@@ -1900,3 +1900,22 @@ body.pod-nav #podExpanded .pod-expanded-head #pnExpSleep.on,body.pod-nav #podExp
 body.pod-nav #podExpanded #podExpandedSub{color:var(--pn-sub)!important}
 .pn-nav button[data-tab=subs]{flex-grow:1.4}
 @media(max-width:420px){.pn-nav button{font-size:.7rem}.pn-nav-i{width:54px}}
+/* 1.41.0 — Descargas y búsqueda de episodios */
+.pn-dl:empty{display:none}
+.pn-dl{display:inline-flex;align-items:center;margin-right:6px;vertical-align:-3px}
+.pn-dl .pn-svg{width:17px;height:17px}
+.pn-dl-on{color:var(--pn-accent);display:inline-flex}
+.pn-dl-run{display:inline-flex;align-items:center;gap:2px;color:var(--pn-accent);font-weight:700;font-variant-numeric:tabular-nums}
+.pn-snip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--pn-sub);font-size:.86rem;line-height:1.35;margin:0 0 3px}
+.pn-snip mark,.pn-info mark{background:rgba(106,162,248,.28);color:inherit;border-radius:3px;padding:0 1px}
+.pn-center{text-align:center}
+.pn-search-head{padding:8px 8px 6px}
+.pn-search-head .pn-back{margin-left:0;margin-right:2px}
+.pn-search-input{flex:1 1 auto;min-width:0;height:46px;border:0;border-radius:23px;background:var(--pn-surface);color:var(--pn-text);padding:0 18px;font:inherit;font-size:1.05rem;outline:none}
+.pn-search-input::-webkit-search-cancel-button{display:none}
+.pn-search-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 6px 4px 10px;scrollbar-width:none}
+.pn-chip{flex:0 0 auto;border:1px solid var(--pn-line);background:none;color:var(--pn-text);border-radius:10px;padding:8px 12px;font:inherit;font-size:.9rem;font-weight:600;max-width:75vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.pn-scope{background:var(--pn-pill);border-color:transparent}
+.pn-offline{display:flex;align-items:center;gap:10px;margin:8px 16px 4px;padding:12px 14px;border-radius:14px;background:var(--pn-pill);color:var(--pn-text);font-size:.92rem}
+.pn-offline span{flex:1}
+.pn-offline button{border:0;background:var(--pn-accent);color:#fff;border-radius:16px;padding:7px 12px;font-weight:700}
